@@ -48,7 +48,8 @@ import '../services/category_share_service.dart';
 import '../services/sharing_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart'
+    show Clipboard, ClipboardData, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/privacy_toggle_button.dart';
@@ -133,6 +134,18 @@ Color _parseColor(String hexColor) {
   return Colors.grey; // Default color on invalid format
 }
 
+void _triggerTapHaptic() {
+  if (kIsWeb) return;
+  unawaited(HapticFeedback.heavyImpact());
+}
+
+VoidCallback _withHeavyTap(VoidCallback action) {
+  return () {
+    _triggerTapHaptic();
+    action();
+  };
+}
+
 // ADDED: New helper class to hold grouped content
 class GroupedContentItem {
   final SharedMediaItem mediaItem;
@@ -180,6 +193,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
   late TabController _tabController;
   int _currentTabIndex = 1;
+  int _lastTabIndex = 1;
   // ADDED: Flag to clear TypeAhead controller on next build
   bool _clearSearchOnNextBuild = false;
 
@@ -351,6 +365,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       useRootNavigator: true,
+      sheetAnimationStyle: const AnimationStyle(
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+        duration: Duration(milliseconds: 480),
+        reverseDuration: Duration(milliseconds: 320),
+      ),
       builder: (modalContext) {
         final SharedMediaItem initialMedia = resolvedItems.first;
         return SharedMediaPreviewModal(
@@ -559,6 +579,28 @@ class CollectionsScreenState extends State<CollectionsScreen>
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsKeyGroupByLocationContent, enabled);
     } catch (_) {}
+  }
+
+  void _setGroupByLocationExperiences(bool enabled) {
+    setState(() {
+      _groupByLocationExperiences = enabled;
+      _countryExpansionExperiences.clear();
+      _stateExpansionExperiences.clear();
+      _cityExpansionExperiences.clear();
+      _locationExpansionExperiences.clear();
+    });
+    unawaited(_saveGroupByLocationExperiences(enabled));
+  }
+
+  void _setGroupByLocationContent(bool enabled) {
+    setState(() {
+      _groupByLocationContent = enabled;
+      _countryExpansionContent.clear();
+      _stateExpansionContent.clear();
+      _cityExpansionContent.clear();
+      _locationExpansionContent.clear();
+    });
+    unawaited(_saveGroupByLocationContent(enabled));
   }
 
   String? _userSpecificPrefsKey(String prefix) {
@@ -903,17 +945,23 @@ class CollectionsScreenState extends State<CollectionsScreen>
     _tabController =
         TabController(length: 3, vsync: this, initialIndex: initialTabIndex);
     _currentTabIndex = initialTabIndex;
+    _lastTabIndex = initialTabIndex;
     _tabController.addListener(() {
       if (!mounted) return;
       if (_tabController.indexIsChanging) {
         setState(() {
           _currentTabIndex = _tabController.index;
         });
+        _lastTabIndex = _tabController.index;
       } else {
         if (_currentTabIndex != _tabController.index) {
           setState(() {
             _currentTabIndex = _tabController.index;
           });
+          if (_lastTabIndex != _tabController.index) {
+            _lastTabIndex = _tabController.index;
+            _triggerTapHaptic();
+          }
         }
       }
       // Trigger lazy load for Content tab when first viewed
@@ -2564,13 +2612,19 @@ class CollectionsScreenState extends State<CollectionsScreen>
             'Are you sure you want to delete the "${category.name}" category? Associated experiences will NOT be deleted but will lose this category tag. This cannot be undone.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
             style: TextButton.styleFrom(
                 foregroundColor: Theme.of(context).primaryColor),
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Delete'),
           ),
         ],
@@ -2731,11 +2785,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
             'Are you sure you want to remove the "${category.name}" category from your collections? You will lose access to the experiences shared with it.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Remove', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -2861,7 +2921,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       message: tooltip,
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: onToggle,
+        onTap: _withHeavyTap(onToggle),
         child: icon,
       ),
     );
@@ -2961,6 +3021,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         children: [
           InkWell(
             onTap: () {
+              _triggerTapHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -3165,6 +3226,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             tooltip: 'Category Options',
             color: Colors.white,
             onSelected: (String result) {
+              _triggerTapHaptic();
               switch (result) {
                 case 'edit':
                   _showEditSingleCategoryModal(category);
@@ -3252,6 +3314,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               ],
             ),
             onTap: () {
+              _triggerTapHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -3805,6 +3868,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 style: GoogleFonts.notoSerif(fontWeight: FontWeight.w700),
               ),
               onPressed: () {
+                _triggerTapHaptic();
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const MapScreen()),
@@ -3821,6 +3885,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Categories',
               color: Colors.white,
               onSelected: (CategorySortType result) {
+                _triggerTapHaptic();
                 _applySortAndSave(result); // Saves text category order
               },
               itemBuilder: (BuildContext context) =>
@@ -3846,6 +3911,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Color Categories',
               color: Colors.white,
               onSelected: (ColorCategorySortType result) {
+                _triggerTapHaptic();
                 _applyColorSortAndSave(result); // Saves color category order
               },
               itemBuilder: (BuildContext context) =>
@@ -3869,6 +3935,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Experiences',
               color: Colors.white,
               onSelected: (ExperienceSortType result) {
+                _triggerTapHaptic();
                 _applyExperienceSort(result);
               },
               itemBuilder: (BuildContext context) =>
@@ -3900,24 +3967,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 // --- Group by Location (single checkbox) ---
                 PopupMenuItem<ExperienceSortType>(
                   onTap: () {
-                    setState(() {
-                      _groupByLocationExperiences =
-                          !_groupByLocationExperiences;
-                      _countryExpansionExperiences.clear();
-                      _stateExpansionExperiences.clear();
-                      _cityExpansionExperiences.clear();
-                      _locationExpansionExperiences.clear();
-                    });
-                    unawaited(_saveGroupByLocationExperiences(
-                        _groupByLocationExperiences));
+                    _triggerTapHaptic();
+                    _setGroupByLocationExperiences(
+                        !_groupByLocationExperiences);
                   },
                   child: Row(
                     children: [
-                      Checkbox(
-                        value: _groupByLocationExperiences,
-                        onChanged: (_) {},
+                      Icon(
+                        _groupByLocationExperiences
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                        color: _groupByLocationExperiences
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey,
+                        size: 20,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       const Expanded(child: Text('Group by Location')),
                     ],
                   ),
@@ -3930,6 +3995,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Content',
               color: Colors.white,
               onSelected: (ContentSortType result) {
+                _triggerTapHaptic();
                 _applyContentSort(result); // Use the new sort function
               },
               itemBuilder: (BuildContext context) =>
@@ -3961,23 +4027,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 // --- Group by Location (single checkbox) ---
                 PopupMenuItem<ContentSortType>(
                   onTap: () {
-                    setState(() {
-                      _groupByLocationContent = !_groupByLocationContent;
-                      _countryExpansionContent.clear();
-                      _stateExpansionContent.clear();
-                      _cityExpansionContent.clear();
-                      _locationExpansionContent.clear();
-                    });
-                    unawaited(
-                        _saveGroupByLocationContent(_groupByLocationContent));
+                    _triggerTapHaptic();
+                    _setGroupByLocationContent(!_groupByLocationContent);
                   },
                   child: Row(
                     children: [
-                      Checkbox(
-                        value: _groupByLocationContent,
-                        onChanged: (_) {},
+                      Icon(
+                        _groupByLocationContent
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                        color: _groupByLocationContent
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey,
+                        size: 20,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       const Expanded(child: Text('Group by Location')),
                     ],
                   ),
@@ -3990,6 +4054,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               icon: const Icon(Icons.filter_list),
               tooltip: 'Filter Items',
               onPressed: () {
+                _triggerTapHaptic();
                 _showFilterDialog();
               },
             ),
@@ -4067,6 +4132,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                   icon: const Icon(Icons.clear),
                                   tooltip: 'Clear Search',
                                   onPressed: () {
+                                    _triggerTapHaptic();
                                     controller
                                         .clear(); // Clear TypeAhead's controller
                                     _searchController
@@ -4091,6 +4157,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                             );
                           },
                           onSelected: (suggestion) async {
+                            _triggerTapHaptic();
                             await _openExperience(suggestion);
                             if (mounted) {
                               setState(() {
@@ -4134,6 +4201,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       ),
                       child: TabBar(
                         controller: _tabController,
+                        onTap: (_) => _triggerTapHaptic(),
                         tabs: const [
                           Tab(text: 'Categories'),
                           Tab(text: 'Experiences'),
@@ -4251,6 +4319,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                 tooltip: 'Cancel selection',
                                                 icon: const Icon(Icons.close),
                                                 onPressed: () {
+                                                  _triggerTapHaptic();
                                                   setState(() {
                                                     _isSelectingCategories =
                                                         false;
@@ -4303,7 +4372,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                         color: selectedCount == 0
                                                             ? Colors.grey
                                                             : Colors.blue),
-                                                    onPressed: onSharePressed,
+                                                    onPressed: onSharePressed == null
+                                                        ? null
+                                                        : _withHeavyTap(onSharePressed),
                                                   );
                                                 },
                                               ),
@@ -4322,6 +4393,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                     color: Colors.red,
                                                     onPressed: hasSelection
                                                         ? () {
+                                                            _triggerTapHaptic();
                                                             if (isViewingColor) {
                                                               _handleBulkDeleteSelectedColorCategories();
                                                             } else {
@@ -4343,6 +4415,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                               icon: const Icon(
                                                   Icons.check_box_outlined),
                                               onPressed: () {
+                                                _triggerTapHaptic();
                                                 setState(() {
                                                   _isSelectingCategories = true;
                                                 });
@@ -4390,7 +4463,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                 ),
                                                 icon: Icon(toggleIcon),
                                                 label: Text(toggleLabel),
-                                                onPressed: onToggle,
+                                                onPressed: _withHeavyTap(onToggle),
                                               ),
                                             ),
                                           );
@@ -4499,6 +4572,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                               icon: const Icon(
                                                   Icons.check_box_outlined),
                                               onPressed: () {
+                                                _triggerTapHaptic();
                                                 setState(() {
                                                   _isSelectingExperiences =
                                                       true;
@@ -4549,6 +4623,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                             tooltip: 'Cancel selection',
                                             icon: const Icon(Icons.close),
                                             onPressed: () {
+                                              _triggerTapHaptic();
                                               setState(() {
                                                 _isSelectingExperiences = false;
                                                 _selectedExperienceIds.clear();
@@ -4567,6 +4642,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                             onPressed: selectedCount == 0
                                                 ? null
                                                 : () {
+                                                    _triggerTapHaptic();
                                                     unawaited(
                                                         _handleCreateEventWithSelectedExperiences());
                                                   },
@@ -4583,6 +4659,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                             onPressed: selectedCount == 0
                                                 ? null
                                                 : () {
+                                                    _triggerTapHaptic();
                                                     unawaited(
                                                         _handleShareSelectedExperiences());
                                                   },
@@ -4597,6 +4674,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                             onPressed: selectedCount == 0
                                                 ? null
                                                 : () {
+                                                    _triggerTapHaptic();
                                                     unawaited(
                                                         _handleBulkDeleteSelectedExperiences());
                                                   },
@@ -4624,9 +4702,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   ),
                 ],
               ),
-            ),
+      ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddMenu,
+        onPressed: _withHeavyTap(_showAddMenu),
         tooltip: 'Add',
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
@@ -4650,6 +4728,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 leading: const Icon(Icons.category_outlined),
                 title: const Text('Add Category'),
                 onTap: () async {
+                  _triggerTapHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddCategoryModal();
                 },
@@ -4658,6 +4737,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 leading: const Icon(Icons.palette_outlined),
                 title: const Text('Add Color Category'),
                 onTap: () async {
+                  _triggerTapHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddColorCategoryModal();
                 },
@@ -4666,6 +4746,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 leading: const Icon(Icons.add_circle_outline),
                 title: const Text('Add Experience'),
                 onTap: () async {
+                  _triggerTapHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddExperienceModal();
                 },
@@ -4674,6 +4755,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 leading: const Icon(Icons.link),
                 title: const Text('Add Content'),
                 onTap: () async {
+                  _triggerTapHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddContentModal();
                 },
@@ -4682,6 +4764,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 leading: const Icon(Icons.event_outlined),
                 title: const Text('Add Event'),
                 onTap: () async {
+                  _triggerTapHaptic();
                   Navigator.of(ctx).pop();
                   await _openEventEditorModal();
                 },
@@ -4979,7 +5062,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
           if (matchingEvent != null) ...[
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: () => _openEventEditorForExperience(matchingEvent),
+              onTap: () {
+                _triggerTapHaptic();
+                _openEventEditorForExperience(matchingEvent);
+              },
               child: Icon(
                 Icons.event,
                 color: _getEventColor(matchingEvent),
@@ -5018,7 +5104,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       height: playButtonDiameter,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: () => _openExperienceContentPreview(experience),
+                        onTap: () {
+                          _triggerTapHaptic();
+                          _openExperienceContentPreview(experience);
+                        },
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
@@ -5160,6 +5249,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         ],
       ),
       onTap: () async {
+        _triggerTapHaptic();
         if (_isSelectingExperiences) {
           setState(() {
             if (_selectedExperienceIds.contains(experience.id)) {
@@ -5283,7 +5373,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
               if (matchingEvent != null) ...[
                 const SizedBox(width: 4),
                 GestureDetector(
-                  onTap: () => _openEventEditorForExperience(matchingEvent),
+                  onTap: () {
+                    _triggerTapHaptic();
+                    _openEventEditorForExperience(matchingEvent);
+                  },
                   child: Icon(
                     Icons.event,
                     color: _getEventColor(matchingEvent),
@@ -5354,7 +5447,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 if (matchingEvent != null) ...[
                   const SizedBox(width: 4),
                   GestureDetector(
-                    onTap: () => _openEventEditorForExperience(matchingEvent),
+                    onTap: () {
+                      _triggerTapHaptic();
+                      _openEventEditorForExperience(matchingEvent);
+                    },
                     child: Icon(
                       Icons.event,
                       color: Colors.white,
@@ -5467,6 +5563,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       shape: cardShape,
       child: InkWell(
         onTap: () async {
+          _triggerTapHaptic();
           if (_isSelectingExperiences) {
             setState(() {
               if (_selectedExperienceIds.contains(experience.id)) {
@@ -5835,6 +5932,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 final double leftPadding = (depth * 16).toDouble();
                 return InkWell(
                   onTap: () {
+                    _triggerTapHaptic();
                     setState(() {
                       _locationExpansionExperiences[key] = !isExpanded;
                     });
@@ -5886,6 +5984,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         : 32;
                 return InkWell(
                   onTap: () {
+                    _triggerTapHaptic();
                     setState(() {
                       if (level == 'country') {
                         _countryExpansionExperiences[key] = !isExpanded;
@@ -5963,6 +6062,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 icon: const Icon(Icons.arrow_back),
                 tooltip: 'Back to Categories',
                 onPressed: () {
+                  _triggerTapHaptic();
                   setState(() {
                     _selectedCategory = null; // Go back to category list
                   });
@@ -6034,6 +6134,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   tooltip: 'Category Options',
                   color: Colors.white,
                   onSelected: (String result) {
+                    _triggerTapHaptic();
                     switch (result) {
                       case 'edit':
                         _showEditSingleCategoryModal(category);
@@ -6224,6 +6325,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               final double leftPadding = (depth * 16).toDouble();
               return InkWell(
                 onTap: () {
+                  _triggerTapHaptic();
                   setState(() {
                     _locationExpansionContent[key] = !isExpanded;
                   });
@@ -6349,11 +6451,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -6664,11 +6772,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
         content: Text(dialogLines.join('\n\n')),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Remove'),
           ),
         ],
@@ -6807,11 +6921,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
             'Are you sure you want to delete the "${category.name}" category? Experiences using this color will lose it. This cannot be undone.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -6847,11 +6967,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
             'Are you sure you want to remove the "${category.name}" color category from your collections? You will lose access to the experiences shared with it.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Remove', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -6938,11 +7064,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
         content: Text(dialogLines.join('\n\n')),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Remove'),
           ),
         ],
@@ -7105,11 +7237,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
         content: Text(dialogLines.join('\n\n')),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(false);
+            },
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () {
+              _triggerTapHaptic();
+              Navigator.of(context).pop(true);
+            },
             child: const Text('Remove'),
           ),
         ],
@@ -7351,6 +7489,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         children: [
           InkWell(
             onTap: () {
+              _triggerTapHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -7556,6 +7695,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             tooltip: 'Color Category Options',
             color: Colors.white,
             onSelected: (String result) {
+              _triggerTapHaptic();
               switch (result) {
                 case 'edit':
                   _showEditSingleColorCategoryModal(category);
@@ -7643,6 +7783,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               ],
             ),
             onTap: () {
+              _triggerTapHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -7723,6 +7864,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 icon: const Icon(Icons.arrow_back),
                 tooltip: 'Back to Color Categories',
                 onPressed: () {
+                  _triggerTapHaptic();
                   setState(() {
                     _selectedColorCategory =
                         null; // Go back to color category list
@@ -7798,6 +7940,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   tooltip: 'Color Category Options',
                   color: Colors.white,
                   onSelected: (String result) {
+                    _triggerTapHaptic();
                     switch (result) {
                       case 'edit':
                         _showEditSingleColorCategoryModal(category);
@@ -8072,6 +8215,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             TextButton(
               child: const Text('Show All'),
               onPressed: () {
+                _triggerTapHaptic();
                 // Clear temporary selections
                 tempSelectedCategoryIds.clear();
                 tempSelectedColorCategoryIds.clear();
@@ -8087,12 +8231,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
             TextButton(
               child: const Text('Cancel'),
               onPressed: () {
+                _triggerTapHaptic();
                 Navigator.of(context).pop();
               },
             ),
             TextButton(
               child: const Text('Apply'),
               onPressed: () {
+                _triggerTapHaptic();
                 // Apply filters from dialog state
                 setState(() {
                   _selectedCategoryIds = tempSelectedCategoryIds;
@@ -8368,6 +8514,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       ),
       child: InkWell(
         onTap: () {
+          _triggerTapHaptic();
           _showMediaDetailsDialog(group);
         },
         child: Column(
@@ -8412,7 +8559,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
     return Tooltip(
       message: isExpanded ? 'Hide preview' : 'Show preview',
       child: GestureDetector(
-        onTap: () => _toggleContentPreview(mediaPath),
+        onTap: () {
+          _triggerTapHaptic();
+          _toggleContentPreview(mediaPath);
+        },
         child: CircleAvatar(
           radius: 18,
           backgroundColor: Theme.of(context).primaryColor,
@@ -8460,7 +8610,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       return Tooltip(
         message: tooltip,
         child: GestureDetector(
-          onTap: onTap,
+          onTap: _withHeavyTap(onTap),
           child: CircleAvatar(
             radius: 18,
             backgroundColor: backgroundColor ?? Colors.white,
@@ -8683,10 +8833,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
           if (associatedExperiences.isNotEmpty)
             Positioned(
               right: showPrivacyToggle ? 48 : 0,
-              child: Tooltip(
-                message: 'Share',
-                child: GestureDetector(
-                  onTap: () => _shareContentItem(group),
+                child: Tooltip(
+                  message: 'Share',
+                  child: GestureDetector(
+                  onTap: () {
+                    _triggerTapHaptic();
+                    _shareContentItem(group);
+                  },
                   child: const Icon(
                     Icons.share_outlined,
                     color: Colors.blue,
@@ -8701,7 +8854,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
               child: PrivacyToggleButton(
                 isPrivate: group.mediaItem.isPrivate,
                 showLabel: false,
-                onPressed: () => _toggleGroupedContentPrivacy(group),
+                onPressed: () {
+                  _triggerTapHaptic();
+                  _toggleGroupedContentPrivacy(group);
+                },
               ),
             ),
         ],
@@ -8795,6 +8951,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
                               return InkWell(
                                 onTap: () {
+                                  _triggerTapHaptic();
                                   _openExperience(exp);
                                 },
                                 child: Padding(
@@ -9132,6 +9289,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                             style: Theme.of(dialogContext).textTheme.bodyLarge),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
+                          _triggerTapHaptic();
                           Navigator.of(dialogContext)
                               .pop(); // Close dialog first
                           final resolvedCategory = category ??
@@ -9170,6 +9328,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             TextButton(
               child: const Text('Close'),
               onPressed: () {
+                _triggerTapHaptic();
                 Navigator.of(dialogContext).pop();
               },
             ),
@@ -10326,7 +10485,10 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               ? const Icon(Icons.more_horiz, color: Colors.black45)
               : null),
       onTap: ownerIsCurrentUser && !participant.isCurrentUser
-          ? () => _showManageAccessDialog(participant)
+          ? () async {
+              _triggerTapHaptic();
+              await _showManageAccessDialog(participant);
+            }
           : null,
     );
   }
@@ -10352,15 +10514,24 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               const Text('Change what this person can do in this category.'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop('remove'),
+              onPressed: () {
+                _triggerTapHaptic();
+                Navigator.of(ctx).pop('remove');
+              },
               child: const Text('Remove access'),
             ),
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop('view'),
+              onPressed: () {
+                _triggerTapHaptic();
+                Navigator.of(ctx).pop('view');
+              },
               child: const Text('View'),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop('edit'),
+              onPressed: () {
+                _triggerTapHaptic();
+                Navigator.of(ctx).pop('edit');
+              },
               child: const Text('Edit'),
             ),
           ],
@@ -10541,7 +10712,10 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () {
+                    _triggerTapHaptic();
+                    Navigator.of(context).pop();
+                  },
                 ),
               ],
             ),
@@ -10616,7 +10790,10 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 ),
               ),
               title: const Text('Share view access only'),
-              onTap: () => setState(() => _shareMode = 'view_access'),
+              onTap: () {
+                _triggerTapHaptic();
+                setState(() => _shareMode = 'view_access');
+              },
             ),
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -10634,13 +10811,17 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 ),
               ),
               title: const Text('Share edit access'),
-              onTap: () => setState(() => _shareMode = 'edit_access'),
+              onTap: () {
+                _triggerTapHaptic();
+                setState(() => _shareMode = 'edit_access');
+              },
             ),
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.send_outlined),
               title: const Text('Share to Plendy friends'),
               onTap: () async {
+                _triggerTapHaptic();
                 final bool grantEdit = _shareMode == 'edit_access';
                 final String accessMode = grantEdit ? 'edit' : 'view';
                 final String categoryName = widget.userCategory?.name ?? 
@@ -10722,6 +10903,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               onTap: _creating
                   ? null
                   : () async {
+                      _triggerTapHaptic();
                       setState(() => _creating = true);
                       final bool grantEdit = _shareMode == 'edit_access';
                       final messenger = ScaffoldMessenger.of(context);
@@ -10831,6 +11013,7 @@ class _BulkShareBottomSheetContentState
                   children: [
                     ElevatedButton.icon(
                       onPressed: () async {
+                        _triggerTapHaptic();
                         await Share.share(url);
                         if (ctx.mounted) Navigator.of(ctx).pop();
                       },
@@ -10843,6 +11026,7 @@ class _BulkShareBottomSheetContentState
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        _triggerTapHaptic();
                         await Clipboard.setData(ClipboardData(text: url));
                         if (ctx.mounted) {
                           Navigator.of(ctx).pop();
@@ -10882,7 +11066,10 @@ class _BulkShareBottomSheetContentState
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () {
+                    _triggerTapHaptic();
+                    Navigator.of(context).pop();
+                  },
                 ),
               ],
             ),
@@ -10933,7 +11120,10 @@ class _BulkShareBottomSheetContentState
                 ),
               ),
               title: const Text('Share view access only'),
-              onTap: () => setState(() => _shareMode = 'view_access'),
+              onTap: () {
+                _triggerTapHaptic();
+                setState(() => _shareMode = 'view_access');
+              },
             ),
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -10951,7 +11141,10 @@ class _BulkShareBottomSheetContentState
                 ),
               ),
               title: const Text('Share edit access'),
-              onTap: () => setState(() => _shareMode = 'edit_access'),
+              onTap: () {
+                _triggerTapHaptic();
+                setState(() => _shareMode = 'edit_access');
+              },
             ),
             const SizedBox(height: 8),
             ListTile(
@@ -10967,6 +11160,7 @@ class _BulkShareBottomSheetContentState
               onTap: _creating
                   ? null
                   : () async {
+                      _triggerTapHaptic();
                       setState(() => _creating = true);
                       try {
                         final service = CategoryShareService();

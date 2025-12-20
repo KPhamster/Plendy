@@ -27,4 +27,13 @@ sed -i "s/YOUR_WEB_API_KEY_HERE/$MAPS_API_KEY/g" web/index.html
 echo "Building Flutter web app..."
 flutter build web
 
+# Copy static pages and association files into hosting output.
+echo "Copying static web files..."
+mkdir -p build/web/.well-known
+cp web/privacy.html build/web/privacy.html
+cp web/delete_account.html build/web/delete_account.html
+cp web/oembed-demo.html build/web/oembed-demo.html
+cp web/apple-app-site-association build/web/apple-app-site-association
+cp web/.well-known/apple-app-site-association build/web/.well-known/apple-app-site-association
+
 echo "Build completed successfully!"

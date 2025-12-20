@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/event.dart';
@@ -11,6 +13,7 @@ import '../models/color_category.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
+import '../config/colors.dart';
 
 /// Google Calendar-style events screen with Material 3 Expressive design
 class EventsScreen extends StatefulWidget {
@@ -48,6 +51,7 @@ class _EventsScreenState extends State<EventsScreen>
 
   late TabController _tabController;
   late PageController _weekPageController;
+  int _currentTabIndex = 3;
   
   // Real-time event listeners
   final List<StreamSubscription> _eventSubscriptions = [];
@@ -64,7 +68,9 @@ class _EventsScreenState extends State<EventsScreen>
     super.initState();
     _tabController = TabController(length: 4, vsync: this, initialIndex: 3);
     _tabController.addListener(() {
-      if (_tabController.indexIsChanging) {
+      if (_tabController.index != _currentTabIndex) {
+        HapticFeedback.heavyImpact();
+        _currentTabIndex = _tabController.index;
         setState(() {
           switch (_tabController.index) {
             case 0:
@@ -474,7 +480,7 @@ class _EventsScreenState extends State<EventsScreen>
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF1C1B1F) : Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       floatingActionButton: FloatingActionButton(
         onPressed: _createNewEvent,
         tooltip: 'Add Event',
@@ -489,9 +495,12 @@ class _EventsScreenState extends State<EventsScreen>
             _buildAppBar(theme, isDark),
             _buildViewTabs(theme, isDark),
             Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _buildViewContent(theme, isDark),
+              child: Container(
+                color: AppColors.backgroundColorMid,
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _buildViewContent(theme, isDark),
+              ),
             ),
           ],
         ),
@@ -507,16 +516,19 @@ class _EventsScreenState extends State<EventsScreen>
           // Month/Year display
           Expanded(
             child: GestureDetector(
-              onTap: () => _showMonthPicker(context),
+              onTap: () {
+                HapticFeedback.heavyImpact();
+                _showMonthPicker(context);
+              },
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
                     child: Text(
                       DateFormat('MMMM y').format(_focusedDay),
-                      style: theme.textTheme.headlineSmall?.copyWith(
+                      style: GoogleFonts.notoSerif(
+                        textStyle: theme.textTheme.headlineSmall,
                         fontWeight: FontWeight.w600,
-                        fontFamily: 'Google Sans',
                       ),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
@@ -533,7 +545,10 @@ class _EventsScreenState extends State<EventsScreen>
           ),
           // Today button
           TextButton.icon(
-            onPressed: _goToToday,
+            onPressed: () {
+              HapticFeedback.heavyImpact();
+              _goToToday();
+            },
             icon: const Icon(Icons.today_outlined),
             label: const Text('Today'),
             style: TextButton.styleFrom(
@@ -565,6 +580,8 @@ class _EventsScreenState extends State<EventsScreen>
       ),
       child: TabBar(
         controller: _tabController,
+        overlayColor: const MaterialStatePropertyAll(Colors.transparent),
+        splashFactory: NoSplash.splashFactory,
         indicatorColor: theme.colorScheme.primary,
         indicatorWeight: 3,
         labelColor: theme.colorScheme.primary,
@@ -1017,7 +1034,10 @@ class _EventsScreenState extends State<EventsScreen>
       right: 2,
       height: height,
       child: GestureDetector(
-        onTap: () => _openEventDetails(event),
+        onTap: () {
+          HapticFeedback.heavyImpact();
+          _openEventDetails(event);
+        },
         child: Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
@@ -1343,7 +1363,10 @@ class _EventsScreenState extends State<EventsScreen>
     final borderColor = _getEventColor(event);
 
     return GestureDetector(
-      onTap: () => _openEventDetails(event),
+      onTap: () {
+        HapticFeedback.heavyImpact();
+        _openEventDetails(event);
+      },
       child: Container(
         key: key,
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -1948,7 +1971,7 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
                   ? Center(
                       child: Text(
                         _searchController.text.isEmpty
-                            ? 'Start typing to search...'
+                            ? 'Start typing to search events and experiences.'
                             : 'No results found',
                         style: TextStyle(
                           color: widget.isDark
@@ -1995,7 +2018,10 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      onTap: () => widget.onEventSelected(result.event),
+      onTap: () {
+        HapticFeedback.heavyImpact();
+        widget.onEventSelected(result.event);
+      },
       trailing: const Icon(Icons.arrow_forward, size: 18),
     );
   }
@@ -2177,6 +2203,7 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
 
                   return InkWell(
                     onTap: () {
+                      HapticFeedback.heavyImpact();
                       setState(() {
                         _selectedMonth = month;
                         _selectedYear = yearForPage;
@@ -2239,6 +2266,7 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
 
         return InkWell(
           onTap: () {
+            HapticFeedback.heavyImpact();
             setState(() {
               _selectedYear = year;
               _isSelectingYear = false;

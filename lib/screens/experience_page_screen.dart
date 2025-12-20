@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import '../../firebase_options.dart';
@@ -74,6 +75,7 @@ import '../services/event_service.dart';
 import '../widgets/write_review_modal.dart';
 import 'package:intl/intl.dart';
 import '../widgets/event_editor_modal.dart';
+import '../config/colors.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -1216,10 +1218,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                 // Name
                                 Text(
                                   experience.name,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineMedium
-                                    ?.copyWith(
+                                style: GoogleFonts.notoSerif(
+                                  textStyle: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.white,
                                   shadows: [
@@ -1352,7 +1354,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 // --- Details Section ---
                 SliverToBoxAdapter(
                   child: Container(
-                    color: Colors.white,
+                    color: AppColors.backgroundColor,
                     child: Column(
                       children: [
                         _buildDynamicDetailsSection(context),
@@ -1368,7 +1370,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 SliverPersistentHeader(
                   delegate: _SliverAppBarDelegate(
                     Container(
-                      color: Colors.white,
+                      color: AppColors.backgroundColor,
                       child: tabBar,
                     ),
                     minHeight: tabBar.preferredSize.height,
@@ -1379,13 +1381,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ];
             },
             // --- Body (TabBarView) ---
-            body: TabBarView(
-              controller: _tabController,
-              children: [
-                // Pass fetched media items to _buildMediaTab
-                _buildMediaTab(context, activeMediaItems),
-                _buildReviewsTab(context),
-              ],
+            body: Container(
+              color: AppColors.backgroundColor,
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  // Pass fetched media items to _buildMediaTab
+                  _buildMediaTab(context, activeMediaItems),
+                  _buildReviewsTab(context),
+                ],
+              ),
             ),
           ),
         ),
@@ -1466,24 +1471,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.description_outlined,
-              size: 20.0, color: Colors.black54),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  description!.trim(),
-                  style: textTheme,
-                ),
-              ],
+      child: Container(
+        color: AppColors.backgroundColor,
+        padding: const EdgeInsets.symmetric(vertical: 6.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.description_outlined,
+                size: 20.0, color: Colors.black54),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    description!.trim(),
+                    style: textTheme,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1632,7 +1641,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final bool hideLocationDetails = _isLocationUnset(experience);
 
     return Container(
-      color: Colors.white,
+      color: AppColors.backgroundColor,
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1646,11 +1655,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 Expanded(
                   child: Row(
                     children: [
-                      Text(
-                        _getCurrentCategory().icon,
-                        style: const TextStyle(fontSize: 20),
+                      SizedBox(
+                        width: 20.0,
+                        child: Center(
+                          child: Text(
+                            _getCurrentCategory().icon,
+                            style: const TextStyle(fontSize: 20),
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 24),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           _computeSharePreviewCategoryLabel() ??
@@ -1684,8 +1698,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   },
                   tooltip: 'View Location on App Map', // Updated tooltip
                   backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
+                  shape: const StadiumBorder(
+                    side: BorderSide(color: Colors.white),
+                  ),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   padding: const EdgeInsets.all(4),
                 ),
@@ -1703,8 +1718,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   onPressed: _showShareBottomSheet,
                   tooltip: 'Share Experience',
                   backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
+                  shape: const StadiumBorder(
+                    side: BorderSide(color: Colors.white),
+                  ),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   padding: const EdgeInsets.all(4),
                 ),
@@ -1723,8 +1739,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     onPressed: _openEventEditorWithExperience,
                     tooltip: 'Create Event',
                     backgroundColor: Colors.white,
-                    shape: StadiumBorder(
-                        side: BorderSide(color: Colors.grey.shade300)),
+                    shape: const StadiumBorder(
+                      side: BorderSide(color: Colors.white),
+                    ),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: const EdgeInsets.all(4),
                   ),
@@ -1746,8 +1763,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     tooltip:
                         canEdit ? 'Edit Experience' : 'Cannot Edit (View Only)',
                     backgroundColor: Colors.white,
-                    shape: StadiumBorder(
-                        side: BorderSide(color: Colors.grey.shade300)),
+                    shape: const StadiumBorder(
+                      side: BorderSide(color: Colors.white),
+                    ),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: const EdgeInsets.all(4),
                   ),
@@ -2136,7 +2154,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Column(
       children: [
         Container(
-          color: Colors.white,
+          color: AppColors.backgroundColor,
           child: TabBar(
             controller: _tabController,
             labelColor: Theme.of(context).primaryColor,
@@ -2158,13 +2176,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         ),
         SizedBox(
           height: tabContentHeight,
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              // Pass fetched media items
-              _buildMediaTab(context, effectiveMediaItems),
-              _buildReviewsTab(context),
-            ],
+          child: Container(
+            color: AppColors.backgroundColor,
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // Pass fetched media items
+                _buildMediaTab(context, effectiveMediaItems),
+                _buildReviewsTab(context),
+              ],
+            ),
           ),
         ),
       ],
@@ -2329,12 +2350,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Use the passed mediaItems list directly
     if (isActiveLoading) {
       return Container(
-        color: Colors.white,
+        color: AppColors.backgroundColor,
         child: const Center(child: CircularProgressIndicator()),
       );
     } else if (mediaItems.isEmpty) {
       return Container(
-        color: Colors.white,
+        color: AppColors.backgroundColor,
         child: Center(
           child: Text(isPublicView
               ? 'No public content available yet for this place.'
@@ -2346,7 +2367,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Use a CustomScrollView so the filter row and media list can flex with the
     // outer NestedScrollView without causing layout overflows.
     return Container(
-      color: Colors.white,
+      color: AppColors.backgroundColor,
       child: CustomScrollView(
         slivers: [
           // --- MOVED Fullscreen Button to the top ---
@@ -2398,8 +2419,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         ),
                         label: Text(
                           isPublicView
-                              ? 'Show Saved Content'
-                              : 'Show Public Content',
+                              ? 'Show Your Saves'
+                              : 'Show Public Saves',
                           style: const TextStyle(color: Colors.black),
                         ),
                         style: TextButton.styleFrom(
@@ -2681,7 +2702,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         margin: EdgeInsets.zero,
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(4.0),
+                          borderRadius: BorderRadius.circular(16.0),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.1),
@@ -3018,7 +3039,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final bool canInteract = _currentUserId != null;
     
     return Container(
-      color: Colors.white,
+      color: AppColors.backgroundColor,
       child: CustomScrollView(
         slivers: [
           // Rating buttons at the top center (available for all authenticated users)
@@ -3720,57 +3741,61 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: _buildActionItem(
-              context,
-              Icon(Icons.phone_outlined),
-              'Call Venue',
-              // Disable button if no phone number
-              phoneNumber != null && phoneNumber.isNotEmpty
-                  ? () => _launchPhoneCall(phoneNumber)
-                  : null, // Pass null if no number
+      child: Container(
+        color: AppColors.backgroundColor,
+        padding: const EdgeInsets.symmetric(vertical: 12.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _buildActionItem(
+                context,
+                Icon(Icons.phone_outlined),
+                'Call Venue',
+                // Disable button if no phone number
+                phoneNumber != null && phoneNumber.isNotEmpty
+                    ? () => _launchPhoneCall(phoneNumber)
+                    : null, // Pass null if no number
+              ),
             ),
-          ),
-          Expanded(
-            child: _buildActionItem(
-              context,
-              Icon(Icons.language_outlined),
-              'Website',
-              // Disable button if no website URI
-              websiteUri != null && websiteUri.isNotEmpty
-                  ? () => _launchUrl(websiteUri)
-                  : null, // Pass null if no URI
+            Expanded(
+              child: _buildActionItem(
+                context,
+                Icon(Icons.language_outlined),
+                'Website',
+                // Disable button if no website URI
+                websiteUri != null && websiteUri.isNotEmpty
+                    ? () => _launchUrl(websiteUri)
+                    : null, // Pass null if no URI
+              ),
             ),
-          ),
-          Expanded(
-            child: _buildActionItem(
-              context,
-              Icon(FontAwesomeIcons.yelp,
-                  color: const Color(0xFFd32323), size: 28),
-              'Yelp',
-              _launchYelpSearch,
+            Expanded(
+              child: _buildActionItem(
+                context,
+                Icon(FontAwesomeIcons.yelp,
+                    color: const Color(0xFFd32323), size: 28),
+                'Yelp',
+                _launchYelpSearch,
+              ),
             ),
-          ),
-          Expanded(
-            child: _buildActionItem(
-              context,
-              Icon(Icons.map_outlined),
-              'Google Maps',
-              () => _launchMapLocation(location),
+            Expanded(
+              child: _buildActionItem(
+                context,
+                Icon(Icons.map_outlined),
+                'Google Maps',
+                () => _launchMapLocation(location),
+              ),
             ),
-          ),
-          Expanded(
-            child: _buildActionItem(
-              context,
-              Icon(Icons.directions_outlined),
-              'Directions',
-              () => _launchDirections(location),
+            Expanded(
+              child: _buildActionItem(
+                context,
+                Icon(Icons.directions_outlined),
+                'Directions',
+                () => _launchDirections(location),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

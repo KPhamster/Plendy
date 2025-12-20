@@ -817,7 +817,7 @@ exports.sendReportEmailNotification = onDocumentCreated(
       const transporter = nodemailer.createTransport({
         service: "gmail",
         auth: {
-          user: "plendy.experience@gmail.com",
+          user: "admin@plendy.app",
           pass: gmailPassword,
         },
       });
@@ -946,8 +946,8 @@ exports.sendReportEmailNotification = onDocumentCreated(
 
       // Send email
       const mailOptions = {
-        from: "Plendy Reports <plendy.experience@gmail.com>",
-        to: "plendy.experience@gmail.com",
+        from: "Plendy Reports <admin@plendy.app>",
+        to: "admin@plendy.app",
         subject: `🚨 New Report: ${reportTypeLabel} - ${experienceName}`,
         html: emailHtml,
         text: `

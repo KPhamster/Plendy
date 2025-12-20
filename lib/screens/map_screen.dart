@@ -4,6 +4,7 @@ import 'dart:typed_data'; // Import for ByteData
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
@@ -27,6 +28,7 @@ import '../models/user_profile.dart';
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
 import '../models/public_experience.dart';
 import '../config/app_constants.dart';
+import '../config/colors.dart';
 import '../models/event.dart';
 import '../services/event_service.dart';
 import '../services/experience_share_service.dart';
@@ -171,6 +173,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _isGlobeLoading = false;
   LatLng? _lastGlobeMapCenter;
   final Map<String, Experience> _eventExperiencesCache = {};
+  int _markerAnimationToken = 0;
 
   // ADDED: Event view mode state
   Event? _activeEventViewMode;
@@ -218,6 +221,97 @@ class _MapScreenState extends State<MapScreen> {
     } catch (_) {
       _ownerNameByUserId[userId] = 'Someone';
       return 'Someone';
+    }
+  }
+
+  void _triggerHeavyHaptic() {
+    HapticFeedback.heavyImpact();
+  }
+
+  int _markerStartSize(int finalSize) {
+    return Math.max(1, (finalSize * 0.55).round());
+  }
+
+  Marker _buildSelectedMarker({
+    required MarkerId markerId,
+    required LatLng position,
+    required String infoWindowTitle,
+    required BitmapDescriptor icon,
+  }) {
+    return Marker(
+      markerId: markerId,
+      position: position,
+      infoWindow: _infoWindowForPlatform(infoWindowTitle),
+      icon: icon,
+      zIndex: 1.0,
+    );
+  }
+
+  Future<void> _animateSelectedMarkerSmooth({
+    required int animationToken,
+    required MarkerId markerId,
+    required LatLng position,
+    required String infoWindowTitle,
+    required Future<BitmapDescriptor> Function(int size) iconBuilder,
+    required int startSize,
+    required int endSize,
+    Duration duration = const Duration(milliseconds: 260),
+  }) async {
+    final startTime = DateTime.now();
+    int lastSize = startSize;
+    while (true) {
+      final elapsed = DateTime.now().difference(startTime);
+      final double t = (elapsed.inMilliseconds / duration.inMilliseconds)
+          .clamp(0.0, 1.0);
+      final double eased = Curves.easeOutCubic.transform(t);
+      final int size =
+          (startSize + (endSize - startSize) * eased).round();
+      if (size != lastSize) {
+        final icon = await iconBuilder(size);
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        setState(() {
+          _tappedLocationMarker = _buildSelectedMarker(
+            markerId: markerId,
+            position: position,
+            infoWindowTitle: infoWindowTitle,
+            icon: icon,
+          );
+        });
+        lastSize = size;
+      }
+      if (t >= 1.0) {
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 16));
+    }
+  }
+
+  Future<void> _refreshBusinessStatus(String? placeId, int animationToken) async {
+    if (placeId == null || placeId.isEmpty) {
+      return;
+    }
+    try {
+      final detailsMap = await _mapsService.fetchPlaceDetailsData(placeId);
+      final String? businessStatus = detailsMap?['businessStatus'] as String?;
+      final bool? openNow =
+          (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      if (!mounted || animationToken != _markerAnimationToken) {
+        return;
+      }
+      setState(() {
+        _tappedLocationBusinessStatus = businessStatus;
+        _tappedLocationOpenNow = openNow;
+      });
+    } catch (_) {
+      if (!mounted || animationToken != _markerAnimationToken) {
+        return;
+      }
+      setState(() {
+        _tappedLocationBusinessStatus = null;
+        _tappedLocationOpenNow = null;
+      });
     }
   }
 
@@ -1527,18 +1621,8 @@ class _MapScreenState extends State<MapScreen> {
       fontFamily: Icons.public.fontFamily,
     );
 
-    final BitmapDescriptor defaultPublicSelectedIcon = await _bitmapDescriptorFromText(
-      String.fromCharCode(Icons.public.codePoint),
-      size: 80,
-      backgroundColor: Colors.black,
-      backgroundOpacity: 1.0,
-      textColor: Colors.white,
-      fontFamily: Icons.public.fontFamily,
-    );
-
     // Cache for category-based icons to avoid regenerating
     final Map<String, BitmapDescriptor> publicCategoryIconCache = {};
-    final Map<String, BitmapDescriptor> publicCategorySelectedIconCache = {};
 
     for (final publicExp in _nearbyPublicExperiences) {
       final position = LatLng(
@@ -1551,13 +1635,10 @@ class _MapScreenState extends State<MapScreen> {
       
       // Determine which icons to use
       BitmapDescriptor publicIcon;
-      BitmapDescriptor publicSelectedIcon;
-      
       if (categoryIcon != null && categoryIcon.isNotEmpty) {
         // Use category icon - check cache first
         if (publicCategoryIconCache.containsKey(categoryIcon)) {
           publicIcon = publicCategoryIconCache[categoryIcon]!;
-          publicSelectedIcon = publicCategorySelectedIconCache[categoryIcon]!;
         } else {
           // Generate new icons for this category
           publicIcon = await _bitmapDescriptorFromText(
@@ -1566,19 +1647,11 @@ class _MapScreenState extends State<MapScreen> {
             backgroundColor: Colors.black,
             backgroundOpacity: 1.0,
           );
-          publicSelectedIcon = await _bitmapDescriptorFromText(
-            categoryIcon,
-            size: 80,
-            backgroundColor: Colors.black,
-            backgroundOpacity: 1.0,
-          );
           publicCategoryIconCache[categoryIcon] = publicIcon;
-          publicCategorySelectedIconCache[categoryIcon] = publicSelectedIcon;
         }
       } else {
         // Use default globe icon
         publicIcon = defaultPublicIcon;
-        publicSelectedIcon = defaultPublicSelectedIcon;
       }
 
       final markerId = MarkerId('public_${publicExp.id}');
@@ -1588,58 +1661,48 @@ class _MapScreenState extends State<MapScreen> {
         infoWindow: _infoWindowForPlatform(publicExp.name),
         icon: publicIcon,
         onTap: () async {
+          _triggerHeavyHaptic();
           FocusScope.of(context).unfocus();
           print(
               "🗺️ MAP SCREEN: Public experience marker tapped: '${publicExp.name}'");
 
           // Determine icon for selected marker
-          final String? tappedCategoryIcon = await _findCategoryIconForPublicExperience(publicExp);
-          BitmapDescriptor tappedSelectedIcon;
-          if (tappedCategoryIcon != null && tappedCategoryIcon.isNotEmpty) {
-            tappedSelectedIcon = await _bitmapDescriptorFromText(
-              tappedCategoryIcon,
-              size: 80,
+          final String? tappedCategoryIcon = categoryIcon;
+          final tappedMarkerId = MarkerId('selected_public_experience');
+          final int animationToken = ++_markerAnimationToken;
+          const int finalSize = 80;
+          final int startSize = _markerStartSize(finalSize);
+          final Future<BitmapDescriptor> Function(int) iconBuilder =
+              (int size) {
+            if (tappedCategoryIcon != null && tappedCategoryIcon.isNotEmpty) {
+              return _bitmapDescriptorFromText(
+                tappedCategoryIcon,
+                size: size,
+                backgroundColor: Colors.black,
+                backgroundOpacity: 1.0,
+              );
+            }
+            return _bitmapDescriptorFromText(
+              String.fromCharCode(Icons.public.codePoint),
+              size: size,
               backgroundColor: Colors.black,
               backgroundOpacity: 1.0,
+              textColor: Colors.white,
+              fontFamily: Icons.public.fontFamily,
             );
-          } else {
-            tappedSelectedIcon = defaultPublicSelectedIcon;
+          };
+
+          if (!mounted || animationToken != _markerAnimationToken) {
+            return;
           }
-
-          // Create a temporary marker for the selected public experience
-          final tappedMarkerId = MarkerId('selected_public_experience');
-          final tappedMarker = Marker(
-            markerId: tappedMarkerId,
-            position: position,
-            infoWindow: _infoWindowForPlatform(publicExp.name),
-            icon: tappedSelectedIcon,
-            zIndex: 1.0,
-          );
-
-          // Fetch business status if available
-          String? businessStatus;
-          bool? openNow;
-          try {
-            if (publicExp.placeID.isNotEmpty) {
-              final detailsMap =
-                  await _mapsService.fetchPlaceDetailsData(publicExp.placeID);
-              businessStatus = detailsMap?['businessStatus'] as String?;
-              openNow =
-                  (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
-            }
-          } catch (e) {
-            businessStatus = null;
-            openNow = null;
-          }
-
           setState(() {
             _mapWidgetInitialLocation = publicExp.location;
             _tappedLocationDetails = publicExp.location;
-            _tappedLocationMarker = tappedMarker;
+            _tappedLocationMarker = null;
             _tappedExperience = null;
             _tappedExperienceCategory = null;
-            _tappedLocationBusinessStatus = businessStatus;
-            _tappedLocationOpenNow = openNow;
+            _tappedLocationBusinessStatus = null;
+            _tappedLocationOpenNow = null;
             _publicReadOnlyExperience = publicExp.toExperienceDraft();
             _publicReadOnlyExperienceId = publicExp.id;
             _publicPreviewMediaItems = publicExp.buildMediaItemsForPreview();
@@ -1647,6 +1710,31 @@ class _MapScreenState extends State<MapScreen> {
             _searchResults = [];
             _showSearchResults = false;
           });
+          unawaited(_refreshBusinessStatus(publicExp.placeID, animationToken));
+          if (!mounted || animationToken != _markerAnimationToken) {
+            return;
+          }
+          final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+          if (!mounted || animationToken != _markerAnimationToken) {
+            return;
+          }
+          setState(() {
+            _tappedLocationMarker = _buildSelectedMarker(
+              markerId: tappedMarkerId,
+              position: position,
+              infoWindowTitle: publicExp.name,
+              icon: firstIcon,
+            );
+          });
+          unawaited(_animateSelectedMarkerSmooth(
+            animationToken: animationToken,
+            markerId: tappedMarkerId,
+            position: position,
+            infoWindowTitle: publicExp.name,
+            iconBuilder: iconBuilder,
+            startSize: startSize,
+            endSize: finalSize,
+          ));
           _showMarkerInfoWindow(tappedMarkerId);
         },
       );
@@ -1752,6 +1840,7 @@ class _MapScreenState extends State<MapScreen> {
           }
         });
 
+        _triggerHeavyHaptic();
         // Show completion toast with count
         Fluttertoast.showToast(
           msg: 'Showing ${_nearbyPublicExperiences.length} experiences from the community!',
@@ -2014,7 +2103,7 @@ class _MapScreenState extends State<MapScreen> {
         });
 
         return _wrapWebPointerInterceptor(Dialog(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.backgroundColor,
           insetPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           shape:
@@ -2041,6 +2130,7 @@ class _MapScreenState extends State<MapScreen> {
                       const Spacer(),
                       ElevatedButton(
                         onPressed: () {
+                          _triggerHeavyHaptic();
                           scrollController.dispose();
                           Navigator.of(dialogContext).pop();
                           _enterSelectMode();
@@ -2060,6 +2150,7 @@ class _MapScreenState extends State<MapScreen> {
                       IconButton(
                         icon: const Icon(Icons.close),
                         onPressed: () {
+                          _triggerHeavyHaptic();
                           scrollController.dispose();
                           Navigator.of(dialogContext).pop();
                         },
@@ -2126,7 +2217,12 @@ class _MapScreenState extends State<MapScreen> {
     final borderColor = _getEventColor(event);
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: onTap == null
+          ? null
+          : () {
+              _triggerHeavyHaptic();
+              onTap();
+            },
       child: Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
@@ -2315,6 +2411,7 @@ class _MapScreenState extends State<MapScreen> {
                   title: const Text('View event page'),
                   subtitle: const Text('See full event details'),
                   onTap: () {
+                    _triggerHeavyHaptic();
                     Navigator.of(sheetContext).pop();
                     Navigator.of(dialogContext).pop();
                     _openEventPage(event);
@@ -2337,6 +2434,7 @@ class _MapScreenState extends State<MapScreen> {
                   title: const Text('View event map'),
                   subtitle: Text('${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''} on map'),
                   onTap: () {
+                    _triggerHeavyHaptic();
                     Navigator.of(sheetContext).pop(); // Close bottom sheet
                     Navigator.of(dialogContext).pop(); // Close events dialog
                     _enterEventViewMode(event);
@@ -2679,6 +2777,7 @@ class _MapScreenState extends State<MapScreen> {
               : '$positionNumber. ${markerExperience?.name ?? 'Experience'}',
         ),
         onTap: () async {
+          _triggerHeavyHaptic();
           print("🗺️ MAP SCREEN: Event view marker $positionNumber tapped");
           FocusScope.of(context).unfocus();
           
@@ -2880,51 +2979,61 @@ class _MapScreenState extends State<MapScreen> {
     } else {
       selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
     }
-    final selectedIcon = await _bitmapDescriptorFromNumberedIcon(
-      number: positionNumber,
-      iconText: selectedIconText,
-      backgroundColor: markerBackgroundColor,
-      size: 100,
-    );
-    
-    // Create selected marker
     final tappedMarkerId = MarkerId('selected_experience_location');
-    final tappedMarker = Marker(
-      markerId: tappedMarkerId,
-      position: LatLng(location.latitude, location.longitude),
-      infoWindow: _infoWindowForPlatform('$selectedIconText ${experience.name}'),
-      icon: selectedIcon,
-      zIndex: 1.0,
-    );
+    final int animationToken = ++_markerAnimationToken;
+    const int finalSize = 100;
+    final int startSize = _markerStartSize(finalSize);
+    final Future<BitmapDescriptor> Function(int) iconBuilder =
+        (int size) {
+      return _bitmapDescriptorFromNumberedIcon(
+        number: positionNumber,
+        iconText: selectedIconText,
+        backgroundColor: markerBackgroundColor,
+        size: size,
+      );
+    };
     
-    // Fetch business status
-    String? businessStatus;
-    bool? openNow;
-    try {
-      if (location.placeId != null && location.placeId!.isNotEmpty) {
-        final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
-        businessStatus = detailsMap?['businessStatus'] as String?;
-        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
-      }
-    } catch (e) {
-      businessStatus = null;
-      openNow = null;
+    if (!mounted || animationToken != _markerAnimationToken) {
+      return;
     }
-    
-    if (!mounted) return;
     
     setState(() {
       _mapWidgetInitialLocation = location;
       _tappedLocationDetails = location;
-      _tappedLocationMarker = tappedMarker;
+      _tappedLocationMarker = null;
       _tappedExperience = experience;
       _tappedExperienceCategory = resolvedCategory;
-      _tappedLocationBusinessStatus = businessStatus;
-      _tappedLocationOpenNow = openNow;
+      _tappedLocationBusinessStatus = null;
+      _tappedLocationOpenNow = null;
       _searchController.clear();
       _searchResults = [];
       _showSearchResults = false;
     });
+    unawaited(_refreshBusinessStatus(location.placeId, animationToken));
+    if (!mounted || animationToken != _markerAnimationToken) {
+      return;
+    }
+    final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+    if (!mounted || animationToken != _markerAnimationToken) {
+      return;
+    }
+    setState(() {
+      _tappedLocationMarker = _buildSelectedMarker(
+        markerId: tappedMarkerId,
+        position: LatLng(location.latitude, location.longitude),
+        infoWindowTitle: '$selectedIconText ${experience.name}',
+        icon: firstIcon,
+      );
+    });
+    unawaited(_animateSelectedMarkerSmooth(
+      animationToken: animationToken,
+      markerId: tappedMarkerId,
+      position: LatLng(location.latitude, location.longitude),
+      infoWindowTitle: '$selectedIconText ${experience.name}',
+      iconBuilder: iconBuilder,
+      startSize: startSize,
+      endSize: finalSize,
+    ));
     
     _showMarkerInfoWindow(tappedMarkerId);
     unawaited(_prefetchExperienceMedia(experience));
@@ -3112,7 +3221,10 @@ class _MapScreenState extends State<MapScreen> {
     return Material(
       color: isNewItem ? Colors.green.withOpacity(0.08) : Colors.transparent,
       child: InkWell(
-        onTap: () => _focusEventItineraryItem(entry, experience, index),
+        onTap: () {
+          _triggerHeavyHaptic();
+          _focusEventItineraryItem(entry, experience, index);
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -3312,7 +3424,10 @@ class _MapScreenState extends State<MapScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => _focusSelectModeItineraryItem(entry, experience, index),
+        onTap: () {
+          _triggerHeavyHaptic();
+          _focusSelectModeItineraryItem(entry, experience, index);
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -3410,7 +3525,10 @@ class _MapScreenState extends State<MapScreen> {
               Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => _removeFromSelectModeDraft(index),
+                  onTap: () {
+                    _triggerHeavyHaptic();
+                    _removeFromSelectModeDraft(index);
+                  },
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     padding: const EdgeInsets.all(4),
@@ -3497,53 +3615,63 @@ class _MapScreenState extends State<MapScreen> {
       
       // Generate selected icon with number badge for select mode
       final String selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
-      final selectedIcon = await _bitmapDescriptorFromNumberedIcon(
-        number: index + 1,
-        iconText: selectedIconText,
-        backgroundColor: markerBackgroundColor,
-        size: 100,
-      );
-      
-      // Create selected marker
       final tappedMarkerId = MarkerId('selected_experience_location');
-      final tappedMarker = Marker(
-        markerId: tappedMarkerId,
-        position: position,
-        infoWindow: _infoWindowForPlatform('$selectedIconText ${experience.name}'),
-        icon: selectedIcon,
-        zIndex: 1.0,
-      );
+      final int animationToken = ++_markerAnimationToken;
+      const int finalSize = 100;
+      final int startSize = _markerStartSize(finalSize);
+      final Future<BitmapDescriptor> Function(int) iconBuilder =
+          (int size) {
+        return _bitmapDescriptorFromNumberedIcon(
+          number: index + 1,
+          iconText: selectedIconText,
+          backgroundColor: markerBackgroundColor,
+          size: size,
+        );
+      };
       
-      // Fetch business status
-      String? businessStatus;
-      bool? openNow;
-      try {
-        if (location.placeId != null && location.placeId!.isNotEmpty) {
-          final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
-          businessStatus = detailsMap?['businessStatus'] as String?;
-          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
-        }
-      } catch (e) {
-        businessStatus = null;
-        openNow = null;
+      if (!mounted || animationToken != _markerAnimationToken) {
+        return;
       }
-      
-      if (!mounted) return;
       
       setState(() {
         _mapWidgetInitialLocation = location;
         _tappedLocationDetails = location;
-        _tappedLocationMarker = tappedMarker;
+        _tappedLocationMarker = null;
         _tappedExperience = experience;
         _tappedExperienceCategory = resolvedCategory;
-        _tappedLocationBusinessStatus = businessStatus;
-        _tappedLocationOpenNow = openNow;
+        _tappedLocationBusinessStatus = null;
+        _tappedLocationOpenNow = null;
         _publicReadOnlyExperience = null;
         _publicReadOnlyExperienceId = null;
         _searchController.clear();
         _searchResults = [];
         _showSearchResults = false;
       });
+      unawaited(_refreshBusinessStatus(location.placeId, animationToken));
+      if (!mounted || animationToken != _markerAnimationToken) {
+        return;
+      }
+      final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+      if (!mounted || animationToken != _markerAnimationToken) {
+        return;
+      }
+      setState(() {
+        _tappedLocationMarker = _buildSelectedMarker(
+          markerId: tappedMarkerId,
+          position: position,
+          infoWindowTitle: '$selectedIconText ${experience.name}',
+          icon: firstIcon,
+        );
+      });
+      unawaited(_animateSelectedMarkerSmooth(
+        animationToken: animationToken,
+        markerId: tappedMarkerId,
+        position: position,
+        infoWindowTitle: '$selectedIconText ${experience.name}',
+        iconBuilder: iconBuilder,
+        startSize: startSize,
+        endSize: finalSize,
+      ));
       
       _showMarkerInfoWindow(tappedMarkerId);
       unawaited(_prefetchExperienceMedia(experience));
@@ -3661,11 +3789,17 @@ class _MapScreenState extends State<MapScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
+                onPressed: () {
+                  _triggerHeavyHaptic();
+                  Navigator.of(dialogContext).pop(false);
+                },
                 child: const Text('Cancel'),
               ),
               TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
+                onPressed: () {
+                  _triggerHeavyHaptic();
+                  Navigator.of(dialogContext).pop(true);
+                },
                 child: const Text('Exit'),
               ),
             ],
@@ -3701,11 +3835,17 @@ class _MapScreenState extends State<MapScreen> {
           content: const Text('Are you sure you want to leave the event view?'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
+              onPressed: () {
+                _triggerHeavyHaptic();
+                Navigator.of(dialogContext).pop(false);
+              },
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
+              onPressed: () {
+                _triggerHeavyHaptic();
+                Navigator.of(dialogContext).pop(true);
+              },
               child: const Text('Yes'),
             ),
           ],
@@ -3929,11 +4069,17 @@ class _MapScreenState extends State<MapScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
+              onPressed: () {
+                _triggerHeavyHaptic();
+                Navigator.of(dialogContext).pop(false);
+              },
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
+              onPressed: () {
+                _triggerHeavyHaptic();
+                Navigator.of(dialogContext).pop(true);
+              },
               child: const Text('Stop'),
             ),
           ],
@@ -4506,6 +4652,7 @@ class _MapScreenState extends State<MapScreen> {
           zIndex: 2.0, // Above regular markers
           infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop $positionNumber'),
           onTap: () async {
+            _triggerHeavyHaptic();
             FocusScope.of(context).unfocus();
             // Show location details bottom sheet
             await _selectLocationOnMap(
@@ -4813,40 +4960,78 @@ class _MapScreenState extends State<MapScreen> {
         }
       } catch (_) {}
 
-      final BitmapDescriptor selectedIcon;
-      if (usePurpleMarker) {
-        selectedIcon =
-            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet);
-      } else {
-        final String iconText = (experience.categoryIconDenorm != null &&
-                experience.categoryIconDenorm!.isNotEmpty)
-            ? experience.categoryIconDenorm!
-            : _resolveCategoryForExperience(experience).icon;
-        selectedIcon = await _bitmapDescriptorFromText(
+      final tappedMarkerId = MarkerId('selected_experience_location');
+      final int animationToken = ++_markerAnimationToken;
+      const int finalSize = 100;
+      final int startSize = _markerStartSize(finalSize);
+      final String iconText = (experience.categoryIconDenorm != null &&
+              experience.categoryIconDenorm!.isNotEmpty)
+          ? experience.categoryIconDenorm!
+          : _resolveCategoryForExperience(experience).icon;
+      final Future<BitmapDescriptor> Function(int) iconBuilder =
+          (int size) {
+        return _bitmapDescriptorFromText(
           iconText,
           backgroundColor: markerBackgroundColor,
-          size: 100,
+          size: size,
           backgroundOpacity: 1.0,
         );
+      };
+
+      if (!mounted || animationToken != _markerAnimationToken) {
+        return;
       }
-
-      final tappedMarkerId = MarkerId('selected_experience_location');
-      final Marker tappedMarker = Marker(
-        markerId: tappedMarkerId,
-        position: target,
-        infoWindow: _infoWindowForPlatform('${_resolveCategoryForExperience(experience).icon} ${experience.name}'),
-        icon: selectedIcon,
-        zIndex: 1.0,
-      );
-
-      if (!mounted) return;
       setState(() {
         _mapWidgetInitialLocation = experience.location;
         _tappedLocationDetails = experience.location;
-        _tappedLocationMarker = tappedMarker;
+        _tappedLocationMarker = usePurpleMarker
+            ? _buildSelectedMarker(
+                markerId: tappedMarkerId,
+                position: target,
+                infoWindowTitle:
+                    '${_resolveCategoryForExperience(experience).icon} ${experience.name}',
+                icon: BitmapDescriptor.defaultMarkerWithHue(
+                  BitmapDescriptor.hueViolet,
+                ),
+              )
+            : null;
         _tappedExperience = experience;
         _tappedExperienceCategory = _resolveCategoryForExperience(experience);
       });
+      if (!usePurpleMarker) {
+        unawaited(_refreshBusinessStatus(
+          experience.location.placeId,
+          animationToken,
+        ));
+      }
+      if (!usePurpleMarker) {
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        setState(() {
+          _tappedLocationMarker = _buildSelectedMarker(
+            markerId: tappedMarkerId,
+            position: target,
+            infoWindowTitle:
+                '${_resolveCategoryForExperience(experience).icon} ${experience.name}',
+            icon: firstIcon,
+          );
+        });
+        unawaited(_animateSelectedMarkerSmooth(
+          animationToken: animationToken,
+          markerId: tappedMarkerId,
+          position: target,
+          infoWindowTitle:
+              '${_resolveCategoryForExperience(experience).icon} ${experience.name}',
+          iconBuilder: iconBuilder,
+          startSize: startSize,
+          endSize: finalSize,
+        ));
+      }
       _showMarkerInfoWindow(tappedMarkerId);
       unawaited(_prefetchExperienceMedia(experience));
     } catch (_) {
@@ -5079,6 +5264,12 @@ class _MapScreenState extends State<MapScreen> {
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         useRootNavigator: true,
+        sheetAnimationStyle: const AnimationStyle(
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+          duration: Duration(milliseconds: 480),
+          reverseDuration: Duration(milliseconds: 320),
+        ),
         builder: (modalContext) {
           print(
               "🗺️ MAP SCREEN: Building SharedMediaPreviewModal for '${experience.name}'.");
@@ -5123,6 +5314,12 @@ class _MapScreenState extends State<MapScreen> {
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         useRootNavigator: true,
+        sheetAnimationStyle: const AnimationStyle(
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+          duration: Duration(milliseconds: 480),
+          reverseDuration: Duration(milliseconds: 320),
+        ),
         builder: (modalContext) {
           print(
               "🗺️ MAP SCREEN: Building SharedMediaPreviewModal for public experience '${publicExperience.name}'.");
@@ -5194,26 +5391,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _showMarkerInfoWindow(MarkerId markerId) {
-    if (kIsWeb) return;
-    // Try immediately after the current frame, then retry once after a short delay.
-    // This mitigates a first-tap race where the selected marker may not be ready yet.
-    Future<void> _showNow() async {
-      if (!mounted) return;
-      if (_mapController != null) {
-        _mapController!.showMarkerInfoWindow(markerId);
-      } else {
-        final controller = await _mapControllerCompleter.future;
-        if (!mounted) return;
-        controller.showMarkerInfoWindow(markerId);
-      }
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _showNow();
-      // Retry shortly after to ensure the marker is present on the map (fixes first-tap case)
-      await Future.delayed(const Duration(milliseconds: 150));
-      await _showNow();
-    });
+    // Info windows are intentionally disabled.
   }
 
   // Renamed helper to be more specific
@@ -5443,6 +5621,7 @@ class _MapScreenState extends State<MapScreen> {
                               icon: const Icon(Icons.arrow_back),
                               tooltip: 'Back',
                               onPressed: () {
+                                _triggerHeavyHaptic();
                                 updateDialogState(() {
                                   activeFolloweeId = null;
                                   activeFolloweeProfile = null;
@@ -5821,6 +6000,7 @@ class _MapScreenState extends State<MapScreen> {
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
                                     onTap: () {
+                                      _triggerHeavyHaptic();
                                       updateDialogState(() {
                                         activeFolloweeId = profile.id;
                                         activeFolloweeProfile = profile;
@@ -5883,6 +6063,7 @@ class _MapScreenState extends State<MapScreen> {
               TextButton(
                 child: const Text('Show All'),
                 onPressed: () {
+                  _triggerHeavyHaptic();
                   tempSelectedCategoryIds.clear();
                   tempSelectedColorCategoryIds.clear();
                   tempSelectedFolloweeIds.clear();
@@ -5915,12 +6096,14 @@ class _MapScreenState extends State<MapScreen> {
             TextButton(
               child: const Text('Cancel'),
               onPressed: () {
+                _triggerHeavyHaptic();
                 Navigator.of(context).pop(); // Close dialog without applying
               },
             ),
             TextButton(
               child: const Text('Apply'),
               onPressed: () {
+                _triggerHeavyHaptic();
                 // Apply the selected filters from the temporary sets
                 setState(() {
                   _selectedCategoryIds = tempSelectedCategoryIds;
@@ -6196,6 +6379,7 @@ class _MapScreenState extends State<MapScreen> {
         icon: categoryIconBitmap,
         // MODIFIED: Experience marker onTap shows location details panel
         onTap: () async {
+          _triggerHeavyHaptic();
           FocusScope.of(context).unfocus(); // Unfocus search bar
           print("🗺️ MAP SCREEN: Experience marker tapped for '${experience.name}'. Showing location details panel.");
           
@@ -6204,50 +6388,61 @@ class _MapScreenState extends State<MapScreen> {
 
           final String selectedIconText =
               _getCategoryIconForExperience(experience) ?? '❓';
-          final selectedIcon = await _bitmapDescriptorFromText(
-            selectedIconText,
-            backgroundColor: selectedMarkerBackgroundColor,
-            size: 100, // 125% of 70
-            backgroundOpacity: 1.0, // Fully opaque
-          );
+          final tappedMarkerId = MarkerId('selected_experience_location');
+          final int animationToken = ++_markerAnimationToken;
+          const int finalSize = 100;
+          final int startSize = _markerStartSize(finalSize);
+          final Future<BitmapDescriptor> Function(int) iconBuilder =
+              (int size) {
+            return _bitmapDescriptorFromText(
+              selectedIconText,
+              backgroundColor: selectedMarkerBackgroundColor,
+              size: size, // 125% of 70
+              backgroundOpacity: 1.0, // Fully opaque
+            );
+          };
           // --- END ICON REGENERATION ---
 
-          // Create a marker for the selected experience location
-          final tappedMarkerId = MarkerId('selected_experience_location');
-          final tappedMarker = Marker(
-            markerId: tappedMarkerId,
-            position: position,
-            infoWindow: _infoWindowForPlatform('$selectedIconText ${experience.name}'),
-            icon: selectedIcon, // Use the new enlarged icon
-            zIndex: 1.0,
-          );
-
-          // Fetch business and open-now status for the experience location if possible
-          String? businessStatus;
-          bool? openNow;
-          try {
-            if (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) {
-              final detailsMap = await _mapsService.fetchPlaceDetailsData(experience.location.placeId!);
-              businessStatus = detailsMap?['businessStatus'] as String?;
-              openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
-            }
-          } catch (e) {
-            businessStatus = null;
-            openNow = null;
+          if (!mounted || animationToken != _markerAnimationToken) {
+            return;
           }
-
           setState(() {
             _mapWidgetInitialLocation = experience.location;
             _tappedLocationDetails = experience.location;
-            _tappedLocationMarker = tappedMarker;
+            _tappedLocationMarker = null;
             _tappedExperience = experience; // Set associated experience
             _tappedExperienceCategory = resolvedCategory; // Set associated category
-            _tappedLocationBusinessStatus = businessStatus; // Set business status
-            _tappedLocationOpenNow = openNow; // Set open-now status
+            _tappedLocationBusinessStatus = null; // Set business status
+            _tappedLocationOpenNow = null; // Set open-now status
             _searchController.clear();
             _searchResults = [];
             _showSearchResults = false;
           });
+          unawaited(_refreshBusinessStatus(experience.location.placeId, animationToken));
+          if (!mounted || animationToken != _markerAnimationToken) {
+            return;
+          }
+          final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+          if (!mounted || animationToken != _markerAnimationToken) {
+            return;
+          }
+          setState(() {
+            _tappedLocationMarker = _buildSelectedMarker(
+              markerId: tappedMarkerId,
+              position: position,
+              infoWindowTitle: '$selectedIconText ${experience.name}',
+              icon: firstIcon,
+            );
+          });
+          unawaited(_animateSelectedMarkerSmooth(
+            animationToken: animationToken,
+            markerId: tappedMarkerId,
+            position: position,
+            infoWindowTitle: '$selectedIconText ${experience.name}',
+            iconBuilder: iconBuilder,
+            startSize: startSize,
+            endSize: finalSize,
+          ));
           _showMarkerInfoWindow(tappedMarkerId);
           unawaited(_prefetchExperienceMedia(experience));
         },
@@ -6825,37 +7020,20 @@ class _MapScreenState extends State<MapScreen> {
       final String selectedIconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
         : '*';
-      final selectedIcon = await _bitmapDescriptorFromText(
-        selectedIconText,
-        backgroundColor: markerBackgroundColor,
-        size: 88, // 125% of 70
-        backgroundOpacity: 1.0, // Fully opaque
-      );
-      // --- END ICON REGENERATION ---
-
-      // Create marker for the experience location
       final tappedMarkerId = MarkerId('selected_experience_location');
-      final tappedMarker = Marker(
-        markerId: tappedMarkerId,
-        position: targetLatLng,
-        infoWindow: _infoWindowForPlatform('${category.icon} ${experience.name}'),
-        icon: selectedIcon, // Use the new enlarged icon
-        zIndex: 1.0,
-      );
-
-      // Fetch business/open-now status for the experience location if possible
-      String? businessStatus;
-      bool? openNow;
-      try {
-        if (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) {
-          final detailsMap = await _mapsService.fetchPlaceDetailsData(experience.location.placeId!);
-          businessStatus = detailsMap?['businessStatus'] as String?;
-          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
-        }
-      } catch (e) {
-        businessStatus = null;
-        openNow = null;
-      }
+      final int animationToken = ++_markerAnimationToken;
+      const int finalSize = 88;
+      final int startSize = _markerStartSize(finalSize);
+      final Future<BitmapDescriptor> Function(int) iconBuilder =
+          (int size) {
+        return _bitmapDescriptorFromText(
+          selectedIconText,
+          backgroundColor: markerBackgroundColor,
+          size: size, // 125% of 70
+          backgroundOpacity: 1.0, // Fully opaque
+        );
+      };
+      // --- END ICON REGENERATION ---
 
       // Set search text to experience name
       _searchController.text = experience.name;
@@ -6868,14 +7046,42 @@ class _MapScreenState extends State<MapScreen> {
         setState(() {
           _mapWidgetInitialLocation = experience.location;
           _tappedLocationDetails = experience.location;
-          _tappedLocationMarker = tappedMarker;
+          _tappedLocationMarker = null;
           _tappedExperience = experience; // ADDED: Set associated experience
           _tappedExperienceCategory = category; // ADDED: Set associated category
-          _tappedLocationBusinessStatus = businessStatus; // ADDED: Set business status
-          _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
+          _tappedLocationBusinessStatus = null; // ADDED: Set business status
+          _tappedLocationOpenNow = null; // ADDED: Set open-now status
           _isSearching = false;
           _showSearchResults = false;
         });
+        unawaited(_refreshBusinessStatus(
+          experience.location.placeId,
+          animationToken,
+        ));
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        setState(() {
+          _tappedLocationMarker = _buildSelectedMarker(
+            markerId: tappedMarkerId,
+            position: targetLatLng,
+            infoWindowTitle: '${category.icon} ${experience.name}',
+            icon: firstIcon,
+          );
+        });
+        unawaited(_animateSelectedMarkerSmooth(
+          animationToken: animationToken,
+          markerId: tappedMarkerId,
+          position: targetLatLng,
+          infoWindowTitle: '${category.icon} ${experience.name}',
+          iconBuilder: iconBuilder,
+          startSize: startSize,
+          endSize: finalSize,
+        ));
         _showMarkerInfoWindow(tappedMarkerId);
       }
       unawaited(_prefetchExperienceMedia(experience));
@@ -7072,7 +7278,24 @@ class _MapScreenState extends State<MapScreen> {
     return Wrap(
       spacing: 8.0,
       runSpacing: 4.0,
-      children: otherCategoryObjects.map((category) {
+      children: otherCategoryObjects.asMap().entries.map((entry) {
+        final int index = entry.key;
+        final UserCategory category = entry.value;
+
+        // For the first item, wrap in SizedBox and center to align with primary icon
+        if (index == 0) {
+          return SizedBox(
+            width: 24,
+            child: Center(
+              child: Text(
+                category.icon,
+                style: const TextStyle(fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          );
+        }
+
         return Text(
           category.icon,
           style: const TextStyle(fontSize: 16),
@@ -7110,7 +7333,7 @@ class _MapScreenState extends State<MapScreen> {
     if (primaryColorCategory != null) {
       rowChildren.add(
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
           decoration: BoxDecoration(
             color: Colors.grey.shade100,
             borderRadius: BorderRadius.circular(12),
@@ -7189,12 +7412,9 @@ class _MapScreenState extends State<MapScreen> {
     return PointerInterceptor(child: child);
   }
 
-  // Helper to disable InfoWindow on web (prevents automatic popup)
+  // Info windows are disabled across platforms.
   InfoWindow _infoWindowForPlatform(String title) {
-    if (kIsWeb) {
-      return InfoWindow.noText;
-    }
-    return InfoWindow(title: title);
+    return InfoWindow.noText;
   }
 
   @override
@@ -7218,6 +7438,18 @@ class _MapScreenState extends State<MapScreen> {
     final bool showExperiencePrompt = _canOpenSelectedExperience;
     final bool showFilterButton = _authService.currentUser != null &&
         !(_authService.currentUser?.isAnonymous ?? false);
+    final String selectedName = _tappedExperience != null
+        ? _tappedExperience!.name
+        : hasPublicFallback
+            ? _publicReadOnlyExperience!.name
+            : _tappedLocationDetails?.getPlaceName() ?? 'Selected Location';
+
+    final String? selectedIcon = _tappedExperience != null
+        ? _tappedExperienceCategory?.icon
+        : hasPublicFallback
+            ? _publicReadOnlyCategory.icon
+            : null;
+
     final String selectedTitle = _tappedExperience != null
         ? _formatExperienceTitle(
             name: _tappedExperience!.name,
@@ -7290,8 +7522,9 @@ class _MapScreenState extends State<MapScreen> {
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         elevation: 0,
         titleSpacing: 0,
@@ -7299,6 +7532,7 @@ class _MapScreenState extends State<MapScreen> {
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () async {
+                  _triggerHeavyHaptic();
                   // If in add-to-event mode with changes, return the updated event
                   if (_isAddToEventModeActive && _addToEventDraftItinerary.isNotEmpty && _activeEventViewMode != null) {
                     final updatedEvent = _activeEventViewMode!.copyWith(
@@ -7360,30 +7594,36 @@ class _MapScreenState extends State<MapScreen> {
         ),
         actions: [
           Container(
-            color: Colors.white,
+            color: AppColors.backgroundColor,
             child: IconButton(
               icon: Icon(
                 Icons.event_outlined,
                 color: Colors.black,
               ),
               tooltip: 'Toggle calendar view',
-              onPressed: _handleCalendarToggle,
+              onPressed: () {
+                _triggerHeavyHaptic();
+                _handleCalendarToggle();
+              },
             ),
           ),
           Container(
-            color: Colors.white,
+            color: AppColors.backgroundColor,
             child: IconButton(
               icon: Icon(
                 Icons.public,
                 color: _isGlobalToggleActive ? Colors.black : Colors.grey,
               ),
               tooltip: 'Toggle global view',
-              onPressed: _handleGlobeToggle,
+              onPressed: () {
+                _triggerHeavyHaptic();
+                _handleGlobeToggle();
+              },
             ),
           ),
           if (showFilterButton)
             Container(
-              color: Colors.white,
+              color: AppColors.backgroundColor,
               child: IconButton(
                 icon: Stack(
                   clipBehavior: Clip.none,
@@ -7399,7 +7639,10 @@ class _MapScreenState extends State<MapScreen> {
                           decoration: BoxDecoration(
                             color: Theme.of(context).primaryColor,
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 1.5),
+                            border: Border.all(
+                              color: AppColors.backgroundColor,
+                              width: 1.5,
+                            ),
                           ),
                         ),
                       ),
@@ -7407,6 +7650,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 tooltip: 'Filter Experiences',
                 onPressed: () {
+                  _triggerHeavyHaptic();
                   print("🗺️ MAP SCREEN: Filter button pressed!");
                   setState(() {
                     _tappedLocationMarker = null;
@@ -7431,11 +7675,14 @@ class _MapScreenState extends State<MapScreen> {
           children: [
             // --- Search bar ---
             Container(
-              color: Colors.white,
+              color: AppColors.backgroundColor,
               child: Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: Card(
-                  color: Colors.white,
+                  color: AppColors.backgroundColorDark,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(25.0),
+                  ),
                   child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0),
                   child: TextField(
@@ -7443,9 +7690,20 @@ class _MapScreenState extends State<MapScreen> {
                     focusNode: _searchFocusNode,
                     decoration: InputDecoration(
                       hintText: 'Search for a place or address',
-                      border: InputBorder.none,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(25.0),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(25.0),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(25.0),
+                        borderSide: BorderSide.none,
+                      ),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: AppColors.backgroundColorDark,
                       prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
                       suffixIcon: _isSearching // Show loading indicator in search bar
                           ? SizedBox(
@@ -7459,24 +7717,26 @@ class _MapScreenState extends State<MapScreen> {
                           : _searchController.text.isNotEmpty
                               ? IconButton(
                                   icon: Icon(Icons.clear),
-                                                      onPressed: () {
-                      setState(() {
-                        _searchController.clear();
-                        _searchResults = [];
-                        _showSearchResults = false;
-                        // Clear tapped location when search is cleared
-                        _tappedLocationDetails = null;
-                        _tappedLocationMarker = null;
-                        _tappedExperience = null;
-                        _tappedExperienceCategory = null;
-                        _tappedLocationBusinessStatus = null;
-                        _tappedLocationOpenNow = null;
-                      });
-                    },
+                                  onPressed: () {
+                                    _triggerHeavyHaptic();
+                                    setState(() {
+                                      _searchController.clear();
+                                      _searchResults = [];
+                                      _showSearchResults = false;
+                                      // Clear tapped location when search is cleared
+                                      _tappedLocationDetails = null;
+                                      _tappedLocationMarker = null;
+                                      _tappedExperience = null;
+                                      _tappedExperienceCategory = null;
+                                      _tappedLocationBusinessStatus = null;
+                                      _tappedLocationOpenNow = null;
+                                    });
+                                  },
                                 )
                               : null,
                     ),
                     onTap: () {
+                      _triggerHeavyHaptic();
                       // When search bar is tapped, clear any existing map-tapped location
                       // to avoid confusion if the user then selects from search results.
                       // However, don't clear if a search result was *just* selected.
@@ -7500,7 +7760,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 margin: EdgeInsets.symmetric(horizontal: 8.0),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.backgroundColor,
                   borderRadius: BorderRadius.circular(8),
                   boxShadow: [
                     BoxShadow(
@@ -7515,7 +7775,12 @@ class _MapScreenState extends State<MapScreen> {
                   padding: EdgeInsets.symmetric(vertical: 8),
                   itemCount: _searchResults.length,
                   separatorBuilder: (context, index) =>
-                      Divider(height: 1, indent: 56, endIndent: 16),
+                      Divider(
+                        height: 1,
+                        indent: 56,
+                        endIndent: 16,
+                        color: AppColors.backgroundColorMid,
+                      ),
                   itemBuilder: (context, index) {
                     final result = _searchResults[index];
                     final bool isUserExperience = result['type'] == 'experience';
@@ -7529,13 +7794,17 @@ class _MapScreenState extends State<MapScreen> {
                             : null);
 
                     return Material(
-                      color: Colors.transparent,
+                      color: AppColors.backgroundColor,
                       child: InkWell(
-                        onTap: () => _selectSearchResult(result),
+                        onTap: () {
+                          _triggerHeavyHaptic();
+                          _selectSearchResult(result);
+                        },
                         borderRadius: BorderRadius.circular(8),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
                           child: ListTile(
+                            tileColor: AppColors.backgroundColor,
                             leading: CircleAvatar(
                               backgroundColor: isUserExperience 
                                   ? Colors.green.withOpacity(0.1) 
@@ -7677,6 +7946,7 @@ class _MapScreenState extends State<MapScreen> {
                       child: _wrapWebPointerInterceptor(
                         GestureDetector(
                           onTap: () async {
+                            _triggerHeavyHaptic();
                             // Fit camera to show all itinerary experiences
                             final positions = _eventViewMarkers.values
                                 .map((marker) => marker.position)
@@ -7780,6 +8050,7 @@ class _MapScreenState extends State<MapScreen> {
                                             color: Colors.transparent,
                                             child: InkWell(
                                               onTap: () {
+                                                _triggerHeavyHaptic();
                                                 setState(() {
                                                   _isEventOverlayExpanded =
                                                       !_isEventOverlayExpanded;
@@ -7844,9 +8115,14 @@ class _MapScreenState extends State<MapScreen> {
                                               Material(
                                                 color: Colors.transparent,
                                                 child: InkWell(
-                                                  onTap: _isAddToEventModeActive
-                                                      ? _finishAddToEvent
-                                                      : _enterAddToEventMode,
+                                                  onTap: () {
+                                                    _triggerHeavyHaptic();
+                                                    if (_isAddToEventModeActive) {
+                                                      _finishAddToEvent();
+                                                    } else {
+                                                      _enterAddToEventMode();
+                                                    }
+                                                  },
                                                   borderRadius:
                                                       BorderRadius.circular(20),
                                                   child: Container(
@@ -7906,7 +8182,10 @@ class _MapScreenState extends State<MapScreen> {
                                       Material(
                                         color: Colors.transparent,
                                         child: InkWell(
-                                          onTap: _confirmExitEventViewMode,
+                                          onTap: () {
+                                            _triggerHeavyHaptic();
+                                            _confirmExitEventViewMode();
+                                          },
                                           borderRadius:
                                               BorderRadius.circular(20),
                                           child: Container(
@@ -8016,6 +8295,7 @@ class _MapScreenState extends State<MapScreen> {
                                         color: Colors.transparent,
                                         child: InkWell(
                                           onTap: () {
+                                            _triggerHeavyHaptic();
                                             setState(() {
                                               _isSelectModeOverlayExpanded = !_isSelectModeOverlayExpanded;
                                             });
@@ -8066,7 +8346,10 @@ class _MapScreenState extends State<MapScreen> {
                                       Material(
                                         color: Colors.transparent,
                                         child: InkWell(
-                                          onTap: _finishSelectModeAndOpenEditor,
+                                          onTap: () {
+                                            _triggerHeavyHaptic();
+                                            _finishSelectModeAndOpenEditor();
+                                          },
                                           borderRadius: BorderRadius.circular(20),
                                           child: Container(
                                             padding: const EdgeInsets.all(8),
@@ -8110,7 +8393,10 @@ class _MapScreenState extends State<MapScreen> {
                                   Material(
                                     color: Colors.transparent,
                                     child: InkWell(
-                                      onTap: _confirmExitSelectMode,
+                                      onTap: () {
+                                        _triggerHeavyHaptic();
+                                        _confirmExitSelectMode();
+                                      },
                                       borderRadius: BorderRadius.circular(20),
                                       child: Container(
                                         padding: const EdgeInsets.all(8),
@@ -8142,179 +8428,309 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                   ),
             // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
-            if (_tappedLocationDetails != null && !isKeyboardVisible)
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: _wrapWebPointerInterceptor(
-                  ConstrainedBox(
-                    constraints: kIsWeb
-                        ? const BoxConstraints(maxWidth: 480)
-                        : const BoxConstraints(),
-                    child: Container(
-                        padding: EdgeInsets.fromLTRB(
-                            16, 16, 16, 8 + MediaQuery.of(context).padding.bottom / 2),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(16),
-                            topRight: Radius.circular(16),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 8,
-                              offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 420),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                final offsetAnimation = Tween<Offset>(
+                  begin: const Offset(0, 0.35),
+                  end: Offset.zero,
+                ).animate(animation);
+                return SlideTransition(
+                  position: offsetAnimation,
+                  child: FadeTransition(opacity: animation, child: child),
+                );
+              },
+              child: (_tappedLocationDetails != null && !isKeyboardVisible)
+                  ? Align(
+                      key: ValueKey(
+                        _tappedExperience?.id ??
+                            _tappedLocationDetails?.placeId ??
+                            selectedTitle,
+                      ),
+                      alignment: Alignment.bottomCenter,
+                      child: _wrapWebPointerInterceptor(
+                        ConstrainedBox(
+                          constraints: kIsWeb
+                              ? const BoxConstraints(maxWidth: 480)
+                              : const BoxConstraints(),
+                          child: Container(
+                            padding: EdgeInsets.fromLTRB(
+                              16,
+                              16,
+                              16,
+                              2 + MediaQuery.of(context).padding.bottom / 2,
                             ),
-                          ],
-                        ),
-                        child: Stack(
-                          clipBehavior: Clip.none, 
-                          children: [
-                          // ADDED: Positioned "Tap to view" text at the very top
-                          if (showExperiencePrompt)
-                            Positioned(
-                              top: -12, // Move it further up, closer to the edge
-                              left: 0,
-                              right: 0,
-                              child: Center(
-                                child: Text(
-                                  'Tap to view experience details',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[500],
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
+                            decoration: BoxDecoration(
+                              color: AppColors.backgroundColor,
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(28),
+                                topRight: Radius.circular(28),
                               ),
-                            ),
-                          GestureDetector(
-                            onTap: showExperiencePrompt
-                                ? _handleTappedLocationNavigation
-                                : null,
-                            behavior: HitTestBehavior.translucent,
-                            child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min, 
-                            children: [
-                              // ADDED: Add space at the top for the positioned text
-                              if (showExperiencePrompt)
-                                SizedBox(height: 12),
-                              // Only show "Selected Location" for non-experience locations
-                              if (!showExperiencePrompt) ...[
-                                Text(
-                                  'Selected Location',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.normal,
-                                    fontSize: 14,
-                                    color: Colors.grey[800],
-                                  ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 8,
+                                  offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
                                 ),
-                                SizedBox(height: 12),
                               ],
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      selectedTitle,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w500,
-                                        fontSize: 16,
+                            ),
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                // ADDED: Positioned "Tap to view" text at the very top
+                                if (showExperiencePrompt)
+                                  Positioned(
+                                    top: -12, // Move it further up, closer to the edge
+                                    left: 0,
+                                    right: 0,
+                                    child: Center(
+                                      child: Text(
+                                        'Tap to view experience details',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[500],
+                                          fontStyle: FontStyle.italic,
+                                        ),
                                       ),
                                     ),
                                   ),
-                                  Transform.translate(
-                                    offset: const Offset(16, 0),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        // Share button - only show when experience is selected
-                                        if (_tappedExperience != null)
-                                          Transform.translate(
-                                            offset: kIsWeb ? const Offset(0, 0) : const Offset(0, 0),
-                                            child: IconButton(
-                                              onPressed: () => _shareSelectedExperience(),
-                                              icon: const Icon(Icons.share_outlined, color: Colors.blue, size: 28),
-                                              tooltip: 'Share',
-                                              padding: EdgeInsets.zero,
-                                              constraints: const BoxConstraints(),
+                                GestureDetector(
+                                  onTap: showExperiencePrompt
+                                      ? () {
+                                          _triggerHeavyHaptic();
+                                          _handleTappedLocationNavigation();
+                                        }
+                                      : null,
+                                  behavior: HitTestBehavior.translucent,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      // ADDED: Add space at the top for the positioned text
+                                      if (showExperiencePrompt)
+                                        SizedBox(height: 12),
+                                      // Only show "Selected Location" for non-experience locations
+                                      if (!showExperiencePrompt) ...[
+                                        Text(
+                                          'Selected Location',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.normal,
+                                            fontSize: 14,
+                                            color: Colors.grey[800],
+                                          ),
+                                        ),
+                                        SizedBox(height: 12),
+                                      ],
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Expanded(
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(top: 4.0),
+                                              child: Row(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  if (selectedIcon != null && selectedIcon.isNotEmpty && selectedIcon != '*') ...[
+                                                    SizedBox(
+                                                      width: 24,
+                                                      child: Center(
+                                                        child: Text(
+                                                          selectedIcon,
+                                                          style: const TextStyle(
+                                                            fontSize: 16,
+                                                          ),
+                                                          textAlign: TextAlign.center,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                  ],
+                                                  Expanded(
+                                                    child: Text(
+                                                      selectedName,
+                                                      style: const TextStyle(
+                                                        fontWeight: FontWeight.w500,
+                                                        fontSize: 16,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
                                             ),
                                           ),
-                                        if (_tappedExperience != null && kIsWeb) const SizedBox(width: 12),
-                                        Transform.translate(
-                                          offset: kIsWeb ? const Offset(0, 0) : const Offset(-6, 0),
-                                          child: IconButton(
-                                            onPressed: () {
-                                              if (_tappedLocationDetails != null) {
-                                                _launchMapLocation(_tappedLocationDetails!);
-                                              }
-                                            },
-                                            icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
-                                            tooltip: 'Open in map app',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // Share button - only show when experience is selected
+                                              if (_tappedExperience != null) ...[
+                                                const SizedBox(width: 8),
+                                                IconButton(
+                                                  onPressed: () {
+                                                    _triggerHeavyHaptic();
+                                                    _shareSelectedExperience();
+                                                  },
+                                                  icon: const Icon(Icons.share_outlined, color: Colors.blue, size: 28),
+                                                  tooltip: 'Share',
+                                                  padding: EdgeInsets.zero,
+                                                  constraints: const BoxConstraints(),
+                                                  style: IconButton.styleFrom(
+                                                    minimumSize: Size.zero,
+                                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                              ],
+                                              IconButton(
+                                                onPressed: () {
+                                                  _triggerHeavyHaptic();
+                                                  if (_tappedLocationDetails != null) {
+                                                    _launchMapLocation(_tappedLocationDetails!);
+                                                  }
+                                                },
+                                                icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
+                                                tooltip: 'Open in map app',
+                                                padding: EdgeInsets.zero,
+                                                constraints: const BoxConstraints(),
+                                                style: IconButton.styleFrom(
+                                                  minimumSize: Size.zero,
+                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              IconButton(
+                                                onPressed: () {
+                                                  _triggerHeavyHaptic();
+                                                  if (_tappedLocationDetails != null) {
+                                                    _openDirectionsForLocation(_tappedLocationDetails!);
+                                                  }
+                                                },
+                                                icon: Icon(Icons.directions, color: Colors.blue, size: 28),
+                                                tooltip: 'Get Directions',
+                                                padding: EdgeInsets.zero,
+                                                constraints: const BoxConstraints(),
+                                                style: IconButton.styleFrom(
+                                                  minimumSize: Size.zero,
+                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              IconButton(
+                                                onPressed: () {
+                                                  _triggerHeavyHaptic();
+                                                  setState(() {
+                                                    _tappedLocationMarker = null;
+                                                    _tappedLocationDetails = null;
+                                                    _tappedExperience = null;
+                                                    _tappedExperienceCategory = null;
+                                                    _tappedLocationBusinessStatus = null;
+                                                    _tappedLocationOpenNow = null;
+                                                  });
+                                                },
+                                                icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
+                                                tooltip: 'Close',
+                                                padding: EdgeInsets.zero,
+                                                constraints: const BoxConstraints(),
+                                                style: IconButton.styleFrom(
+                                                  minimumSize: Size.zero,
+                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                ),
+                                              ),
+                                              if (kIsWeb) const SizedBox(width: 8),
+                                            ],
                                           ),
-                                        ),
-                                        if (kIsWeb) const SizedBox(width: 12),
-                                        Transform.translate(
-                                          offset: kIsWeb ? const Offset(0, 0) : const Offset(-12, 0),
-                                          child: IconButton(
-                                            onPressed: () {
-                                              if (_tappedLocationDetails != null) {
-                                                _openDirectionsForLocation(_tappedLocationDetails!);
-                                              }
-                                            },
-                                            icon: Icon(Icons.directions, color: Colors.blue, size: 28),
-                                            tooltip: 'Get Directions',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                        ),
-                                        if (kIsWeb) const SizedBox(width: 12),
-                                        Transform.translate(
-                                          offset: kIsWeb ? const Offset(0, 0) : const Offset(-18, 0),
-                                          child: IconButton(
-                                            onPressed: () {
-                                              setState(() {
-                                                _tappedLocationMarker = null;
-                                                _tappedLocationDetails = null;
-                                                _tappedExperience = null;
-                                                _tappedExperienceCategory = null;
-                                                _tappedLocationBusinessStatus = null;
-                                                _tappedLocationOpenNow = null;
-                                              });
-                                            },
-                                            icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
-                                            tooltip: 'Close',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                        ),
-                                        if (kIsWeb) const SizedBox(width: 8),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(height: 8),
+                                        ],
+                                      ),
                               if (_tappedExperience != null) ...[
                                 if (_tappedExperience!.otherCategories.isNotEmpty) ...[
                                   _buildOtherCategoriesWidget(),
-                                  const SizedBox(height: 12),
                                 ],
                                 Align(
                                   alignment: Alignment.centerLeft,
                                   child: _buildColorCategoryWidget(),
                                 ),
-                                const SizedBox(height: 12),
                               ],
+                              const SizedBox(height: 0), // Removed top padding
                               if (_tappedLocationDetails!.address != null &&
                                   _tappedLocationDetails!.address!.isNotEmpty) ...[
-                                Text(
-                                  _tappedLocationDetails!.address!,
-                                  style: TextStyle(color: Colors.grey[700]),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        _tappedLocationDetails!.address!,
+                                        style: TextStyle(color: Colors.grey[700]),
+                                      ),
+                                    ),
+                                    if (_tappedExperience != null || hasPublicFallback) ...[
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                        width: 48,
+                                        height: 48,
+                                        child: OverflowBox(
+                                          minHeight: 48,
+                                          maxHeight: 48,
+                                          alignment: Alignment.center,
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              _triggerHeavyHaptic();
+                                              _onPlayExperienceContent();
+                                            },
+                                            child: Opacity(
+                                              opacity: canPreviewContent ? 1.0 : 0.45,
+                                              child: Stack(
+                                                clipBehavior: Clip.none,
+                                                children: [
+                                                  Container(
+                                                    width: 48,
+                                                    height: 48,
+                                                    decoration: BoxDecoration(
+                                                      color: Theme.of(context).primaryColor,
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: const Icon(
+                                                      Icons.play_arrow,
+                                                      color: Colors.white,
+                                                      size: 24,
+                                                    ),
+                                                  ),
+                                                  Positioned(
+                                                    bottom: -2,
+                                                    right: -2,
+                                                    child: Container(
+                                                      width: 22,
+                                                      height: 22,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        shape: BoxShape.circle,
+                                                        border: Border.all(
+                                                          color: Theme.of(context).primaryColor,
+                                                          width: 2,
+                                                        ),
+                                                      ),
+                                                      child: Center(
+                                                        child: Text(
+                                                          selectedMediaCount.toString(),
+                                                          style: TextStyle(
+                                                            color: Theme.of(context).primaryColor,
+                                                            fontSize: 12,
+                                                            fontWeight: FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
-                                SizedBox(height: 8),
+                                const SizedBox(height: 0),
                               ],
                               if (selectedAdditionalNotes != null) ...[
                                 Row(
@@ -8371,64 +8787,11 @@ class _MapScreenState extends State<MapScreen> {
                                 SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
                               ],
 
-                              // ADDED: Business Status row below star rating with play button
+                              // ADDED: Business Status row below star rating
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
                                   Expanded(child: _buildBusinessStatusWidget()),
-                                  if (_tappedExperience != null || hasPublicFallback) ...[
-                                    const SizedBox(width: 12),
-                                    GestureDetector(
-                                      onTap: _onPlayExperienceContent,
-                                      child: Opacity(
-                                        opacity: canPreviewContent ? 1.0 : 0.45,
-                                        child: Stack(
-                                          clipBehavior: Clip.none,
-                                          children: [
-                                            Container(
-                                              width: 48,
-                                              height: 48,
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context).primaryColor,
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: const Icon(
-                                                Icons.play_arrow,
-                                                color: Colors.white,
-                                                size: 24,
-                                              ),
-                                            ),
-                                            Positioned(
-                                              bottom: -2,
-                                              right: -2,
-                                              child: Container(
-                                                width: 22,
-                                                height: 22,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  shape: BoxShape.circle,
-                                                  border: Border.all(
-                                                    color: Theme.of(context).primaryColor,
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                                child: Center(
-                                                  child: Text(
-                                                    selectedMediaCount.toString(),
-                                                    style: TextStyle(
-                                                      color: Theme.of(context).primaryColor,
-                                                      fontSize: 12,
-                                                      fontWeight: FontWeight.w600,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
                                 ],
                               ),
 
@@ -8445,8 +8808,9 @@ class _MapScreenState extends State<MapScreen> {
                                     final bool isInItinerary = isInExistingEvent || isInDraft;
                                     
                                     return isInItinerary
-                                        ? ElevatedButton.icon(
+                                          ? ElevatedButton.icon(
                                             onPressed: () {
+                                              _triggerHeavyHaptic();
                                               if (isInDraft) {
                                                 // Remove from draft
                                                 _removeTappedItemFromDraftItinerary();
@@ -8473,7 +8837,10 @@ class _MapScreenState extends State<MapScreen> {
                                             ),
                                           )
                                         : ElevatedButton.icon(
-                                            onPressed: () => _handleSelectForEvent(),
+                                            onPressed: () {
+                                              _triggerHeavyHaptic();
+                                              _handleSelectForEvent();
+                                            },
                                             icon: const Icon(Icons.add_circle_outline, size: 20),
                                             label: const Text('Add to Event'),
                                             style: ElevatedButton.styleFrom(
@@ -8499,7 +8866,10 @@ class _MapScreenState extends State<MapScreen> {
                                   width: double.infinity,
                                   child: _isTappedItemInEventItinerary()
                                       ? ElevatedButton.icon(
-                                          onPressed: () => _removeTappedItemFromEvent(),
+                                          onPressed: () {
+                                            _triggerHeavyHaptic();
+                                            _removeTappedItemFromEvent();
+                                          },
                                           icon: const Icon(Icons.remove_circle_outline, size: 20),
                                           label: const Text('Remove from event'),
                                           style: ElevatedButton.styleFrom(
@@ -8512,7 +8882,10 @@ class _MapScreenState extends State<MapScreen> {
                                           ),
                                         )
                                       : ElevatedButton.icon(
-                                          onPressed: () => _addTappedItemToEvent(),
+                                          onPressed: () {
+                                            _triggerHeavyHaptic();
+                                            _addTappedItemToEvent();
+                                          },
                                           icon: const Icon(Icons.add_circle_outline, size: 20),
                                           label: const Text('Add to event'),
                                           style: ElevatedButton.styleFrom(
@@ -8527,16 +8900,20 @@ class _MapScreenState extends State<MapScreen> {
                                 ),
                               ],
 
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 0),
                             ],
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                      ],
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(
+                      key: ValueKey('selected_location_sheet_empty'),
                     ),
-                  ),
-                    ), // Close _wrapWebPointerInterceptor
-                ),
-              ),
+            ),
             // --- END Tapped Location Details ---
                 ],
               ),

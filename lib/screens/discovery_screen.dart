@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
@@ -1612,15 +1613,16 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                           color: Colors.white,
                           size: 28,
                         ),
-                  label: const Text(
+                  label: Text(
                     'Map',
-                    style: TextStyle(
+                    style: GoogleFonts.notoSerif(
                       color: Colors.white,
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   onPressed: () {
+                    HapticFeedback.heavyImpact();
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (context) => const MapScreen(),
@@ -1689,7 +1691,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   ),
                   const SizedBox(height: 25),
                   ElevatedButton(
-                    onPressed: () => _setHasStartedDiscovering(true),
+                    onPressed: () {
+                      HapticFeedback.heavyImpact();
+                      _setHasStartedDiscovering(true);
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryColor,
                       foregroundColor: Colors.white,
@@ -1958,6 +1963,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         '_buildActionButton requires either an IconData or a Widget.');
     final Widget iconContent =
         iconWidget ?? Icon(icon, color: Colors.white, size: 28);
+    final VoidCallback? wrappedOnPressed = onPressed == null
+        ? null
+        : () {
+            HapticFeedback.heavyImpact();
+            onPressed();
+          };
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1967,7 +1978,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             borderRadius: BorderRadius.circular(24),
           ),
           child: IconButton(
-            onPressed: onPressed,
+            onPressed: wrappedOnPressed,
             icon: iconContent,
             iconSize: iconWidget == null ? 28 : 24,
             splashRadius: 28,
