@@ -430,7 +430,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                               onTap: () async {
                                 final Uri emailUri = Uri(
                                   scheme: 'mailto',
-                                  path: 'plendy.experience@gmail.com',
+                                  path: 'admin@plendy.app',
                                   queryParameters: {
                                     'subject': 'Email Verification Help - ${widget.email}',
                                     'body': 'Hi Plendy Support,\n\nI\'m having trouble verifying my email address: ${widget.email}\n\nPlease help me verify my account.\n\nThank you!',
@@ -441,7 +441,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                                 }
                               },
                               child: Text(
-                                'plendy.experience@gmail.com',
+                                'admin@plendy.app',
                                 style: TextStyle(
                                   color: Colors.blue.shade600,
                                   fontWeight: FontWeight.w600,

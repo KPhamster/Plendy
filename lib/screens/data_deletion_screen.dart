@@ -103,7 +103,7 @@ class DataDeletionScreen extends StatelessWidget {
               icon: Icons.email,
               title: 'Method 2: Email Request',
               steps: [
-                'Send an email to: plendy.experience@gmail.com',
+                'Send an email to: admin@plendy.app',
                 'Subject: "Delete My Plendy Account"',
                 'Include your registered email address',
                 'We\'ll process within 30 days',
@@ -171,7 +171,7 @@ class DataDeletionScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Contact us at plendy.experience@gmail.com for any questions about data deletion or privacy.',
+                    'Contact us at admin@plendy.app for any questions about data deletion or privacy.',
                     style: TextStyle(color: Colors.blue[900]),
                   ),
                 ],
@@ -286,7 +286,7 @@ class DataDeletionScreen extends StatelessWidget {
   Widget _buildEmailButton(BuildContext context) {
     return ElevatedButton.icon(
       onPressed: () async {
-        final email = 'plendy.experience@gmail.com';
+        final email = 'admin@plendy.app';
         final subject = 'Delete My Plendy Account';
         final body = 'Please delete my Plendy account and all associated data.\n\n'
             'My registered email: [ENTER YOUR EMAIL HERE]';

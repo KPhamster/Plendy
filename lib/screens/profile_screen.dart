@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/notification_state_service.dart';
@@ -13,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'tutorials_screen.dart';
 import 'reviews_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../config/colors.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -109,7 +111,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _launchFeedbackEmail() async {
     final emailUri = Uri(
       scheme: 'mailto',
-      path: 'plendy.experience@gmail.com',
+      path: 'admin@plendy.app',
     );
     if (!await launchUrl(emailUri, mode: LaunchMode.externalApplication)) {
       if (!mounted) return;
@@ -125,14 +127,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = authService.currentUser;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         title: const Text('My Account'),
         actions: [
           TextButton(
-            onPressed: _openEditProfile,
+            onPressed: () {
+              HapticFeedback.heavyImpact();
+              _openEditProfile();
+            },
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               foregroundColor: Colors.black,
@@ -141,7 +146,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.edit),
-            onPressed: _openEditProfile,
+            onPressed: () {
+              HapticFeedback.heavyImpact();
+              _openEditProfile();
+            },
           ),
         ],
       ),
@@ -156,7 +164,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     Center(
                       child: GestureDetector(
-                        onTap: _openEditProfile,
+                        onTap: () {
+                          HapticFeedback.heavyImpact();
+                          _openEditProfile();
+                        },
                         behavior: HitTestBehavior.translucent,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -263,6 +274,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               title: const Text('My People'),
                               onTap: () {
+                                HapticFeedback.heavyImpact();
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -278,6 +290,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               title: const Text('Messages'),
                               onTap: () {
+                                HapticFeedback.heavyImpact();
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -292,6 +305,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               title:
                                   const Text('Sign in for improved experience'),
                               onTap: () async {
+                                HapticFeedback.heavyImpact();
                                 final result = await Navigator.push<bool>(
                                   context,
                                   MaterialPageRoute(
@@ -308,6 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               leading: const Icon(Icons.menu_book_outlined),
                               title: const Text('Tutorials'),
                               onTap: () {
+                                HapticFeedback.heavyImpact();
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -321,6 +336,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               leading: const Icon(Icons.thumb_up_outlined),
                               title: const Text('Reviews'),
                               onTap: () {
+                                HapticFeedback.heavyImpact();
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -333,7 +349,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ListTile(
                               leading: const Icon(Icons.email_outlined),
                               title: const Text('Report'),
-                              onTap: _showReportDialog,
+                              onTap: () {
+                                HapticFeedback.heavyImpact();
+                                _showReportDialog();
+                              },
                             ),
                           ],
                         );

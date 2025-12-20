@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../config/colors.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import '../models/shared_media_compat.dart';
 import 'package:share_handler/share_handler.dart';
 import '../services/sharing_service.dart';
@@ -24,6 +27,7 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   late int _selectedIndex;
+  late final PageController _pageController;
   final SharingService _sharingService = SharingService();
   final ExperienceService _experienceService = ExperienceService();
   final GlobalKey<DiscoveryScreenState> _discoveryKey =
@@ -40,6 +44,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: _selectedIndex);
     _screens = [
       DiscoveryScreen(key: _discoveryKey),
       CollectionsScreen(
@@ -154,14 +159,39 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _shareCoordinator?.removeListener(_handleDiscoveryShareToken);
+    _pageController.dispose();
     // Clean up the sharing service listener
     super.dispose();
   }
 
   void _onItemTapped(int index) {
+    if (index == _selectedIndex) {
+      return;
+    }
+    if (!kIsWeb) {
+      unawaited(HapticFeedback.heavyImpact());
+    }
     setState(() {
       _selectedIndex = index;
     });
+    if (!_pageController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pageController.hasClients) {
+          return;
+        }
+        _pageController.animateToPage(
+          index,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      });
+      return;
+    }
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   // Handle shared files
@@ -206,9 +236,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     _shareCoordinator?.clearToken();
     if (_selectedIndex != 0) {
-      setState(() {
-        _selectedIndex = 0;
-      });
+      _onItemTapped(0);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final discoveryState = _discoveryKey.currentState;
@@ -247,9 +275,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _screens,
+      body: PageView(
+        controller: _pageController,
+        physics: const NeverScrollableScrollPhysics(),
+        allowImplicitScrolling: true,
+        onPageChanged: (index) {
+          if (index == _selectedIndex) {
+            return;
+          }
+          setState(() {
+            _selectedIndex = index;
+          });
+        },
+        children: _screens
+            .map((screen) => _KeepAlivePage(child: screen))
+            .toList(),
       ),
       bottomNavigationBar: Consumer<NotificationStateService>(
         builder: (context, notificationService, child) {
@@ -278,13 +318,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             currentIndex: _selectedIndex,
             selectedItemColor: Theme.of(context).primaryColor,
             unselectedItemColor: Colors.grey,
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.backgroundColor,
             onTap: _onItemTapped,
             type: BottomNavigationBarType.fixed,
           );
         },
       ),
     );
+  }
+}
+
+class _KeepAlivePage extends StatefulWidget {
+  final Widget child;
+
+  const _KeepAlivePage({required this.child});
+
+  @override
+  State<_KeepAlivePage> createState() => _KeepAlivePageState();
+}
+
+class _KeepAlivePageState extends State<_KeepAlivePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 

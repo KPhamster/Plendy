@@ -26,4 +26,13 @@ REM Build the Flutter web app
 echo Building Flutter web app...
 flutter build web
 
+REM Copy static pages and association files into hosting output.
+echo Copying static web files...
+if not exist build\web\.well-known mkdir build\web\.well-known
+copy /Y web\privacy.html build\web\privacy.html
+copy /Y web\delete_account.html build\web\delete_account.html
+copy /Y web\oembed-demo.html build\web\oembed-demo.html
+copy /Y web\apple-app-site-association build\web\apple-app-site-association
+copy /Y web\.well-known\apple-app-site-association build\web\.well-known\apple-app-site-association
+
 echo Build completed successfully!

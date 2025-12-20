@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 import 'package:share_plus/share_plus.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import '../models/shared_media_item.dart';
+import '../config/colors.dart';
 // Use the same preview widgets as Experience Page content tab
 import '../screens/receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
@@ -296,7 +298,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         color: Colors.transparent,
         child: Container(
           decoration: BoxDecoration(
-            color: theme.scaffoldBackgroundColor,
+            color: AppColors.backgroundColor,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(
@@ -333,11 +335,16 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                               cursor: SystemMouseCursors.click,
                               child: GestureDetector(
                                 behavior: HitTestBehavior.opaque,
-                                onTap: _handleViewExperienceNavigation,
+                                onTap: () {
+                                  HapticFeedback.heavyImpact();
+                                  _handleViewExperienceNavigation();
+                                },
                                 child: Text(
                                   experience.name,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
+                                  style: GoogleFonts.notoSerif(
+                                    textStyle: theme.textTheme.titleMedium,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 20,
                                   ),
                                 ),
                               ),
@@ -348,7 +355,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                       IconButton(
                         tooltip: 'Close',
                         icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: () {
+                          HapticFeedback.heavyImpact();
+                          Navigator.of(context).pop();
+                        },
                       ),
                     ],
                   ),
@@ -877,7 +887,12 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final Widget socialButton = IconButton(
       tooltip: tooltip,
       iconSize: iconSize,
-      onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
+      onPressed: isLaunchable
+          ? () {
+              HapticFeedback.heavyImpact();
+              widget.onLaunchUrl(url);
+            }
+          : null,
       icon: Icon(iconData, color: iconColor),
     );
 
@@ -888,7 +903,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       icon: const Icon(Icons.share_outlined),
       onPressed: _isShareInProgress
           ? null
-          : () => _handleShareButtonPressed(mediaItem),
+          : () {
+              HapticFeedback.heavyImpact();
+              _handleShareButtonPressed(mediaItem);
+            },
     );
 
     final Widget expandButton = IconButton(
@@ -896,7 +914,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       iconSize: 26,
       color: expansionColor,
       icon: Icon(expansionIcon),
-      onPressed: _togglePreviewExpansion,
+      onPressed: () {
+        HapticFeedback.heavyImpact();
+        _togglePreviewExpansion();
+      },
     );
 
     final Widget viewExperienceButton = IconButton(
@@ -904,7 +925,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       iconSize: 28,
       icon: Icon(Icons.arrow_forward_rounded,
           color: Theme.of(context).primaryColor),
-      onPressed: _handleViewExperienceNavigation,
+      onPressed: () {
+        HapticFeedback.heavyImpact();
+        _handleViewExperienceNavigation();
+      },
     );
 
     return SizedBox(

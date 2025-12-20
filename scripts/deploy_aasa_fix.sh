@@ -60,6 +60,17 @@ fi
 echo -e "${GREEN}✅ Build complete${NC}"
 echo ""
 
+# Step 3.1: Copy static pages and association files
+echo "Step 3.1: Copying static web files..."
+mkdir -p build/web/.well-known
+cp web/privacy.html build/web/privacy.html
+cp web/delete_account.html build/web/delete_account.html
+cp web/oembed-demo.html build/web/oembed-demo.html
+cp web/apple-app-site-association build/web/apple-app-site-association
+cp web/.well-known/apple-app-site-association build/web/.well-known/apple-app-site-association
+echo -e "${GREEN}✅ Static files copied${NC}"
+echo ""
+
 # Step 4: Verify build output
 echo "Step 4: Verifying build output..."
 if [ ! -f "build/web/apple-app-site-association" ]; then
@@ -194,4 +205,3 @@ echo "   - Verify provisioning profile includes Associated Domains"
 echo "   - Contact Apple Developer Support to clear CDN cache"
 echo ""
 echo -e "${GREEN}✅ All done!${NC}"
-
