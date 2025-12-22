@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math';
-import 'dart:typed_data';
 import '../models/shared_media_compat.dart';
 import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -28,19 +25,14 @@ import '../services/google_maps_service.dart';
 import '../services/google_knowledge_graph_service.dart';
 import '../services/link_location_extraction_service.dart';
 import '../models/extracted_location_data.dart';
-import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
 import 'dart:async';
-import 'package:http/http.dart' as http;
 import 'receive_share/widgets/maps_preview_widget.dart';
-import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
-import 'package:flutter/services.dart';
-import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
 import '../widgets/select_saved_experience_modal_content.dart'; // Attempting relative import again
@@ -58,6 +50,7 @@ import '../services/gemini_service.dart';
 import '../services/foreground_scan_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
+import 'package:plendy/config/colors.dart';
 import '../models/experience_card_data.dart';
 // Import ApiSecrets conditionally
 import '../config/api_secrets.dart'
@@ -117,16 +110,21 @@ class _ExperienceCardsSection extends StatelessWidget {
     // final experienceCards = shareProvider.experienceCards;
 
     return Container(
-      color: Colors.white,
+      color: AppColors.backgroundColorDark,
       child: Padding(
         key: sectionKey, // ADDED for scrolling
         padding: const EdgeInsets.symmetric(horizontal: 16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Container(
+              height: 16,
+              color: AppColors.backgroundColorDark,
+            ),
             if (experienceCards.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+              Container(
+                color: AppColors.backgroundColorDark,
+                padding: const EdgeInsets.only(bottom: 8.0),
                 child: Text(
                     experienceCards.length > 1
                         ? 'Save to Experiences'
@@ -134,10 +132,15 @@ class _ExperienceCardsSection extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleLarge),
               )
             else
-              const Padding(
-                  padding: EdgeInsets.only(top: 16.0, bottom: 8.0),
-                  child: Text("No Experience Card")),
-            const SizedBox(height: 8),
+              Container(
+                color: AppColors.backgroundColorDark,
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: const Text("No Experience Card"),
+              ),
+            Container(
+              height: 8,
+              color: AppColors.backgroundColorDark,
+            ),
             if (experienceCards.isEmpty)
               const Center(
                   child: Padding(
@@ -185,23 +188,32 @@ class _ExperienceCardsSection extends StatelessWidget {
             if (!isSpecialUrl(currentSharedFiles.isNotEmpty
                 ? extractFirstUrl(currentSharedFiles.first.path) ?? ''
                 : ''))
-              Padding(
-                padding: const EdgeInsets.only(top: 12.0, bottom: 16.0),
-                child: Center(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Another Experience'),
-                    onPressed: () {
-                      addExperienceCard();
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 12, horizontal: 24),
-                      side: BorderSide(
-                          color: Theme.of(context).colorScheme.primary),
+              Column(
+                children: [
+                  Container(
+                    color: AppColors.backgroundColorDark,
+                    padding: const EdgeInsets.only(top: 12.0),
+                    child: Center(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Another Experience'),
+                        onPressed: () {
+                          addExperienceCard();
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 12, horizontal: 24),
+                          side: BorderSide(
+                              color: Theme.of(context).colorScheme.primary),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  Container(
+                    height: 16,
+                    color: AppColors.backgroundColorDark,
+                  ),
+                ],
               ),
           ],
         ),
@@ -242,7 +254,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _isExtractingLocation = false;
   bool _isProcessingScreenshot = false; // For screenshot-based extraction
   Position? _currentUserPosition; // For location-biased extraction
-  
+
   // Track if AI scan is running
   bool _isAiScanInProgress = false;
   // Track scan progress (0.0 to 1.0)
@@ -298,7 +310,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       // For Android: Use platform channel to vibrate for 500ms
       if (Platform.isAndroid) {
-        await SystemChannels.platform.invokeMethod('HapticFeedback.vibrate', 500);
+        await SystemChannels.platform
+            .invokeMethod('HapticFeedback.vibrate', 500);
       } else if (Platform.isIOS) {
         // For iOS: Use multiple heavy impacts with delay
         await HapticFeedback.heavyImpact();
@@ -325,7 +338,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Quick Add dialog state
   Location? _quickAddSelectedLocation;
-  Experience? _quickAddSelectedExperience; // Non-null if saved experience selected
+  Experience?
+      _quickAddSelectedExperience; // Non-null if saved experience selected
   bool _isQuickAddSavedExperience = false;
 
   Widget _buildSharedUrlBar({required bool showInstructions}) {
@@ -337,7 +351,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             .bodySmall
             ?.copyWith(color: Colors.grey[700]);
         return Container(
-          color: Colors.white,
+          color: AppColors.backgroundColor,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Column(
@@ -352,8 +366,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     labelText: 'Shared URL',
                     hintText: 'https://... or paste content with a URL',
                     border: const OutlineInputBorder(),
+                    enabledBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                      ),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                        width: 2,
+                      ),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
                     prefixIcon: const Icon(Icons.link),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 8.0, horizontal: 12.0),
                     suffixIconConstraints: const BoxConstraints.tightFor(
                       width: 120,
                       height: 40,
@@ -384,8 +412,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.all(4.0),
-                            child: Icon(Icons.content_paste,
-                                size: 22, color: Colors.blue[700]),
+                              child: const Icon(Icons.content_paste,
+                                  size: 22, color: Color(0xFF1F2A44)),
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -395,7 +423,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           child: const Padding(
                             padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
                             child: Icon(Icons.arrow_circle_right,
-                                size: 22, color: Colors.blue),
+                                size: 22, color: Color(0xFF1F2A44)),
                           ),
                         ),
                       ],
@@ -419,7 +447,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   children: [
                     _buildScreenshotUploadButton(),
                     // For generic URLs, show "Scan Locations" instead of "Scan Preview"
-                    _isGenericWebUrl() ? _buildScanPageContentButtonInRow() : _buildScanCurrentPreviewButton(),
+                    _isGenericWebUrl()
+                        ? _buildScanPageContentButtonInRow()
+                        : _buildScanCurrentPreviewButton(),
                   ],
                 ),
                 // Scan All Locations button (only show below for non-generic URLs)
@@ -431,8 +461,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.blue[50],
                           borderRadius: BorderRadius.circular(8),
@@ -473,7 +503,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                             return LinearProgressIndicator(
                               value: value,
                               minHeight: 4,
-                              backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.2),
                               valueColor: AlwaysStoppedAnimation<Color>(
                                 Theme.of(context).colorScheme.primary,
                               ),
@@ -491,12 +524,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: Colors.purple[50],
+                          color: AppColors.wineLight.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.purple[200]!),
+                          border: Border.all(
+                              color: AppColors.wineLight.withOpacity(0.35)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -507,14 +541,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.purple[700]!),
+                                    AppColors.wineLight),
                               ),
                             ),
                             const SizedBox(width: 10),
+                            Image.asset(
+                              'assets/icon/icon-cropped.png',
+                              width: 16,
+                              height: 16,
+                            ),
+                            const SizedBox(width: 8),
                             Text(
-                              '📷 Plendy AI analyzing...',
+                              'Plendy AI analyzing...',
                               style: TextStyle(
-                                color: Colors.purple[800],
+                                color: AppColors.wineLight,
                                 fontWeight: FontWeight.w500,
                                 fontSize: 13,
                               ),
@@ -533,7 +573,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                             return LinearProgressIndicator(
                               value: value,
                               minHeight: 4,
-                              backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.2),
                               valueColor: AlwaysStoppedAnimation<Color>(
                                 Theme.of(context).colorScheme.primary,
                               ),
@@ -573,18 +616,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           icon: Icon(
             Icons.add_photo_alternate_outlined,
             size: 20,
-            color: isLoading ? Colors.grey : Colors.purple[700],
+            color: isLoading ? Colors.grey : AppColors.sage,
           ),
-          label: const Text(
+          label: Text(
             'Upload Screenshot',
             style: TextStyle(
               fontWeight: FontWeight.w500,
+              color: isLoading ? Colors.grey : AppColors.sage,
             ),
           ),
           style: OutlinedButton.styleFrom(
+            backgroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             side: BorderSide(
-              color: isLoading ? Colors.grey[300]! : Colors.purple[300]!,
+              color: isLoading ? Colors.grey[300]! : AppColors.sage,
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -623,9 +668,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ? _extractFirstUrl(_currentSharedFiles.first.path)
         : null;
     final isYouTubeUrl = url != null && _isYouTubeUrl(url);
-    final isFacebookReel = url != null && 
-        (url.contains('facebook.com/reel/') || url.contains('facebook.com/reels/'));
-    final buttonText = (isYouTubeUrl || isFacebookReel) ? 'Scan Screen' : 'Scan Preview';
+    final isFacebookReel = url != null &&
+        (url.contains('facebook.com/reel/') ||
+            url.contains('facebook.com/reels/'));
+    final buttonText =
+        (isYouTubeUrl || isFacebookReel) ? 'Scan Screen' : 'Scan Preview';
 
     return Expanded(
       child: Container(
@@ -635,20 +682,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           icon: Icon(
             Icons.screenshot_monitor,
             size: 20,
-            color: (isLoading || !hasPreview) ? Colors.grey : Colors.blue[700],
+            color: (isLoading || !hasPreview)
+                ? Colors.grey
+                : const Color(0xFF2F6F6D),
           ),
           label: Text(
             buttonText,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w500,
+              color: (isLoading || !hasPreview)
+                  ? Colors.grey
+                  : AppColors.teal,
             ),
           ),
           style: OutlinedButton.styleFrom(
+            backgroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             side: BorderSide(
               color: (isLoading || !hasPreview)
                   ? Colors.grey[300]!
-                  : Colors.blue[300]!,
+                  : const Color(0xFF2F6F6D),
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -672,7 +725,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           icon: Icon(
             Icons.article_outlined,
             size: 20,
-            color: (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
+            color:
+                (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
           ),
           label: const Text(
             'Scan Locations',
@@ -681,6 +735,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             ),
           ),
           style: OutlinedButton.styleFrom(
+            backgroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             side: BorderSide(
               color: (isLoading || !hasPreview)
@@ -701,7 +756,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _buildScanPageContentButton() {
     // Only show below Row for non-generic URLs (generic URLs show it in the Row)
     if (_isGenericWebUrl()) return const SizedBox.shrink();
-    
+
     final isLoading = _isProcessingScreenshot || _isExtractingLocation;
     final hasPreview = _hasActivePreview();
     // Only show for generic web URLs (not social media)
@@ -727,16 +782,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           icon: Icon(
             Icons.article_outlined,
             size: 20,
-            color: (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
+            color:
+                (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
           ),
           label: Text(
             'Scan Locations',
             style: TextStyle(
               fontWeight: FontWeight.w500,
-              color: (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
+              color:
+                  (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
             ),
           ),
           style: OutlinedButton.styleFrom(
+            backgroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             side: BorderSide(
               color: (isLoading || !hasPreview)
@@ -913,7 +971,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ? _extractFirstUrl(_currentSharedFiles.first.path)
         : null;
     final isInstagram = url != null && _isInstagramUrl(url);
-    
+
     if (isInstagram) {
       // Use combined scan for Instagram - runs both OCR and text extraction
       print('📷 SCAN PREVIEW: Using combined scan for Instagram...');
@@ -929,7 +987,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
 
@@ -986,7 +1044,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('📷 SCAN PREVIEW: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '📷 SCAN PREVIEW: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📷 Found: ${locations.first.name}';
@@ -1054,7 +1113,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
 
@@ -1073,14 +1132,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       if (pageContent == null || pageContent.isEmpty) {
         Fluttertoast.showToast(
-          msg: '📄 Could not extract page content. Try the screenshot scan instead.',
+          msg:
+              '📄 Could not extract page content. Try the screenshot scan instead.',
           toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.orange[700],
         );
         return;
       }
 
-      print('📄 SCAN PAGE: Extracted ${pageContent.length} characters, sending to Gemini...');
+      print(
+          '📄 SCAN PAGE: Extracted ${pageContent.length} characters, sending to Gemini...');
       _updateScanProgress(0.35);
 
       // Get user location for better results
@@ -1108,28 +1169,35 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print('✅ SCAN PAGE: Found ${result.locations.length} location(s)');
         for (final loc in result.locations) {
           final hasPlaceId = loc.placeId.isNotEmpty;
-          final hasCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
-          print('   📍 ${loc.name} (placeId: ${hasPlaceId ? "✓" : "✗"}, coords: ${hasCoords ? "✓" : "✗"})');
+          final hasCoords =
+              loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+          print(
+              '   📍 ${loc.name} (placeId: ${hasPlaceId ? "✓" : "✗"}, coords: ${hasCoords ? "✓" : "✗"})');
         }
 
         locations = result.locations.map((loc) {
           // Infer place type from the types list
           final placeType = ExtractedLocationData.inferPlaceType(loc.types);
-          
+
           // Check if we have valid coordinates (not 0,0 which is our fallback)
-          final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
-          
+          final hasValidCoords =
+              loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+
           // Determine confidence based on whether we have grounding data
           final hasGrounding = loc.placeId.isNotEmpty;
           final confidence = hasGrounding ? 0.9 : (hasValidCoords ? 0.7 : 0.5);
-          
+
           return ExtractedLocationData(
             name: loc.name,
             address: loc.formattedAddress,
             placeId: loc.placeId.isNotEmpty ? loc.placeId : null,
-            coordinates: hasValidCoords ? loc.coordinates : null, // Don't use (0,0) coordinates
+            coordinates: hasValidCoords
+                ? loc.coordinates
+                : null, // Don't use (0,0) coordinates
             type: placeType,
-            source: hasGrounding ? ExtractionSource.geminiGrounding : ExtractionSource.placesSearch,
+            source: hasGrounding
+                ? ExtractionSource.geminiGrounding
+                : ExtractionSource.placesSearch,
             confidence: confidence,
             googleMapsUri: loc.uri,
             placeTypes: loc.types,
@@ -1140,7 +1208,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('📄 SCAN PAGE: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '📄 SCAN PAGE: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📄 Found: ${locations.first.name}';
@@ -1207,13 +1276,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan (prevents interruption when minimized)
     await _foregroundScanService.startScanService();
 
     try {
       _updateScanProgress(0.1);
-      print('🔄 COMBINED SCAN: Starting both screenshot and text extraction...');
+      print(
+          '🔄 COMBINED SCAN: Starting both screenshot and text extraction...');
 
       final url = _currentSharedFiles.isNotEmpty
           ? _extractFirstUrl(_currentSharedFiles.first.path)
@@ -1254,24 +1324,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final screenshotLocations = results[0];
       final textLocations = results[1];
 
-      print('🔄 COMBINED SCAN: Screenshot found ${screenshotLocations.length} location(s)');
-      print('🔄 COMBINED SCAN: Text extraction found ${textLocations.length} location(s)');
+      print(
+          '🔄 COMBINED SCAN: Screenshot found ${screenshotLocations.length} location(s)');
+      print(
+          '🔄 COMBINED SCAN: Text extraction found ${textLocations.length} location(s)');
 
       // Merge results first (doesn't need mounted)
       // Prefer text extraction (grounded) results over screenshot (OCR)
       // Text extraction results have Maps grounding and are more accurate
-      final mergedLocations = _mergeExtractedLocations(textLocations, screenshotLocations);
+      final mergedLocations =
+          _mergeExtractedLocations(textLocations, screenshotLocations);
       _updateScanProgress(0.85);
-      
-      print('🔄 COMBINED SCAN: Merged to ${mergedLocations.length} unique location(s)');
+
+      print(
+          '🔄 COMBINED SCAN: Merged to ${mergedLocations.length} unique location(s)');
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (mergedLocations.isNotEmpty) {
-          print('🔄 COMBINED SCAN: App backgrounded, storing ${mergedLocations.length} result(s) for later');
+          print(
+              '🔄 COMBINED SCAN: App backgrounded, storing ${mergedLocations.length} result(s) for later');
           _pendingScanResults = mergedLocations;
           if (mergedLocations.length == 1) {
-            _pendingScanSingleMessage = '📷 Found: ${mergedLocations.first.name}';
+            _pendingScanSingleMessage =
+                '📷 Found: ${mergedLocations.first.name}';
           }
         }
         return;
@@ -1280,7 +1356,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (mergedLocations.isEmpty) {
         print('⚠️ COMBINED SCAN: No locations found from either method');
         Fluttertoast.showToast(
-          msg: '📷 No locations found. Try pausing video on text, or upload a screenshot.',
+          msg:
+              '📷 No locations found. Try pausing video on text, or upload a screenshot.',
           toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.orange[700],
         );
@@ -1333,10 +1410,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           ? _extractFirstUrl(_currentSharedFiles.first.path)
           : null;
       final isInstagram = url != null && _isInstagramUrl(url);
-      
+
       List<Uint8List> screenshots = [];
-      
-      if (isInstagram && url != null) {
+
+      if (isInstagram) {
         // For Instagram: capture BOTH native screen AND WebView screenshots
         print('📷 COMBINED SCAN: Capturing both screenshots for Instagram...');
         screenshots = await _captureInstagramBothScreenshots(url);
@@ -1348,7 +1425,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           screenshots.add(screenshotBytes);
         }
       }
-      
+
       if (screenshots.isEmpty) {
         print('⚠️ COMBINED SCAN: Could not capture any screenshots');
         return [];
@@ -1360,42 +1437,48 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // - One screenshot shows a sign/name (e.g., "POET TREES")
       // - Another screenshot shows context (e.g., "library in Big Sur")
       // Together, they can identify "Henry Miller Memorial Library"
-      
+
       if (screenshots.length > 1) {
-        print('📷 COMBINED SCAN: Using multi-image combined analysis for ${screenshots.length} screenshots...');
-        
+        print(
+            '📷 COMBINED SCAN: Using multi-image combined analysis for ${screenshots.length} screenshots...');
+
         // Convert to the format expected by multi-image extraction
-        final imageList = screenshots.map((bytes) => (
-          bytes: bytes,
-          mimeType: 'image/png',
-        )).toList();
-        
-        final result = await _locationExtractor.extractLocationsFromMultipleImages(
+        final imageList = screenshots
+            .map((bytes) => (
+                  bytes: bytes,
+                  mimeType: 'image/png',
+                ))
+            .toList();
+
+        final result =
+            await _locationExtractor.extractLocationsFromMultipleImages(
           imageList,
           userLocation: userLocation,
           onProgress: onProgress,
         );
-        
-        print('📷 COMBINED SCAN: Multi-image analysis found ${result.locations.length} location(s)');
+
+        print(
+            '📷 COMBINED SCAN: Multi-image analysis found ${result.locations.length} location(s)');
         if (result.regionContext != null) {
           print('🌍 COMBINED SCAN: Region context: "${result.regionContext}"');
         }
-        
+
         return result.locations;
       }
 
       // ========== SINGLE IMAGE ANALYSIS ==========
       // For single screenshots, use the standard single-image analysis
       print('📷 COMBINED SCAN: Using single-image analysis...');
-      
+
       final result = await _locationExtractor.extractLocationsFromImageBytes(
         screenshots.first,
         mimeType: 'image/png',
         userLocation: userLocation,
         onProgress: onProgress,
       );
-      
-      print('📷 COMBINED SCAN: Single-image analysis found ${result.locations.length} location(s)');
+
+      print(
+          '📷 COMBINED SCAN: Single-image analysis found ${result.locations.length} location(s)');
       return result.locations;
     } catch (e) {
       print('⚠️ COMBINED SCAN: Screenshot extraction error: $e');
@@ -1404,35 +1487,42 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Check if a location is a duplicate of any in the list
-  bool _isDuplicateLocation(ExtractedLocationData loc, List<ExtractedLocationData> existingList) {
-    final normalizedName = (loc.name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-    
+  bool _isDuplicateLocation(
+      ExtractedLocationData loc, List<ExtractedLocationData> existingList) {
+    final normalizedName =
+        (loc.name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
     for (final existing in existingList) {
       // Check place ID match
-      if (loc.placeId != null && existing.placeId != null && loc.placeId == existing.placeId) {
+      if (loc.placeId != null &&
+          existing.placeId != null &&
+          loc.placeId == existing.placeId) {
         return true;
       }
-      
+
       // Check name similarity
-      final existingNormalized = (existing.name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final existingNormalized = (existing.name ?? '')
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]'), '');
       if (normalizedName.isNotEmpty && existingNormalized.isNotEmpty) {
         // Exact match is definitely a duplicate
         if (normalizedName == existingNormalized) {
           return true;
         }
-        
-        // For containment matches, require the shorter name to be at least 80% of the 
+
+        // For containment matches, require the shorter name to be at least 80% of the
         // longer name's length to avoid false positives like "Ruru Kamakura" vs "Kamakura"
         // (8/12 = 67% < 80%, so NOT a duplicate)
-        if (normalizedName.contains(existingNormalized) || existingNormalized.contains(normalizedName)) {
-          final shorterLen = normalizedName.length < existingNormalized.length 
-              ? normalizedName.length 
+        if (normalizedName.contains(existingNormalized) ||
+            existingNormalized.contains(normalizedName)) {
+          final shorterLen = normalizedName.length < existingNormalized.length
+              ? normalizedName.length
               : existingNormalized.length;
-          final longerLen = normalizedName.length > existingNormalized.length 
-              ? normalizedName.length 
+          final longerLen = normalizedName.length > existingNormalized.length
+              ? normalizedName.length
               : existingNormalized.length;
           final ratio = shorterLen / longerLen;
-          
+
           // Only consider it a duplicate if names are very similar in length (80%+ ratio)
           if (ratio >= 0.80) {
             return true;
@@ -1444,18 +1534,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Extract locations from page text content using Gemini with Maps grounding
-  Future<List<ExtractedLocationData>> _extractLocationsFromPageText(String? url, LatLng? userLocation) async {
+  Future<List<ExtractedLocationData>> _extractLocationsFromPageText(
+      String? url, LatLng? userLocation) async {
     try {
       print('📄 COMBINED SCAN: Extracting page text...');
       final pageContent = await _tryExtractPageContent();
-      
+
       if (pageContent == null || pageContent.isEmpty) {
         print('⚠️ COMBINED SCAN: Could not extract page content');
         return [];
       }
 
-      print('📄 COMBINED SCAN: Extracted ${pageContent.length} chars, analyzing with Gemini...');
-      
+      print(
+          '📄 COMBINED SCAN: Extracted ${pageContent.length} chars, analyzing with Gemini...');
+
       final geminiService = GeminiService();
       final result = await geminiService.extractLocationsFromWebPage(
         pageContent,
@@ -1471,17 +1563,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Convert Gemini results to ExtractedLocationData
       return result.locations.map((loc) {
         final placeType = ExtractedLocationData.inferPlaceType(loc.types);
-        final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+        final hasValidCoords =
+            loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
         final hasGrounding = loc.placeId.isNotEmpty;
         final confidence = hasGrounding ? 0.9 : (hasValidCoords ? 0.7 : 0.5);
-        
+
         return ExtractedLocationData(
           name: loc.name,
           address: loc.formattedAddress,
           placeId: loc.placeId.isNotEmpty ? loc.placeId : null,
           coordinates: hasValidCoords ? loc.coordinates : null,
           type: placeType,
-          source: hasGrounding ? ExtractionSource.geminiGrounding : ExtractionSource.placesSearch,
+          source: hasGrounding
+              ? ExtractionSource.geminiGrounding
+              : ExtractionSource.placesSearch,
           confidence: confidence,
           googleMapsUri: loc.uri,
           placeTypes: loc.types,
@@ -1501,77 +1596,77 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final merged = <ExtractedLocationData>[];
     final seenPlaceIds = <String>{};
     final seenNames = <String>{};
-    
+
     // Helper to normalize names for comparison
     String normalizeName(String name) {
-      return name.toLowerCase()
-          .replaceAll(RegExp(r'[^a-z0-9]'), '')
-          .trim();
+      return name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '').trim();
     }
-    
+
     // Helper to check if two names are similar enough to be considered duplicates
     // Requires 80% length similarity for containment matches to avoid false positives
     // like "Ruru Kamakura" vs "Kamakura" (8/12 = 67% < 80%, so NOT a duplicate)
     bool isSimilarName(String name, Set<String> existingNames) {
       if (name.isEmpty) return false;
-      
+
       for (final seen in existingNames) {
         // Exact match is definitely a duplicate
         if (name == seen) return true;
-        
+
         // For containment matches, require high similarity
         if (seen.contains(name) || name.contains(seen)) {
-          final shorterLen = name.length < seen.length ? name.length : seen.length;
-          final longerLen = name.length > seen.length ? name.length : seen.length;
+          final shorterLen =
+              name.length < seen.length ? name.length : seen.length;
+          final longerLen =
+              name.length > seen.length ? name.length : seen.length;
           final ratio = shorterLen / longerLen;
-          
+
           // Only consider it a duplicate if names are very similar in length (80%+ ratio)
           if (ratio >= 0.80) return true;
         }
       }
       return false;
     }
-    
+
     // Add primary (grounded) results first - they're more accurate
     for (final loc in primary) {
       final normalizedName = normalizeName(loc.name ?? '');
-      
+
       // Skip if we've seen this place ID
       if (loc.placeId != null && seenPlaceIds.contains(loc.placeId)) {
         continue;
       }
-      
+
       // Skip if we've seen a very similar name
       if (isSimilarName(normalizedName, seenNames)) {
         continue;
       }
-      
+
       merged.add(loc);
       if (loc.placeId != null) seenPlaceIds.add(loc.placeId!);
       if (normalizedName.isNotEmpty) seenNames.add(normalizedName);
     }
-    
+
     // Add secondary (OCR) results that aren't duplicates
     for (final loc in secondary) {
       final normalizedName = normalizeName(loc.name ?? '');
-      
+
       // Skip if we've seen this place ID
       if (loc.placeId != null && seenPlaceIds.contains(loc.placeId)) {
         print('🔄 MERGE: Skipping duplicate placeId: ${loc.name}');
         continue;
       }
-      
+
       // Skip if we've seen a very similar name (fuzzy match with 80% threshold)
       if (isSimilarName(normalizedName, seenNames)) {
         print('🔄 MERGE: Skipping duplicate name: ${loc.name}');
         continue;
       }
-      
+
       merged.add(loc);
       if (loc.placeId != null) seenPlaceIds.add(loc.placeId!);
       if (normalizedName.isNotEmpty) seenNames.add(normalizedName);
     }
-    
+
     return merged;
   }
 
@@ -1605,7 +1700,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final facebookPreviewKey = _facebookPreviewKeys[url];
       if (facebookPreviewKey?.currentState != null) {
         try {
-          final content = await facebookPreviewKey!.currentState!.extractPageContent();
+          final content =
+              await facebookPreviewKey!.currentState!.extractPageContent();
           if (content != null && content.isNotEmpty) {
             print('✅ SCAN PAGE: Extracted content from Facebook preview');
             return content;
@@ -1691,13 +1787,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// Returns a list of screenshots for comprehensive analysis
   Future<List<Uint8List>> _captureInstagramBothScreenshots(String url) async {
     final screenshots = <Uint8List>[];
-    
+
     // 1. Try native screen capture (captures entire device screen including video frames)
     try {
       print('📷 SCAN PREVIEW: Taking native screen capture for Instagram...');
-      
+
       final result = await _screenshotChannel.invokeMethod('captureScreen');
-      
+
       if (result != null) {
         Uint8List pngBytes;
         if (result is Uint8List) {
@@ -1705,12 +1801,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         } else if (result is List) {
           pngBytes = Uint8List.fromList(result.cast<int>());
         } else {
-          print('⚠️ SCAN PREVIEW: Unexpected native result type: ${result.runtimeType}');
+          print(
+              '⚠️ SCAN PREVIEW: Unexpected native result type: ${result.runtimeType}');
         }
-        
+
         if (result is Uint8List || result is List) {
-          final bytes = result is Uint8List ? result : Uint8List.fromList((result as List).cast<int>());
-          print('✅ SCAN PREVIEW: Captured native screen for Instagram (${bytes.length} bytes)');
+          final bytes = result is Uint8List
+              ? result
+              : Uint8List.fromList((result as List).cast<int>());
+          print(
+              '✅ SCAN PREVIEW: Captured native screen for Instagram (${bytes.length} bytes)');
           screenshots.add(bytes);
         }
       } else {
@@ -1721,7 +1821,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('⚠️ SCAN PREVIEW: Native screenshot error: $e');
     }
-    
+
     // 2. Also capture WebView screenshot (may capture different content)
     try {
       print('📷 SCAN PREVIEW: Taking WebView screenshot for Instagram...');
@@ -1731,7 +1831,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (state != null) {
           final webviewScreenshot = await state.takeScreenshot();
           if (webviewScreenshot != null) {
-            print('✅ SCAN PREVIEW: Captured Instagram WebView (${webviewScreenshot.length} bytes)');
+            print(
+                '✅ SCAN PREVIEW: Captured Instagram WebView (${webviewScreenshot.length} bytes)');
             screenshots.add(webviewScreenshot);
           }
         }
@@ -1739,8 +1840,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('⚠️ SCAN PREVIEW: WebView screenshot failed: $e');
     }
-    
-    print('📷 SCAN PREVIEW: Captured ${screenshots.length} screenshot(s) for Instagram');
+
+    print(
+        '📷 SCAN PREVIEW: Captured ${screenshots.length} screenshot(s) for Instagram');
     return screenshots;
   }
 
@@ -1769,18 +1871,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Platform channel for native screenshot
-  static const MethodChannel _screenshotChannel = MethodChannel('com.plendy.app/screenshot');
+  static const MethodChannel _screenshotChannel =
+      MethodChannel('com.plendy.app/screenshot');
 
   /// Capture YouTube preview using native screen capture
   /// This captures the entire device screen including WebView video content
   Future<Uint8List?> _captureYouTubePreview(String url) async {
     try {
       print('📷 SCAN PREVIEW: Taking native screen capture for YouTube...');
-      
+
       // Use native platform screenshot to capture the entire screen
       // This includes WebView content and video frames
       final result = await _screenshotChannel.invokeMethod('captureScreen');
-      
+
       if (result != null) {
         Uint8List pngBytes;
         if (result is Uint8List) {
@@ -1788,12 +1891,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         } else if (result is List) {
           pngBytes = Uint8List.fromList(result.cast<int>());
         } else {
-          print('⚠️ SCAN PREVIEW: Unexpected result type: ${result.runtimeType}');
+          print(
+              '⚠️ SCAN PREVIEW: Unexpected result type: ${result.runtimeType}');
           return await _captureYouTubeWebViewFallback(url);
         }
-        
-        print('✅ SCAN PREVIEW: Captured native screen (${pngBytes.length} bytes, PNG format)');
-        
+
+        print(
+            '✅ SCAN PREVIEW: Captured native screen (${pngBytes.length} bytes, PNG format)');
+
         // No file is saved - the image stays in memory only
         return pngBytes;
       } else {
@@ -1840,14 +1945,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<Uint8List?> _captureFacebookPreview(String url) async {
     // Check if this is a Facebook Reel
     final isReel = url.contains('/reel/') || url.contains('/reels/');
-    
+
     if (isReel) {
       // Use native screen capture for Reels (same as YouTube)
       try {
-        print('📷 SCAN PREVIEW: Taking native screen capture for Facebook Reel...');
-        
+        print(
+            '📷 SCAN PREVIEW: Taking native screen capture for Facebook Reel...');
+
         final result = await _screenshotChannel.invokeMethod('captureScreen');
-        
+
         if (result != null) {
           Uint8List pngBytes;
           if (result is Uint8List) {
@@ -1855,11 +1961,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           } else if (result is List) {
             pngBytes = Uint8List.fromList(result.cast<int>());
           } else {
-            print('⚠️ SCAN PREVIEW: Unexpected result type: ${result.runtimeType}');
+            print(
+                '⚠️ SCAN PREVIEW: Unexpected result type: ${result.runtimeType}');
             return await _captureFacebookWebViewFallback(url);
           }
-          
-          print('✅ SCAN PREVIEW: Captured native screen for Facebook Reel (${pngBytes.length} bytes, PNG format)');
+
+          print(
+              '✅ SCAN PREVIEW: Captured native screen for Facebook Reel (${pngBytes.length} bytes, PNG format)');
           return pngBytes;
         } else {
           print('⚠️ SCAN PREVIEW: Native screenshot returned null');
@@ -1873,11 +1981,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return await _captureFacebookWebViewFallback(url);
       }
     }
-    
+
     // Regular Facebook post - use WebView screenshot
     return await _captureFacebookWebViewFallback(url);
   }
-  
+
   /// Fallback to WebView screenshot for Facebook (used for both Reels fallback and regular posts)
   Future<Uint8List?> _captureFacebookWebViewFallback(String url) async {
     print('📷 SCAN PREVIEW: Using WebView screenshot for Facebook...');
@@ -1964,13 +2072,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
 
     try {
       _updateScanProgress(0.1);
-      
+
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2003,7 +2111,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('📷 SCREENSHOT: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '📷 SCREENSHOT: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📷 Found: ${locations.first.name}';
@@ -2252,7 +2361,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Mark as fully initialized
       _isFullyInitialized = true;
-      
+
       // Auto-extract locations for YouTube URLs on initial load
       _autoExtractLocationsIfYouTube(_currentSharedFiles);
     }
@@ -2404,7 +2513,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         !_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
       // Extract Yelp URL early to check for various scenarios
       String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
-      
+
       // Check if this is a Yelp-only update (only Yelp URL, no other content)
       // BUT only if it's the EXACT SAME Yelp URL - any different Yelp URL should reset the screen
       bool isYelpOnlyUpdate = false;
@@ -2412,8 +2521,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           updatedFiles.length == 1 &&
           _currentSharedFiles.isNotEmpty) {
         // Check if current content also has a Yelp URL
-        String? currentYelpUrl = _extractYelpUrlFromSharedFiles(_currentSharedFiles);
-        
+        String? currentYelpUrl =
+            _extractYelpUrlFromSharedFiles(_currentSharedFiles);
+
         // Only treat as "update" if current content has the EXACT SAME Yelp URL
         // If current content doesn't have a Yelp URL, or has a different one, treat as new share
         if (currentYelpUrl != null && currentYelpUrl == yelpUrl) {
@@ -2454,22 +2564,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (_currentSharedFiles.isNotEmpty) {
           currentYelpUrl = _extractYelpUrlFromSharedFiles(_currentSharedFiles);
         }
-        
+
         // If it's the same Yelp URL and we have existing cards, just update the existing card
-        if (currentYelpUrl != null && currentYelpUrl == yelpUrl && _hasExistingCards()) {
+        if (currentYelpUrl != null &&
+            currentYelpUrl == yelpUrl &&
+            _hasExistingCards()) {
           _handleYelpUrlUpdate(yelpUrl, updatedFiles);
           Future.delayed(const Duration(milliseconds: 1000), () {
             _isProcessingUpdate = false;
           });
           return;
         }
-        
+
         // If it's a different Yelp URL (or no current content), reset the screen and process as new share
         // This handles the case where user shares a new Yelp URL while screen is already open
-        print('🔄 YELP: New Yelp URL detected while screen is open. Resetting and processing as new share.');
+        print(
+            '🔄 YELP: New Yelp URL detected while screen is open. Resetting and processing as new share.');
         print('   Current URL: $currentYelpUrl');
         print('   New URL: $yelpUrl');
-        
+
         // If not fully initialized yet, wait for initialization to complete
         if (!_isFullyInitialized) {
           Future.delayed(const Duration(milliseconds: 500), () {
@@ -2479,7 +2592,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           });
           return;
         }
-        
+
         final provider = context.read<ReceiveShareProvider>();
         provider.resetExperienceCards();
 
@@ -2492,10 +2605,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Process the new content
         _processSharedContent(_currentSharedFiles);
         _syncSharedUrlControllerFromContent();
-        
+
         // Auto-extract locations for YouTube URLs shared via intent
         _autoExtractLocationsIfYouTube(updatedFiles);
-        
+
         _isProcessingUpdate = false;
         return;
       }
@@ -2538,28 +2651,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Process the new content
       _processSharedContent(_currentSharedFiles);
       _syncSharedUrlControllerFromContent();
-      
+
       // Auto-extract locations for YouTube URLs shared via intent
       _autoExtractLocationsIfYouTube(updatedFiles);
-      
+
       _isProcessingUpdate = false;
     }
   }
-  
+
   /// Automatically trigger location extraction for YouTube URLs shared via intent
   /// This allows Gemini to analyze the actual video content (audio + visuals)
   void _autoExtractLocationsIfYouTube(List<SharedMediaFile> files) {
     if (files.isEmpty) return;
-    
+
     final first = files.first;
-    if (first.type != SharedMediaType.url && first.type != SharedMediaType.text) return;
-    
+    if (first.type != SharedMediaType.url && first.type != SharedMediaType.text)
+      return;
+
     final url = _extractFirstUrl(first.path);
     if (url == null) return;
-    
+
     // Only auto-extract for YouTube URLs
     if (_isYouTubeUrl(url)) {
-      print('🎬 AUTO-EXTRACT: YouTube URL detected via share intent, triggering video analysis');
+      print(
+          '🎬 AUTO-EXTRACT: YouTube URL detected via share intent, triggering video analysis');
       // Delay slightly to allow UI to settle
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
@@ -2714,13 +2829,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
 
     try {
       _updateScanProgress(0.1);
-      
+
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2747,7 +2862,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('🤖 AI EXTRACTION: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '🤖 AI EXTRACTION: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
@@ -2841,13 +2957,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
 
     try {
       _updateScanProgress(0.1);
-      
+
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2858,7 +2974,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       _updateScanProgress(0.25);
-      
+
       // Extract locations from the TikTok caption
       final locations = await _locationExtractor.extractLocationsFromCaption(
         data.title ?? '',
@@ -2873,7 +2989,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('🎬 TIKTOK AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '🎬 TIKTOK AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
@@ -2944,7 +3061,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Mark as processed to prevent duplicate extractions
     _facebookUrlsProcessed.add(url);
 
-    print('📘 FACEBOOK AUTO-EXTRACT: Starting automatic location extraction...');
+    print(
+        '📘 FACEBOOK AUTO-EXTRACT: Starting automatic location extraction...');
 
     setState(() {
       _isExtractingLocation = true;
@@ -2954,13 +3072,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
-    
+
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
 
     try {
       _updateScanProgress(0.1);
-      
+
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2971,7 +3089,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       _updateScanProgress(0.2);
-      
+
       // Try to extract page content from the Facebook WebView
       String? pageContent;
       final previewKey = _facebookPreviewKeys[url];
@@ -2984,11 +3102,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
       _updateScanProgress(0.35);
 
-      if (pageContent == null || pageContent.isEmpty || pageContent.length < 20) {
+      if (pageContent == null ||
+          pageContent.isEmpty ||
+          pageContent.length < 20) {
         print('⚠️ FACEBOOK AUTO-EXTRACT: No usable content extracted');
         if (mounted) {
           Fluttertoast.showToast(
-            msg: '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
+            msg:
+                '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
             toastLength: Toast.LENGTH_LONG,
             backgroundColor: Colors.orange[700],
           );
@@ -2996,8 +3117,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      print('📘 FACEBOOK AUTO-EXTRACT: Extracted ${pageContent.length} characters');
-      print('📘 FACEBOOK AUTO-EXTRACT: Content preview: ${pageContent.substring(0, pageContent.length > 200 ? 200 : pageContent.length)}...');
+      print(
+          '📘 FACEBOOK AUTO-EXTRACT: Extracted ${pageContent.length} characters');
+      print(
+          '📘 FACEBOOK AUTO-EXTRACT: Content preview: ${pageContent.substring(0, pageContent.length > 200 ? 200 : pageContent.length)}...');
       _updateScanProgress(0.45);
 
       // Use LinkLocationExtractionService (same as TikTok) for proper grounding with Places API
@@ -3013,7 +3136,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('📘 FACEBOOK AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '📘 FACEBOOK AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
@@ -3025,7 +3149,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (locations.isEmpty) {
         print('⚠️ FACEBOOK AUTO-EXTRACT: No locations found in page content');
         Fluttertoast.showToast(
-          msg: '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
+          msg:
+              '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
           toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.orange[700],
         );
@@ -3170,14 +3295,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           final Color primaryColor =
               Theme.of(dialogContext).colorScheme.primary;
           return AlertDialog(
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.backgroundColorDark,
             title: const Text('Already Saved'),
             content: Text(
                 'You already have "${existingExperience.name}" saved at "${existingExperience.location.address ?? 'No address'}". Would you like to use this existing experience?'),
             actions: <Widget>[
               TextButton(
                 style: TextButton.styleFrom(
-                  backgroundColor: Colors.white,
+                  backgroundColor: AppColors.backgroundColorDark,
                   foregroundColor: primaryColor,
                 ),
                 child: const Text('Create New'),
@@ -3331,14 +3456,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (existingUsed > 0 && newLocations.isNotEmpty) {
         Fluttertoast.showToast(
           msg:
-              '📍 ${newLocations.length} new + ${existingUsed} existing experience${existingUsed > 1 ? 's' : ''} added',
+              '📍 ${newLocations.length} new + $existingUsed existing experience${existingUsed > 1 ? 's' : ''} added',
           toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.blue,
         );
       } else if (existingUsed > 0) {
         Fluttertoast.showToast(
           msg:
-              '📍 Using ${existingUsed} existing experience${existingUsed > 1 ? 's' : ''}',
+              '📍 Using $existingUsed existing experience${existingUsed > 1 ? 's' : ''}',
           toastLength: Toast.LENGTH_SHORT,
           backgroundColor: Colors.green,
         );
@@ -3371,7 +3496,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Use a post-frame callback to ensure the cards are built before scrolling
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      
+
       final experienceCardsContext = _experienceCardsSectionKey.currentContext;
       if (experienceCardsContext != null) {
         Scrollable.ensureVisible(
@@ -3389,7 +3514,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColorDark,
         title: Row(
           children: [
             const Icon(Icons.check_circle, color: Colors.green),
@@ -3568,15 +3693,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Trigger location extraction using Gemini AI
     // This is the key addition - we now extract location data for Yelp URLs
     print('🔗 YELP UPDATE: Triggering location extraction...');
-    
+
     // Set loading state to show spinner in location field
     // targetCard is guaranteed to be non-null here since we checked experienceCards.isEmpty above
-    final card = targetCard!;
+    final card = targetCard;
     card.isSelectingLocation = true;
     if (mounted) {
       setState(() {}); // Trigger rebuild to show loading indicator
     }
-    
+
     // Start the extraction and handle completion
     _yelpPreviewFutures[normalizedUrl] = _getBusinessFromYelpUrl(
       normalizedUrl,
@@ -3846,7 +3971,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (!mounted) return;
 
     final results = _pendingScanResults!;
-    
+
     // Clear pending results
     _pendingScanResults = null;
     _pendingScanSingleMessage = null;
@@ -4190,13 +4315,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         normalizedUrl.contains('yelp.to/')) {
       firstCard.originalShareType = ShareType.yelp;
       firstCard.yelpUrlController.text = normalizedUrl;
-      
+
       // Set loading state to show spinner in location field
       firstCard.isSelectingLocation = true;
       if (mounted) {
         setState(() {}); // Trigger rebuild to show loading indicator
       }
-      
+
       // Start the extraction and handle completion
       _yelpPreviewFutures[normalizedUrl] = _getBusinessFromYelpUrl(
         normalizedUrl,
@@ -4225,16 +4350,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         normalizedUrl.contains('maps.app.goo.gl') ||
         normalizedUrl.contains('goo.gl/maps')) {
       firstCard.originalShareType = ShareType.maps;
-      
+
       // Set loading state to show spinner in location field
       firstCard.isSelectingLocation = true;
       if (mounted) {
         setState(() {}); // Trigger rebuild to show loading indicator
       }
-      
+
       // Start the extraction and handle completion
-      _yelpPreviewFutures[normalizedUrl] = _getLocationFromMapsUrl(normalizedUrl)
-          .then((result) {
+      _yelpPreviewFutures[normalizedUrl] =
+          _getLocationFromMapsUrl(normalizedUrl).then((result) {
         // Loading state will be cleared in _fillFormWithGoogleMapsData
         // after the location is actually set on the card
         // Only clear here if no location was found (result is null)
@@ -4871,7 +4996,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         _businessDataCache[cacheKey] = {};
         return null;
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       return null;
     }
   }
@@ -5115,7 +5240,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (existingExperience != null) {
       provider.updateCardWithExistingExperience(
-          targetCard!.id, existingExperience);
+          targetCard.id, existingExperience);
       // Clear loading state since location is set via existing experience
       if (mounted) {
         setState(() {
@@ -5138,7 +5263,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (existingExperience != null) {
       provider.updateCardWithExistingExperience(
-          targetCard!.id, existingExperience);
+          targetCard.id, existingExperience);
       // Clear loading state since location is set via existing experience
       if (mounted) {
         setState(() {
@@ -5178,7 +5303,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             orElse: () => provider.experienceCards.first,
           );
           card.isSelectingLocation = false;
-          
+
           final String originalUrlKey = yelpUrl.trim();
           final String? placeIdKey = location.placeId;
 
@@ -5282,7 +5407,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           // Clear loading state after location is actually set
           firstCard.isSelectingLocation = false;
-          
+
           final String? placeIdKey = location.placeId;
           if (placeIdKey != null && placeIdKey.isNotEmpty) {
             final String originalUrlKey = originalMapsUrl.trim();
@@ -5593,8 +5718,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 await _experienceService.updateExperience(experienceToUpdate);
                 if (!mounted) return;
               } else {
-                if (!isNewExperience && relevantMediaItemIds.isNotEmpty)
+                if (!isNewExperience && relevantMediaItemIds.isNotEmpty) {
                   updateCount--; // Correct if only media was new and no other field changed
+                }
               }
             } else {
               continue;
@@ -6013,7 +6139,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final selectedExperience = await showModalBottomSheet<Experience>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColorDark,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -6191,7 +6317,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // After dialog closes, handle the selected location/experience
     if (!mounted) return;
-    
+
     if (_quickAddSelectedLocation != null) {
       await _handleQuickAddSelection(
         _quickAddSelectedLocation!,
@@ -6230,7 +6356,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         targetCard.id,
         existingExperience,
       );
-      
+
       // Show toast for saved experience
       Fluttertoast.showToast(
         msg: '✓ Added saved experience: ${existingExperience.name}',
@@ -6249,7 +6375,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         searchQuery: location.address,
         placeIdForPreview: location.placeId,
       );
-      
+
       // Show toast for new location
       final locationName = location.displayName ?? location.getPlaceName();
       Fluttertoast.showToast(
@@ -6403,21 +6529,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   Widget build(BuildContext context) {
     // #region agent log
-    debugPrint('[DEBUG H1] ReceiveShareScreen.build: START, kIsWeb=$kIsWeb, requireUrlFirst=${widget.requireUrlFirst}');
+    debugPrint(
+        '[DEBUG H1] ReceiveShareScreen.build: START, kIsWeb=$kIsWeb, requireUrlFirst=${widget.requireUrlFirst}');
     // #endregion
     // FIXED: Check kIsWeb before Platform.isIOS to avoid crash on web
     final bool useIOSBackIcon = !kIsWeb && Platform.isIOS;
     // #region agent log
-    debugPrint('[DEBUG H1] ReceiveShareScreen.build: Platform check passed, useIOSBackIcon=$useIOSBackIcon');
+    debugPrint(
+        '[DEBUG H1] ReceiveShareScreen.build: Platform check passed, useIOSBackIcon=$useIOSBackIcon');
     // #endregion
     return _wrapWithWillPopScope(Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         elevation: 0,
         scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.white,
+        surfaceTintColor: AppColors.backgroundColor,
         title: const Text('Save Content'),
         leading: IconButton(
           icon: Icon(useIOSBackIcon ? Icons.arrow_back_ios : Icons.arrow_back),
@@ -6473,7 +6601,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         _combinedCategoriesFuture, // MODIFIED: Use stable combined future
                     builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
                       // #region agent log
-                      debugPrint('[DEBUG H2] FutureBuilder: _combinedCategoriesFuture=${_combinedCategoriesFuture != null}, connectionState=${snapshot.connectionState}, requireUrlFirst=${widget.requireUrlFirst}');
+                      debugPrint(
+                          '[DEBUG H2] FutureBuilder: _combinedCategoriesFuture=${_combinedCategoriesFuture != null}, connectionState=${snapshot.connectionState}, requireUrlFirst=${widget.requireUrlFirst}');
                       // #endregion
                       // Primary Loading State: Show spinner if the future is null (early init) or still running.
                       if (_combinedCategoriesFuture == null ||
@@ -6482,7 +6611,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         // In URL-first mode, show the UI with URL bar so user can proceed
                         if (widget.requireUrlFirst) {
                           // #region agent log
-                          debugPrint('[DEBUG H2] FutureBuilder: Returning URL bar for requireUrlFirst mode');
+                          debugPrint(
+                              '[DEBUG H2] FutureBuilder: Returning URL bar for requireUrlFirst mode');
                           // #endregion
                           return Column(
                             mainAxisSize: MainAxisSize.min,
@@ -6516,12 +6646,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           children: [
                             _buildSharedUrlBar(
                                 showInstructions: _currentSharedFiles.isEmpty),
-                            const SizedBox(height: 8),
+                            Container(
+                              height: 8,
+                              color: AppColors.backgroundColor,
+                            ),
                             // Gate the rest of content when required
                             Expanded(
                               child: AbsorbPointer(
                                 absorbing: !_urlGateOpen,
-                                child: Opacity(
+                                child: AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 200),
                                   opacity: _urlGateOpen ? 1.0 : 0.4,
                                   child: Stack(
                                     // WRAPPED IN STACK FOR FAB
@@ -6529,136 +6663,170 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                       SingleChildScrollView(
                                         controller:
                                             _scrollController, // ATTACHED SCROLL CONTROLLER
-                                        padding:
-                                            const EdgeInsets.only(bottom: 80),
+                                        padding: EdgeInsets.zero,
                                         child: Column(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
                                             // Re-enable the shared files preview list
-                                            if (_currentSharedFiles.isEmpty)
-                                              const Padding(
-                                                padding: EdgeInsets.all(16.0),
-                                                child: Center(
-                                                    child: Text(
-                                                        'No shared content received')),
-                                              )
-                                            else
-                                              Consumer<ReceiveShareProvider>(
-                                                  key:
-                                                      _mediaPreviewListKey, // MOVED KEY HERE
-                                                  builder: (context, provider,
-                                                      child) {
-                                                    final experienceCards =
-                                                        provider
-                                                            .experienceCards;
-                                                    final firstCard =
-                                                        experienceCards
-                                                                .isNotEmpty
-                                                            ? experienceCards
-                                                                .first
-                                                            : null;
+                                            Container(
+                                              color: AppColors.backgroundColor,
+                                              child:
+                                                  _currentSharedFiles.isEmpty
+                                                      ? const Padding(
+                                                          padding:
+                                                              EdgeInsets.all(
+                                                                  16.0),
+                                                          child: Center(
+                                                              child: Text(
+                                                                  'No shared content received')),
+                                                        )
+                                                      : Consumer<
+                                                              ReceiveShareProvider>(
+                                                          key:
+                                                              _mediaPreviewListKey, // MOVED KEY HERE
+                                                          builder: (context,
+                                                              provider,
+                                                              child) {
+                                                            final experienceCards =
+                                                                provider
+                                                                    .experienceCards;
+                                                            final firstCard =
+                                                                experienceCards
+                                                                        .isNotEmpty
+                                                                    ? experienceCards
+                                                                        .first
+                                                                    : null;
 
-                                                    return ListView.builder(
-                                                      padding: EdgeInsets.zero,
-                                                      shrinkWrap: true,
-                                                      physics:
-                                                          const NeverScrollableScrollPhysics(),
-                                                      itemCount:
-                                                          _currentSharedFiles
-                                                              .length,
-                                                      itemBuilder:
-                                                          (context, index) {
-                                                        final file =
-                                                            _currentSharedFiles[
-                                                                index];
+                                                            return ListView
+                                                                .builder(
+                                                              padding:
+                                                                  EdgeInsets
+                                                                      .zero,
+                                                              shrinkWrap: true,
+                                                              physics:
+                                                                  const NeverScrollableScrollPhysics(),
+                                                              itemCount:
+                                                                  _currentSharedFiles
+                                                                      .length,
+                                                              itemBuilder:
+                                                                  (context,
+                                                                      index) {
+                                                                final file =
+                                                                    _currentSharedFiles[
+                                                                        index];
 
-                                                        bool isInstagram =
-                                                            false;
-                                                        bool isTikTok = false;
-                                                        if (file.type ==
-                                                                SharedMediaType
-                                                                    .text ||
-                                                            file.type ==
-                                                                SharedMediaType
-                                                                    .url) {
-                                                          String? url =
-                                                              _extractFirstUrl(
-                                                                  file.path);
-                                                          if (url != null) {
-                                                            if (url.contains(
-                                                                'instagram.com')) {
-                                                              isInstagram =
-                                                                  true;
-                                                            } else if (url.contains(
-                                                                    'tiktok.com') ||
-                                                                url.contains(
-                                                                    'vm.tiktok.com')) {
-                                                              isTikTok = true;
-                                                            }
-                                                          }
-                                                        }
-                                                        final double
-                                                            horizontalPadding =
-                                                            (isInstagram ||
-                                                                    isTikTok)
-                                                                ? 0.0
-                                                                : 16.0;
-                                                        final double
-                                                            verticalPadding =
-                                                            8.0;
+                                                                bool isInstagram =
+                                                                    false;
+                                                                bool isTikTok =
+                                                                    false;
+                                                                if (file.type ==
+                                                                        SharedMediaType
+                                                                            .text ||
+                                                                    file.type ==
+                                                                        SharedMediaType
+                                                                            .url) {
+                                                                  String? url =
+                                                                      _extractFirstUrl(
+                                                                          file
+                                                                              .path);
+                                                                  if (url !=
+                                                                      null) {
+                                                                    if (url.contains(
+                                                                        'instagram.com')) {
+                                                                      isInstagram =
+                                                                          true;
+                                                                    } else if (url.contains(
+                                                                            'tiktok.com') ||
+                                                                        url.contains(
+                                                                            'vm.tiktok.com')) {
+                                                                      isTikTok =
+                                                                          true;
+                                                                    }
+                                                                  }
+                                                                }
+                                                                final double
+                                                                    horizontalPadding =
+                                                                    (isInstagram ||
+                                                                            isTikTok)
+                                                                        ? 0.0
+                                                                        : 16.0;
+                                                                final double
+                                                                    verticalPadding =
+                                                                    8.0;
+                                                                final bool
+                                                                    isLastItem =
+                                                                    index ==
+                                                                        _currentSharedFiles
+                                                                                .length -
+                                                                            1;
 
-                                                        return Padding(
-                                                          key: ValueKey(
-                                                              file.path),
-                                                          padding: EdgeInsets
-                                                              .symmetric(
-                                                            horizontal:
-                                                                horizontalPadding,
-                                                            vertical:
-                                                                verticalPadding,
-                                                          ),
-                                                          child: Card(
-                                                            color: Colors.white,
-                                                            elevation: 2.0,
-                                                            margin: (isInstagram ||
-                                                                    isTikTok)
-                                                                ? EdgeInsets
-                                                                    .zero
-                                                                : const EdgeInsets
-                                                                    .only(
-                                                                    bottom: 0),
-                                                            shape:
-                                                                RoundedRectangleBorder(
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                      (isInstagram ||
-                                                                              isTikTok)
-                                                                          ? 0
-                                                                          : 8),
-                                                            ),
-                                                            clipBehavior:
-                                                                (isInstagram ||
-                                                                        isTikTok)
-                                                                    ? Clip
-                                                                        .antiAlias
-                                                                    : Clip.none,
-                                                            child: Column(
-                                                              crossAxisAlignment:
-                                                                  CrossAxisAlignment
-                                                                      .start,
-                                                              children: [
-                                                                _buildMediaPreview(
-                                                                    file,
-                                                                    firstCard,
-                                                                    index),
-                                                              ],
-                                                            ),
-                                                          ),
-                                                        );
-                                                      },
-                                                    );
-                                                  }),
+                                                                return Padding(
+                                                                  key: ValueKey(
+                                                                      file
+                                                                          .path),
+                                                                  padding:
+                                                                      EdgeInsets
+                                                                          .fromLTRB(
+                                                                    horizontalPadding,
+                                                                    verticalPadding,
+                                                                    horizontalPadding,
+                                                                    isLastItem
+                                                                        ? 0.0
+                                                                        : verticalPadding,
+                                                                  ),
+                                                                  child: Card(
+                                                                    color: Colors
+                                                                        .white,
+                                                                    elevation:
+                                                                        2.0,
+                                                                    margin: (isInstagram ||
+                                                                            isTikTok)
+                                                                        ? EdgeInsets
+                                                                            .zero
+                                                                        : const EdgeInsets
+                                                                            .only(
+                                                                            bottom:
+                                                                                0),
+                                                                    shape:
+                                                                        RoundedRectangleBorder(
+                                                                      borderRadius:
+                                                                          BorderRadius.circular(
+                                                                              (isInstagram || isTikTok)
+                                                                                  ? 0
+                                                                                  : 8),
+                                                                    ),
+                                                                    clipBehavior:
+                                                                        (isInstagram ||
+                                                                                isTikTok)
+                                                                            ? Clip
+                                                                                .antiAlias
+                                                                            : Clip
+                                                                                .none,
+                                                                    child:
+                                                                        Column(
+                                                                      crossAxisAlignment:
+                                                                          CrossAxisAlignment
+                                                                              .start,
+                                                                      children: [
+                                                                        _buildMediaPreview(
+                                                                            file,
+                                                                            firstCard,
+                                                                            index),
+                                                                      ],
+                                                                    ),
+                                                                  ),
+                                                                );
+                                                              },
+                                                            );
+                                                          },
+                                                        ),
+                                            ),
+                                            Container(
+                                              height: 8,
+                                              color:
+                                                  AppColors.backgroundColorDark,
+                                            ),
                                             Selector<ReceiveShareProvider, int>(
                                               key: const ValueKey(
                                                   'experience_cards_selector'),
@@ -6706,6 +6874,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                 );
                                               },
                                             ),
+                                            Container(
+                                              height: 80,
+                                              color:
+                                                  AppColors.backgroundColorDark,
+                                            ),
                                           ],
                                         ),
                                       ),
@@ -6735,7 +6908,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16.0, vertical: 12.0),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppColors.backgroundColor,
                                 boxShadow: [
                                   BoxShadow(
                                     color: Colors.black.withOpacity(0.1),
@@ -6758,11 +6931,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                   ),
                                   ElevatedButton.icon(
                                     onPressed: _showQuickAddDialog,
-                                    icon: const Icon(Icons.add, color: Colors.white),
-                                    label: const Text('Quick Add', style: TextStyle(color: Colors.white)),
+                                    icon: const Icon(Icons.add,
+                                        color: Colors.white),
+                                    label: const Text('Quick Add',
+                                        style: TextStyle(color: Colors.white)),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: Theme.of(context).primaryColor,
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                      backgroundColor:
+                                          Theme.of(context).primaryColor,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16, vertical: 12),
                                     ),
                                   ),
                                   ElevatedButton.icon(
@@ -6779,9 +6956,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                     color: Colors.white),
                                           )
                                         : const Icon(Icons.save),
-                                    label: Text(_isSaving
-                                        ? 'Saving...'
-                                        : 'Save'),
+                                    label:
+                                        Text(_isSaving ? 'Saving...' : 'Save'),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor:
                                           Theme.of(context).primaryColor,
@@ -7022,10 +7198,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // obfuscated for reliable scraping. Users can use "Scan Preview" instead.
           final isReel = url.contains('/reel/') || url.contains('/reels/');
           if (isReel) {
-            print('📘 FACEBOOK: Skipping auto-extraction for Reel (use Scan Preview instead)');
+            print(
+                '📘 FACEBOOK: Skipping auto-extraction for Reel (use Scan Preview instead)');
             return;
           }
-          
+
           // Automatically extract locations from regular Facebook posts only
           Future.delayed(const Duration(milliseconds: 1500), () {
             if (mounted) {
@@ -7085,18 +7262,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('🔄 AUTO-SCAN: Already scanned $url, skipping');
       return;
     }
-    
+
     // Don't auto-scan if already processing
     if (_isProcessingScreenshot || _isExtractingLocation) {
       print('🔄 AUTO-SCAN: Already processing, skipping auto-scan');
       return;
     }
-    
+
     // Mark as scanned
     _autoScannedUrls.add(url);
-    
-    print('🚀 AUTO-SCAN: Web page loaded, automatically scanning for locations...');
-    
+
+    print(
+        '🚀 AUTO-SCAN: Web page loaded, automatically scanning for locations...');
+
     // Small delay to ensure WebView is fully rendered
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted && !_isProcessingScreenshot && !_isExtractingLocation) {
@@ -7198,17 +7376,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               resolvedUrl.contains('goo.gl/maps'))) {
         // It resolved to a Google Maps URL, process it as such
         firstCard.originalShareType = ShareType.maps;
-        
+
         // Set loading state to show spinner in location field
         firstCard.isSelectingLocation = true;
         if (mounted) {
           setState(() {}); // Trigger rebuild to show loading indicator
         }
-        
+
         // FIXED: Store with original URL key, not resolved URL key
         // Start the extraction and handle completion
-        _yelpPreviewFutures[url] = _getLocationFromMapsUrl(resolvedUrl)
-            .then((result) {
+        _yelpPreviewFutures[url] =
+            _getLocationFromMapsUrl(resolvedUrl).then((result) {
           // Loading state will be cleared in _fillFormWithGoogleMapsData
           // after the location is actually set on the card
           // Only clear here if no location was found (result is null)
@@ -7852,7 +8030,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return AlertDialog(
           insetPadding: const EdgeInsets.symmetric(horizontal: 16),
           title: Text('Select Location for "$entityName"'),
-            content: Column(
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
@@ -7992,7 +8170,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           final Color primaryColor =
               Theme.of(dialogContext).colorScheme.primary;
           return AlertDialog(
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.backgroundColorDark,
             title: const Text('Potential Duplicate Found'),
             // MODIFIED: Dialog content to show both title and address
             content: Text(
@@ -8000,7 +8178,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             actions: <Widget>[
               TextButton(
                 style: TextButton.styleFrom(
-                  backgroundColor: Colors.white,
+                  backgroundColor: AppColors.backgroundColorDark,
                   foregroundColor: primaryColor,
                 ),
                 child: const Text('Create New'),
@@ -8116,9 +8294,12 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           onWebViewCreated: _handleWebViewCreated,
           onPageFinished: _handlePageFinished,
         ),
-        const SizedBox(height: 8),
         Container(
-          color: Colors.white,
+          height: 8,
+          color: AppColors.backgroundColor,
+        ),
+        Container(
+          color: AppColors.backgroundColor,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -8136,7 +8317,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
                 icon: Icon(
                     _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
                 iconSize: 24,
-                color: Colors.blue,
+                color: AppColors.teal,
                 tooltip: _isExpanded ? 'Collapse' : 'Expand',
                 constraints: const BoxConstraints(),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -8151,7 +8332,10 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
             ],
           ),
         ),
-        const SizedBox(height: 8),
+        Container(
+          height: 8,
+          color: AppColors.backgroundColor,
+        ),
       ],
     );
   }
@@ -8186,7 +8370,7 @@ class _MultiLocationSelectionDialog extends StatefulWidget {
 class _MultiLocationSelectionDialogState
     extends State<_MultiLocationSelectionDialog> {
   late Set<int> _selectedIndices;
-  
+
   /// Confidence threshold - locations below this should be verified by user
   /// Note: Good matches from extraction service get 0.85 confidence, so threshold
   /// must be lower to only flag truly uncertain matches (AI reranked at ~60%)
@@ -8208,15 +8392,17 @@ class _MultiLocationSelectionDialogState
       _selectedIndices.where((i) => widget.duplicates.containsKey(i)).length;
   int get _selectedNewCount =>
       _selectedIndices.length - _selectedDuplicateCount;
-  
+
   /// Count of locations with low confidence that need verification
-  int get _lowConfidenceCount => widget.locations.where(
-      (loc) => loc.confidence < _lowConfidenceThreshold || loc.needsConfirmation
-    ).length;
-  
+  int get _lowConfidenceCount => widget.locations
+      .where((loc) =>
+          loc.confidence < _lowConfidenceThreshold || loc.needsConfirmation)
+      .length;
+
   /// Check if a specific location has low confidence
   bool _isLowConfidence(ExtractedLocationData location) {
-    return location.confidence < _lowConfidenceThreshold || location.needsConfirmation;
+    return location.confidence < _lowConfidenceThreshold ||
+        location.needsConfirmation;
   }
 
   void _toggleAll() {
@@ -8242,355 +8428,361 @@ class _MultiLocationSelectionDialogState
 
   @override
   Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).primaryColor;
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16),
-      backgroundColor: Colors.white,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
+      backgroundColor: AppColors.backgroundColor,
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.location_on, color: AppColors.sage),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.locations.length == 1
+                      ? '1 Location Found'
+                      : '${widget.locations.length} Locations Found',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          if (_lowConfidenceCount > 0) ...[
+            const SizedBox(height: 4),
             Row(
               children: [
-                const Icon(Icons.location_on, color: Colors.blue),
-                const SizedBox(width: 8),
+                Icon(Icons.info_outline, size: 14, color: primaryColor),
+                const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    widget.locations.length == 1 
-                        ? '1 Location Found' 
-                        : '${widget.locations.length} Locations Found',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            if (_lowConfidenceCount > 0) ...[
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Icon(Icons.info_outline, size: 14, color: Colors.red[700]),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      '$_lowConfidenceCount location${_lowConfidenceCount == 1 ? '' : 's'} may need verification',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.red[700],
-                      ),
+                    '$_lowConfidenceCount location${_lowConfidenceCount == 1 ? '' : 's'} may need verification',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.normal,
+                      color: primaryColor,
                     ),
                   ),
-                ],
-              ),
-            ],
-          ],
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Select which locations to add:',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-              // Show duplicate notice if any duplicates found
-              if (_duplicateCount > 0) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange[200]!),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.bookmark, size: 16, color: Colors.orange[700]),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '$_duplicateCount already saved',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.orange[800],
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ],
+            ),
+          ],
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Select which locations to add:',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+            // Show duplicate notice if any duplicates found
+            if (_duplicateCount > 0) ...[
               const SizedBox(height: 8),
-              // Select All / Deselect All row
-              InkWell(
-                onTap: _toggleAll,
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      Checkbox(
-                        value: _allSelected,
-                        tristate: true,
-                        onChanged: (_) => _toggleAll(),
-                        activeColor: Colors.blue,
-                      ),
-                      Text(
-                        _allSelected ? 'Deselect All' : 'Select All',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: Colors.blue[700],
-                        ),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.blue[50],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${_selectedIndices.length}/${widget.locations.length}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.blue[700],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.teal.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.teal.withOpacity(0.35)),
                 ),
-              ),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
-              // Scrollable list of locations
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.4,
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: widget.locations.length,
-                    itemBuilder: (context, index) {
-                      final location = widget.locations[index];
-                      final isSelected = _selectedIndices.contains(index);
-                      final isDuplicate = widget.duplicates.containsKey(index);
-                      final existingExp = widget.duplicates[index];
-                      final isLowConfidence = _isLowConfidence(location);
-
-                      return InkWell(
-                        onTap: () => _toggleLocation(index),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          decoration: BoxDecoration(
-                            // Low confidence takes priority for background color
-                            color: isSelected
-                                ? (isLowConfidence
-                                    ? Colors.red.withOpacity(0.05)
-                                    : isDuplicate 
-                                        ? Colors.orange.withOpacity(0.08)
-                                        : Colors.blue.withOpacity(0.05))
-                                : null,
-                            borderRadius: BorderRadius.circular(8),
-                            border: isLowConfidence && isSelected
-                                ? Border.all(color: Colors.red.withOpacity(0.3), width: 1)
-                                : null,
-                          ),
-                          child: Row(
-                            children: [
-                              Checkbox(
-                                value: isSelected,
-                                onChanged: (_) => _toggleLocation(index),
-                                // Low confidence takes priority (even if duplicate)
-                                activeColor: isLowConfidence 
-                                    ? Colors.red 
-                                    : isDuplicate
-                                        ? Colors.orange 
-                                        : Colors.blue,
-                              ),
-                              Icon(
-                                // Low confidence takes priority for icon (even if duplicate)
-                                isLowConfidence
-                                    ? Icons.help_outline
-                                    : isDuplicate 
-                                        ? Icons.bookmark 
-                                        : Icons.place,
-                                size: 18,
-                                color: isLowConfidence
-                                    ? Colors.red[600]
-                                    : isDuplicate
-                                        ? Colors.orange[600]
-                                        : Colors.grey,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            location.name,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w500,
-                                              color: isSelected
-                                                  ? Colors.black
-                                                  : Colors.grey[700],
-                                            ),
-                                          ),
-                                        ),
-                                        if (isDuplicate)
-                                          Container(
-                                            margin:
-                                                const EdgeInsets.only(left: 4),
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 6, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.orange[100],
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Text(
-                                              'Saved',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w600,
-                                                color: Colors.orange[800],
-                                              ),
-                                            ),
-                                          ),
-                                        // Show verify badge for low confidence locations (even if also a duplicate)
-                                        if (isLowConfidence)
-                                          Container(
-                                            margin:
-                                                const EdgeInsets.only(left: 4),
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 6, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.red[50],
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                              border: Border.all(
-                                                color: Colors.red[200]!,
-                                                width: 1,
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.warning_amber_rounded,
-                                                  size: 10,
-                                                  color: Colors.red[700],
-                                                ),
-                                                const SizedBox(width: 2),
-                                                Text(
-                                                  'Verify',
-                                                  style: TextStyle(
-                                                    fontSize: 10,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: Colors.red[700],
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                    if (location.address != null &&
-                                        location.address!.isNotEmpty)
-                                      Text(
-                                        location.address!,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                    if (isDuplicate && existingExp != null)
-                                      Text(
-                                        'Address already saved as: "${existingExp.name}"',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontStyle: FontStyle.italic,
-                                          color: Colors.orange[700],
-                                        ),
-                                      ),
-                                    if (isLowConfidence && !isDuplicate)
-                                      Text(
-                                        'Please verify this location is correct',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontStyle: FontStyle.italic,
-                                          color: Colors.red[600],
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
+                child: Row(
+                  children: [
+                    Icon(Icons.bookmark, size: 16, color: AppColors.teal),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '$_duplicateCount already saved',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.teal,
+                          fontWeight: FontWeight.w500,
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
+            const SizedBox(height: 8),
+            // Select All / Deselect All row
+            InkWell(
+              onTap: _toggleAll,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: _allSelected,
+                      tristate: true,
+                      onChanged: (_) => _toggleAll(),
+                      activeColor: AppColors.sage,
+                    ),
+                    Text(
+                      _allSelected ? 'Deselect All' : 'Select All',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.sage,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.sage.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${_selectedIndices.length}/${widget.locations.length}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.sage,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            // Scrollable list of locations
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.4,
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: widget.locations.length,
+                  itemBuilder: (context, index) {
+                    final location = widget.locations[index];
+                    final isSelected = _selectedIndices.contains(index);
+                    final isDuplicate = widget.duplicates.containsKey(index);
+                    final existingExp = widget.duplicates[index];
+                    final isLowConfidence = _isLowConfidence(location);
+
+                    return InkWell(
+                      onTap: () => _toggleLocation(index),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          // Low confidence takes priority for background color
+                          color: isSelected
+                              ? (isLowConfidence
+                                  ? primaryColor.withOpacity(0.05)
+                                  : isDuplicate
+                                      ? AppColors.teal.withOpacity(0.12)
+                                      : AppColors.sage.withOpacity(0.08))
+                              : null,
+                          borderRadius: BorderRadius.circular(8),
+                          border: isLowConfidence && isSelected
+                              ? Border.all(
+                                  color: primaryColor.withOpacity(0.3),
+                                  width: 1)
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: isSelected,
+                              onChanged: (_) => _toggleLocation(index),
+                              // Low confidence takes priority (even if duplicate)
+                              activeColor: isLowConfidence
+                                  ? primaryColor
+                                  : isDuplicate
+                                      ? AppColors.teal
+                                      : AppColors.sage,
+                            ),
+                            Icon(
+                              // Low confidence takes priority for icon (even if duplicate)
+                              isLowConfidence
+                                  ? Icons.help_outline
+                                  : isDuplicate
+                                      ? Icons.bookmark
+                                      : Icons.place,
+                              size: 18,
+                              color: isLowConfidence
+                                  ? primaryColor
+                                  : isDuplicate
+                                      ? AppColors.teal
+                                      : Colors.grey,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          location.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w500,
+                                            color: isSelected
+                                                ? Colors.black
+                                                : Colors.grey[700],
+                                          ),
+                                        ),
+                                      ),
+                                      if (isDuplicate)
+                                        Container(
+                                          margin:
+                                              const EdgeInsets.only(left: 4),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.teal
+                                                .withOpacity(0.18),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            'Saved',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.teal,
+                                            ),
+                                          ),
+                                        ),
+                                      // Show verify badge for low confidence locations (even if also a duplicate)
+                                      if (isLowConfidence)
+                                        Container(
+                                          margin:
+                                              const EdgeInsets.only(left: 4),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                primaryColor.withOpacity(0.12),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            border: Border.all(
+                                              color:
+                                                  primaryColor.withOpacity(0.35),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.warning_amber_rounded,
+                                                size: 10,
+                                                color: primaryColor,
+                                              ),
+                                              const SizedBox(width: 2),
+                                              Text(
+                                                'Verify',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: primaryColor,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  if (location.address != null &&
+                                      location.address!.isNotEmpty)
+                                    Text(
+                                      location.address!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  if (isDuplicate && existingExp != null)
+                                    Text(
+                                      'Address already saved as: "${existingExp.name}"',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontStyle: FontStyle.italic,
+                                        color: AppColors.teal,
+                                      ),
+                                    ),
+                                  if (isLowConfidence && !isDuplicate)
+                                    Text(
+                                      'Please verify this location is correct',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontStyle: FontStyle.italic,
+                                        color: primaryColor,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _noneSelected
+              ? null
+              : () {
+                  // Sort indices and map to locations
+                  final sortedIndices = _selectedIndices.toList()..sort();
+                  final selectedLocations =
+                      sortedIndices.map((i) => widget.locations[i]).toList();
+
+                  // Build map of selected locations that are duplicates
+                  final selectedDuplicates =
+                      <ExtractedLocationData, Experience>{};
+                  for (final index in sortedIndices) {
+                    if (widget.duplicates.containsKey(index)) {
+                      selectedDuplicates[widget.locations[index]] =
+                          widget.duplicates[index]!;
+                    }
+                  }
+
+                  Navigator.pop(
+                      context,
+                      _MultiLocationSelectionResult(
+                        selectedLocations: selectedLocations,
+                        selectedDuplicates: selectedDuplicates,
+                      ));
+                },
+          child: Text(
+            _buildButtonText(),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: _noneSelected
-                ? null
-                : () {
-                    // Sort indices and map to locations
-                    final sortedIndices = _selectedIndices.toList()..sort();
-                    final selectedLocations =
-                        sortedIndices.map((i) => widget.locations[i]).toList();
-
-                    // Build map of selected locations that are duplicates
-                    final selectedDuplicates =
-                        <ExtractedLocationData, Experience>{};
-                    for (final index in sortedIndices) {
-                      if (widget.duplicates.containsKey(index)) {
-                        selectedDuplicates[widget.locations[index]] =
-                            widget.duplicates[index]!;
-                      }
-                    }
-
-                    Navigator.pop(
-                        context,
-                        _MultiLocationSelectionResult(
-                          selectedLocations: selectedLocations,
-                          selectedDuplicates: selectedDuplicates,
-                        ));
-                  },
-            child: Text(
-              _buildButtonText(),
-            ),
-          ),
-        ],
-      );
+      ],
+    );
   }
 
   String _buildButtonText() {
@@ -8600,11 +8792,11 @@ class _MultiLocationSelectionDialogState
     }
 
     if (_selectedDuplicateCount > 0 && _selectedNewCount > 0) {
-      return 'Add ${_selectedIndices.length} (${_selectedNewCount} new, ${_selectedDuplicateCount} existing)';
+      return 'Add ${_selectedIndices.length} ($_selectedNewCount new, $_selectedDuplicateCount existing)';
     } else if (_selectedDuplicateCount > 0) {
-      return 'Use ${_selectedDuplicateCount} Existing';
+      return 'Use $_selectedDuplicateCount Existing';
     } else {
-      return 'Create ${_selectedNewCount} Cards';
+      return 'Create $_selectedNewCount Cards';
     }
   }
 }
@@ -8613,7 +8805,8 @@ class _MultiLocationSelectionDialogState
 class _QuickAddDialog extends StatefulWidget {
   final GoogleMapsService mapsService;
   final ExperienceService experienceService;
-  final void Function(Location location, Experience? experience) onLocationSelected;
+  final void Function(Location location, Experience? experience)
+      onLocationSelected;
 
   const _QuickAddDialog({
     required this.mapsService,
@@ -8712,20 +8905,21 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
         for (int i = 0; i < mapsResults.length && i < 5; i++) {
           final result = mapsResults[i];
           final placeId = result['placeId'];
-          
+
           // Try to get rating from place details
           double? rating;
           int? userRatingCount;
           if (placeId != null && placeId.isNotEmpty) {
             try {
-              final location = await widget.mapsService.getPlaceDetails(placeId);
+              final location =
+                  await widget.mapsService.getPlaceDetails(placeId);
               rating = location.rating;
               userRatingCount = location.userRatingCount;
             } catch (e) {
               debugPrint('Error fetching place details for rating: $e');
             }
           }
-          
+
           markedMapsResults.add({
             'type': 'place',
             ...result,
@@ -8733,7 +8927,7 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
             if (userRatingCount != null) 'userRatingCount': userRatingCount,
           });
         }
-        
+
         // Add remaining results without ratings
         for (int i = 5; i < mapsResults.length; i++) {
           markedMapsResults.add({
@@ -8790,7 +8984,8 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
             _selectedLocation = location;
             _selectedExperience = null;
             _isLoadingDetails = false;
-            _searchController.text = location.displayName ?? result['description'] ?? '';
+            _searchController.text =
+                location.displayName ?? result['description'] ?? '';
           });
         } else {
           setState(() {
@@ -8934,13 +9129,18 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                           Divider(height: 1, indent: 56, endIndent: 16),
                       itemBuilder: (context, index) {
                         final result = _searchResults[index];
-                        final bool isUserExperience = result['type'] == 'experience';
+                        final bool isUserExperience =
+                            result['type'] == 'experience';
                         final String? address = result['address'] ??
                             (result['structured_formatting'] != null
-                                ? result['structured_formatting']['secondary_text']
+                                ? result['structured_formatting']
+                                    ['secondary_text']
                                 : null);
-                        final bool hasRating = result['rating'] != null && !isUserExperience;
-                        final double rating = hasRating ? (result['rating'] as num).toDouble() : 0.0;
+                        final bool hasRating =
+                            result['rating'] != null && !isUserExperience;
+                        final double rating = hasRating
+                            ? (result['rating'] as num).toDouble()
+                            : 0.0;
 
                         return Material(
                           color: Colors.transparent,
@@ -8948,12 +9148,15 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                             onTap: () => _selectSearchResult(result),
                             borderRadius: BorderRadius.circular(8),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4.0),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 4.0),
                               child: ListTile(
                                 leading: CircleAvatar(
                                   backgroundColor: isUserExperience
                                       ? Colors.green.withOpacity(0.1)
-                                      : Theme.of(context).primaryColor.withOpacity(0.1),
+                                      : Theme.of(context)
+                                          .primaryColor
+                                          .withOpacity(0.1),
                                   child: isUserExperience
                                       ? const Icon(
                                           Icons.bookmark,
@@ -8974,9 +9177,11 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                                             horizontal: 6, vertical: 2),
                                         decoration: BoxDecoration(
                                           color: Colors.green.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(4),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
                                           border: Border.all(
-                                              color: Colors.green.withOpacity(0.3)),
+                                              color: Colors.green
+                                                  .withOpacity(0.3)),
                                         ),
                                         child: Text(
                                           'Saved',
@@ -8991,7 +9196,8 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                                     ],
                                     Expanded(
                                       child: Text(
-                                        result['description'] ?? 'Unknown Place',
+                                        result['description'] ??
+                                            'Unknown Place',
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w500,
                                           fontSize: 15,
@@ -9006,11 +9212,13 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                                   children: [
                                     if (address != null)
                                       Padding(
-                                        padding: const EdgeInsets.only(top: 4.0),
+                                        padding:
+                                            const EdgeInsets.only(top: 4.0),
                                         child: Row(
                                           children: [
                                             Icon(Icons.location_on,
-                                                size: 14, color: Colors.grey[600]),
+                                                size: 14,
+                                                color: Colors.grey[600]),
                                             const SizedBox(width: 4),
                                             Expanded(
                                               child: Text(
@@ -9028,7 +9236,8 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                                       ),
                                     if (hasRating)
                                       Padding(
-                                        padding: const EdgeInsets.only(top: 4.0),
+                                        padding:
+                                            const EdgeInsets.only(top: 4.0),
                                         child: Row(
                                           children: [
                                             ...List.generate(
@@ -9044,7 +9253,8 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                                               ),
                                             ),
                                             const SizedBox(width: 4),
-                                            if (result['userRatingCount'] != null)
+                                            if (result['userRatingCount'] !=
+                                                null)
                                               Text(
                                                 '(${result['userRatingCount']})',
                                                 style: TextStyle(
@@ -9125,7 +9335,8 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                               ),
                             ),
                           // Show rating on the right side for new locations
-                          if (_selectedExperience == null && _selectedLocation!.rating != null) ...[
+                          if (_selectedExperience == null &&
+                              _selectedLocation!.rating != null) ...[
                             const Spacer(),
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -9186,7 +9397,9 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                 ),
 
               // Action buttons
-              if (_selectedLocation != null && !_showSearchResults && !_isLoadingDetails)
+              if (_selectedLocation != null &&
+                  !_showSearchResults &&
+                  !_isLoadingDetails)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   child: Row(
@@ -9213,10 +9426,13 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                               _selectedExperience,
                             );
                           },
-                          icon: const Icon(Icons.check),
-                          label: Text(_selectedExperience != null
-                              ? 'Add Saved Experience'
-                              : 'Add Location'),
+                          icon: const Icon(Icons.check, color: Colors.white),
+                          label: Text(
+                            _selectedExperience != null
+                                ? 'Add Saved Experience'
+                                : 'Add Location',
+                            style: const TextStyle(color: Colors.white),
+                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Theme.of(context).primaryColor,
                             foregroundColor: Colors.white,

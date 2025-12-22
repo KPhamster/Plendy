@@ -144,8 +144,9 @@ class Location extends Equatable {
     }
     if (website != null) map['website'] = website; // Add to map
     if (rating != null) map['rating'] = rating; // ADDED
-    if (userRatingCount != null)
+    if (userRatingCount != null) {
       map['userRatingCount'] = userRatingCount; // ADDED
+    }
 
     return map;
   }

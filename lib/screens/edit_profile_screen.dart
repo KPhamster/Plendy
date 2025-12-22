@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../config/colors.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/email_validation_service.dart';
@@ -632,9 +633,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         centerTitle: true,
         title: const Text('Edit Profile'),

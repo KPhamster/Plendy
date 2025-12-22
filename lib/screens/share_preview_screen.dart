@@ -365,35 +365,38 @@ class SharePreviewScreen extends StatelessWidget {
     final shareId = name != null ? name.split('/').last : '';
     final fields = (docJson['fields'] ?? {}) as Map<String, dynamic>;
 
-    dynamic _decodeValue(dynamic value) {
+    dynamic decodeValue(dynamic value) {
       if (value is! Map<String, dynamic>) return value;
       if (value.containsKey('nullValue')) return null;
       if (value.containsKey('stringValue')) return value['stringValue'];
-      if (value.containsKey('booleanValue'))
+      if (value.containsKey('booleanValue')) {
         return value['booleanValue'] as bool;
-      if (value.containsKey('integerValue'))
+      }
+      if (value.containsKey('integerValue')) {
         return int.tryParse(value['integerValue'] as String);
-      if (value.containsKey('doubleValue'))
+      }
+      if (value.containsKey('doubleValue')) {
         return (value['doubleValue'] as num).toDouble();
+      }
       if (value.containsKey('timestampValue')) return value['timestampValue'];
       if (value.containsKey('geoPointValue')) return value['geoPointValue'];
       if (value.containsKey('arrayValue')) {
         final list = (value['arrayValue']['values'] as List?) ?? const [];
-        return list.map(_decodeValue).toList();
+        return list.map(decodeValue).toList();
       }
       if (value.containsKey('mapValue')) {
         final m =
             (value['mapValue']['fields'] as Map<String, dynamic>?) ?? const {};
-        return m.map((k, v) => MapEntry(k, _decodeValue(v)));
+        return m.map((k, v) => MapEntry(k, decodeValue(v)));
       }
       return value;
     }
 
-    Map<String, dynamic> _decodeFields(Map<String, dynamic> raw) {
-      return raw.map((k, v) => MapEntry(k, _decodeValue(v)));
+    Map<String, dynamic> decodeFields(Map<String, dynamic> raw) {
+      return raw.map((k, v) => MapEntry(k, decodeValue(v)));
     }
 
-    final decoded = _decodeFields(fields);
+    final decoded = decodeFields(fields);
 
     return {
       'shareId': shareId,
@@ -416,14 +419,14 @@ class SharePreviewScreen extends StatelessWidget {
     final snap = (mapped['snapshot'] as Map<String, dynamic>?) ?? const {};
     final loc = (snap['location'] as Map<String, dynamic>?) ?? const {};
 
-    double _toDouble(dynamic v) {
+    double toDouble(dynamic v) {
       if (v == null) return 0.0;
       if (v is num) return v.toDouble();
       if (v is String) return double.tryParse(v) ?? 0.0;
       return 0.0;
     }
 
-    int? _toInt(dynamic v) {
+    int? toInt(dynamic v) {
       if (v == null) return null;
       if (v is int) return v;
       if (v is String) return int.tryParse(v);
@@ -431,7 +434,7 @@ class SharePreviewScreen extends StatelessWidget {
       return null;
     }
 
-    List<String> _toStringList(dynamic v) {
+    List<String> toStringList(dynamic v) {
       if (v is List) {
         return v.map((e) => e.toString()).toList();
       }
@@ -439,16 +442,16 @@ class SharePreviewScreen extends StatelessWidget {
     }
 
     final imageFromTop = snap['image'] as String?;
-    final imageUrls = _toStringList(snap['imageUrls']);
-    final mediaUrls = _toStringList(snap['mediaUrls']);
+    final imageUrls = toStringList(snap['imageUrls']);
+    final mediaUrls = toStringList(snap['mediaUrls']);
     final firstImage = imageFromTop?.isNotEmpty == true
         ? imageFromTop
         : (imageUrls.isNotEmpty ? imageUrls.first : null);
 
     final location = Location(
       placeId: loc['placeId'] as String?,
-      latitude: _toDouble(loc['latitude']),
-      longitude: _toDouble(loc['longitude']),
+      latitude: toDouble(loc['latitude']),
+      longitude: toDouble(loc['longitude']),
       address: loc['address'] as String?,
       city: loc['city'] as String?,
       state: loc['state'] as String?,
@@ -457,7 +460,7 @@ class SharePreviewScreen extends StatelessWidget {
       photoUrl: firstImage,
       website: snap['website'] as String?,
       rating: (snap['googleRating'] as num?)?.toDouble(),
-      userRatingCount: _toInt(snap['googleReviewCount']),
+      userRatingCount: toInt(snap['googleReviewCount']),
     );
 
     final now = DateTime.now();
@@ -473,7 +476,7 @@ class SharePreviewScreen extends StatelessWidget {
       yelpReviewCount: null,
       googleUrl: null,
       googleRating: (snap['googleRating'] as num?)?.toDouble(),
-      googleReviewCount: _toInt(snap['googleReviewCount']),
+      googleReviewCount: toInt(snap['googleReviewCount']),
       plendyRating: (snap['plendyRating'] as num?)?.toDouble() ?? 0.0,
       plendyReviewCount: 0,
       imageUrls: imageUrls.isNotEmpty ? imageUrls : mediaUrls,

@@ -1675,7 +1675,7 @@ If you cannot find the business with confidence, return:
 
 === RULES ===
 - Search for the ACTUAL business name from @$handle
-- Do NOT just convert the handle to a name (e.g., don't just return "Dolce Luna Cafe" from @dolcelunacafe without verifying)${hasExtractedAddress ? '\n- The address from the source ("' + extractedAddresses.first + '") is the MOST RELIABLE signal - prioritize it!' : ''}
+- Do NOT just convert the handle to a name (e.g., don't just return "Dolce Luna Cafe" from @dolcelunacafe without verifying)${hasExtractedAddress ? '\n- The address from the source ("${extractedAddresses.first}") is the MOST RELIABLE signal - prioritize it!' : ''}
 - Use Google Search to verify the business exists
 ${hasExtractedAddress ? '- If you find multiple businesses with similar names, choose the one at the specified address' : ''}
 - Return ONLY the JSON object, no other text
@@ -2936,7 +2936,7 @@ If you cannot verify the place exists, return:
             final text = parts.first['text'] as String?;
             if (text != null) {
               // Show full response for debugging (up to 1000 chars)
-              print('📝 GEMINI VISION Response: ${text.length > 1000 ? text.substring(0, 1000) + "..." : text}');
+              print('📝 GEMINI VISION Response: ${text.length > 1000 ? "${text.substring(0, 1000)}..." : text}');
             }
           }
         }

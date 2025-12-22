@@ -655,7 +655,7 @@ class SharingService {
     required String sharedWithUserId,
   }) {
     final typeSegment = itemType == ShareableItemType.category ? 'category' : 'experience';
-    return '${ownerUserId}_${typeSegment}_${itemId}_${sharedWithUserId}';
+    return '${ownerUserId}_${typeSegment}_${itemId}_$sharedWithUserId';
   }
 
   String _itemTypeToString(ShareableItemType type) {

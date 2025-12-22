@@ -72,6 +72,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   collection: ^1.18.0
   video_player: ^2.9.1
+  lottie: ^3.1.2
   crypto: ^3.0.3
   cached_network_image: ^3.4.1
   table_calendar: ^3.1.2
@@ -83,6 +84,8 @@ dependencies:
   wakelock_plus: ^1.2.8  # Keep screen awake during AI scans to prevent interruption
   flutter_foreground_task: ^9.1.0
 
+  flutter_web_plugins:
+    sdk: flutter
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -110,6 +113,7 @@ flutter:
   assets:
     - .env
     - assets/icon/
+    - assets/animations/
     - lib/assets/images/
     - assets/tutorials/
   #   - images/a_dot_burr.jpeg

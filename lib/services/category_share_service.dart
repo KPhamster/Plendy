@@ -124,7 +124,7 @@ class CategoryShareService {
     };
 
     await _shares.doc(token).set(data);
-    return 'https://plendy.app/shared-category/' + token;
+    return 'https://plendy.app/shared-category/$token';
   }
 
   Future<String> createLinkShareForColorCategory({
@@ -162,7 +162,7 @@ class CategoryShareService {
     };
 
     await _shares.doc(token).set(data);
-    return 'https://plendy.app/shared-category/' + token;
+    return 'https://plendy.app/shared-category/$token';
   }
 
   Future<String> createLinkShareForMultiple({
@@ -227,7 +227,7 @@ class CategoryShareService {
     };
 
     await _shares.doc(token).set(data);
-    return 'https://plendy.app/shared-category/' + token;
+    return 'https://plendy.app/shared-category/$token';
   }
 
   Future<void> grantSharedCategoryToUser({

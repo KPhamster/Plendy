@@ -1,6 +1,6 @@
 import 'dart:async'; // Import async
 import 'dart:math' as Math; // Import for mathematical functions
-import 'dart:typed_data'; // Import for ByteData
+// Import for ByteData
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -61,23 +61,33 @@ class _EventListItem {
   final Event? event;
   final bool isHeader;
 
-  _EventListItem.header(this.date) : event = null, isHeader = true;
-  _EventListItem.event(this.event) : date = null, isHeader = false;
+  _EventListItem.header(this.date)
+      : event = null,
+        isHeader = true;
+  _EventListItem.event(this.event)
+      : date = null,
+        isHeader = false;
 }
 
 class MapScreen extends StatefulWidget {
-  final Location? initialExperienceLocation; // ADDED: To receive a specific location
+  final Location?
+      initialExperienceLocation; // ADDED: To receive a specific location
   final PublicExperience?
       initialPublicExperience; // ADDED: Optional public experience context
-  final Event? initialEvent; // ADDED: Optional initial event for event view mode
+  final Event?
+      initialEvent; // ADDED: Optional initial event for event view mode
 
-  const MapScreen({super.key, this.initialExperienceLocation, this.initialPublicExperience, this.initialEvent}); // UPDATED: Constructor
+  const MapScreen(
+      {super.key,
+      this.initialExperienceLocation,
+      this.initialPublicExperience,
+      this.initialEvent}); // UPDATED: Constructor
 
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final ExperienceService _experienceService = ExperienceService();
   final AuthService _authService = AuthService();
   final UserService _userService = UserService();
@@ -87,6 +97,9 @@ class _MapScreenState extends State<MapScreen> {
       GoogleMapsService(); // ADDED: Maps Service
   final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
   bool _isLoading = true;
+
+  // Animation controller for smooth marker animations
+  AnimationController? _markerAnimationController;
   List<Experience> _experiences = [];
   List<UserCategory> _categories = [];
   List<ColorCategory> _colorCategories = [];
@@ -125,7 +138,8 @@ class _MapScreenState extends State<MapScreen> {
   Location? _tappedLocationDetails;
   Experience? _tappedExperience; // ADDED: Track associated experience
   UserCategory? _tappedExperienceCategory; // ADDED: Track associated category
-  String? _tappedLocationBusinessStatus; // ADDED: Track business status for tapped location
+  String?
+      _tappedLocationBusinessStatus; // ADDED: Track business status for tapped location
   bool? _tappedLocationOpenNow; // ADDED: Track open-now status
   Experience?
       _publicReadOnlyExperience; // ADDED: Cached public experience for discovery launches
@@ -152,9 +166,11 @@ class _MapScreenState extends State<MapScreen> {
   bool _showSearchResults = false;
   bool _isSearching = false;
   Timer? _debounce;
-  GoogleMapController? _mapController; // To be initialized from _mapControllerCompleter
+  GoogleMapController?
+      _mapController; // To be initialized from _mapControllerCompleter
   bool _isProgrammaticTextUpdate = false; // RE-ADDED
-  Location? _mapWidgetInitialLocation; // ADDED: To control GoogleMapsWidget initial location
+  Location?
+      _mapWidgetInitialLocation; // ADDED: To control GoogleMapsWidget initial location
   // ADDED: Indicates background loading of shared experiences
   bool _isSharedLoading = false;
   // ADDED: Paging state for shared experiences
@@ -178,24 +194,29 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Event view mode state
   Event? _activeEventViewMode;
   final Map<String, Marker> _eventViewMarkers = {};
-  final Map<String, Experience?> _eventViewMarkerExperiences = {}; // Store experience for each marker
-  final Map<String, EventExperienceEntry> _eventViewMarkerEntries = {}; // Store entry for each marker
+  final Map<String, Experience?> _eventViewMarkerExperiences =
+      {}; // Store experience for each marker
+  final Map<String, EventExperienceEntry> _eventViewMarkerEntries =
+      {}; // Store entry for each marker
   bool get _isEventViewModeActive => _activeEventViewMode != null;
   bool _isEventOverlayExpanded = false; // Track expanded state of event overlay
-  List<UserCategory> _plannerCategories = []; // Planner's categories for shared events
-  List<ColorCategory> _plannerColorCategories = []; // Planner's color categories for shared events
+  List<UserCategory> _plannerCategories =
+      []; // Planner's categories for shared events
+  List<ColorCategory> _plannerColorCategories =
+      []; // Planner's color categories for shared events
 
   // ADDED: Select mode state (for creating new events by selecting experiences on map)
   bool _isSelectModeActive = false;
   Color _selectModeColor = Colors.blue; // Random color for the new event
   List<EventExperienceEntry> _selectModeDraftItinerary = [];
   bool _isSelectModeOverlayExpanded = false;
-  final Map<String, Marker> _selectModeEventOnlyMarkers = {}; // Markers for event-only entries
-  
+  final Map<String, Marker> _selectModeEventOnlyMarkers =
+      {}; // Markers for event-only entries
+
   // ADDED: State for adding experiences to existing event
   bool _isAddToEventModeActive = false;
   List<EventExperienceEntry> _addToEventDraftItinerary = [];
-  
+
   // Event color palette (same as used in _getEventColor)
   static const List<Color> _eventColorPalette = [
     Colors.blue,
@@ -247,6 +268,9 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  /// Animates the selected marker using vsync-aligned frames for smooth performance.
+  /// Uses keyframe-based animation with reduced intermediate frames to minimize
+  /// icon generation overhead while maintaining visual smoothness.
   Future<void> _animateSelectedMarkerSmooth({
     required int animationToken,
     required MarkerId markerId,
@@ -257,38 +281,67 @@ class _MapScreenState extends State<MapScreen> {
     required int endSize,
     Duration duration = const Duration(milliseconds: 260),
   }) async {
-    final startTime = DateTime.now();
+    // Cancel any existing animation
+    _markerAnimationController?.dispose();
+
+    // Create a new animation controller with vsync for smooth 60fps animation
+    final controller = AnimationController(
+      vsync: this,
+      duration: duration,
+    );
+    _markerAnimationController = controller;
+
+    // Use easeOutCubic for natural deceleration
+    final animation = CurvedAnimation(
+      parent: controller,
+      curve: Curves.easeOutCubic,
+    );
+
     int lastSize = startSize;
-    while (true) {
-      final elapsed = DateTime.now().difference(startTime);
-      final double t = (elapsed.inMilliseconds / duration.inMilliseconds)
-          .clamp(0.0, 1.0);
-      final double eased = Curves.easeOutCubic.transform(t);
+
+    // Use a listener that's called on each vsync frame
+    void onAnimationUpdate() {
+      if (!mounted || animationToken != _markerAnimationToken) {
+        controller.dispose();
+        return;
+      }
+
       final int size =
-          (startSize + (endSize - startSize) * eased).round();
+          (startSize + (endSize - startSize) * animation.value).round();
+
+      // Only update if size actually changed (reduces unnecessary work)
       if (size != lastSize) {
-        final icon = await iconBuilder(size);
-        if (!mounted || animationToken != _markerAnimationToken) {
-          return;
-        }
-        setState(() {
-          _tappedLocationMarker = _buildSelectedMarker(
-            markerId: markerId,
-            position: position,
-            infoWindowTitle: infoWindowTitle,
-            icon: icon,
-          );
-        });
         lastSize = size;
+        // Build icon asynchronously and update marker
+        iconBuilder(size).then((icon) {
+          if (!mounted || animationToken != _markerAnimationToken) return;
+          setState(() {
+            _tappedLocationMarker = _buildSelectedMarker(
+              markerId: markerId,
+              position: position,
+              infoWindowTitle: infoWindowTitle,
+              icon: icon,
+            );
+          });
+        });
       }
-      if (t >= 1.0) {
-        break;
-      }
-      await Future.delayed(const Duration(milliseconds: 16));
     }
+
+    animation.addListener(onAnimationUpdate);
+
+    // Start the animation
+    await controller.forward();
+
+    // Clean up
+    animation.removeListener(onAnimationUpdate);
+    if (_markerAnimationController == controller) {
+      _markerAnimationController = null;
+    }
+    controller.dispose();
   }
 
-  Future<void> _refreshBusinessStatus(String? placeId, int animationToken) async {
+  Future<void> _refreshBusinessStatus(
+      String? placeId, int animationToken) async {
     if (placeId == null || placeId.isEmpty) {
       return;
     }
@@ -336,7 +389,7 @@ class _MapScreenState extends State<MapScreen> {
       _mapControllerCompleter.future.then((controller) {
         if (mounted) {
           if (!_mapControllerCompleter.isCompleted) {
-             _mapControllerCompleter.complete(controller);
+            _mapControllerCompleter.complete(controller);
           }
           _mapController = controller;
           final target = LatLng(widget.initialExperienceLocation!.latitude,
@@ -383,36 +436,38 @@ class _MapScreenState extends State<MapScreen> {
     final controller = await _mapControllerCompleter.future;
     if (!mounted) return;
     _mapController = controller;
-    
+
     // Ensure experiences are loaded (this may already be in progress from _initializeFiltersAndData)
     // Calling it again is safe - it will reload if needed
     await _loadDataAndGenerateMarkers();
-    
+
     if (!mounted) return;
-    
+
     // Cache experiences for this event
     await _cacheEventExperiencesForEvents([event]);
-    
+
     if (!mounted) return;
-    
+
     // Enter event view mode
     await _enterEventViewMode(event);
-    
+
     // If initialExperienceLocation is provided, focus on the matching marker
     if (widget.initialExperienceLocation != null) {
-      await _focusOnInitialLocationInEventView(event, widget.initialExperienceLocation!);
+      await _focusOnInitialLocationInEventView(
+          event, widget.initialExperienceLocation!);
     }
   }
-  
+
   // ADDED: Focus on a specific location in event view mode
-  Future<void> _focusOnInitialLocationInEventView(Event event, Location targetLocation) async {
+  Future<void> _focusOnInitialLocationInEventView(
+      Event event, Location targetLocation) async {
     if (!mounted || _mapController == null) return;
-    
+
     // Find the matching entry/experience in the event
     for (int i = 0; i < event.experiences.length; i++) {
       final entry = event.experiences[i];
       Location? entryLocation;
-      
+
       if (entry.isEventOnly) {
         entryLocation = entry.inlineLocation;
       } else if (entry.experienceId.isNotEmpty) {
@@ -421,7 +476,7 @@ class _MapScreenState extends State<MapScreen> {
           entryLocation = experience.location;
         }
       }
-      
+
       // Check if this location matches the target location (within small tolerance)
       if (entryLocation != null &&
           (entryLocation.latitude - targetLocation.latitude).abs() < 0.0001 &&
@@ -435,7 +490,7 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
     }
-    
+
     // If no exact match found, just focus on the location
     final position = LatLng(targetLocation.latitude, targetLocation.longitude);
     _mapController?.animateCamera(
@@ -447,10 +502,13 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
-    _searchController.removeListener(_onSearchChanged); // ADDED: Remove listener here
+    _searchController
+        .removeListener(_onSearchChanged); // ADDED: Remove listener here
     _searchController.dispose();
     _searchFocusNode.dispose();
     _debounce?.cancel();
+    _markerAnimationController?.dispose();
+    _markerAnimationController = null;
     super.dispose();
   }
 
@@ -493,8 +551,7 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
     try {
-      final permissions =
-          await _sharingService.getSharedItemsForUser(userId);
+      final permissions = await _sharingService.getSharedItemsForUser(userId);
       final Set<String> categoryKeys = permissions
           .where((perm) => perm.itemType == ShareableItemType.category)
           .map((perm) => _sharePermissionKey(perm.ownerUserId, perm.itemId))
@@ -516,8 +573,7 @@ class _MapScreenState extends State<MapScreen> {
       }
       _sharedPermissionsLoaded = true;
     } catch (e) {
-      print(
-          "🗺️ MAP SCREEN: Failed to load share permissions for $userId: $e");
+      print("🗺️ MAP SCREEN: Failed to load share permissions for $userId: $e");
     }
   }
 
@@ -593,26 +649,27 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
-    final List<Future<MapEntry<String, List<Experience>>>> tasks = followeeIds
-        .map((followeeId) async {
-          try {
-            // Use forceRefresh: true to bypass in-flight deduplication since we're
-            // fetching for different users in parallel. The shared in-flight tracking
-            // in ExperienceService would otherwise cause all followees to get the
-            // same experiences from the first request.
-            final experiences = await _experienceService
-                .getExperiencesByUser(followeeId, limit: 0, forceRefresh: true); // No limit - load all followee experiences
-            final List<Experience> publicExperiences = experiences
-                .where((exp) => _canViewFolloweeExperience(exp))
-                .toList();
-            return MapEntry(followeeId, publicExperiences);
-          } catch (e) {
-            print(
-                "🗺️ MAP SCREEN: Failed to load experiences for followee $followeeId: $e");
-            return MapEntry(followeeId, <Experience>[]);
-          }
-        })
-        .toList();
+    final List<Future<MapEntry<String, List<Experience>>>> tasks =
+        followeeIds.map((followeeId) async {
+      try {
+        // Use forceRefresh: true to bypass in-flight deduplication since we're
+        // fetching for different users in parallel. The shared in-flight tracking
+        // in ExperienceService would otherwise cause all followees to get the
+        // same experiences from the first request.
+        final experiences = await _experienceService.getExperiencesByUser(
+            followeeId,
+            limit: 0,
+            forceRefresh: true); // No limit - load all followee experiences
+        final List<Experience> publicExperiences = experiences
+            .where((exp) => _canViewFolloweeExperience(exp))
+            .toList();
+        return MapEntry(followeeId, publicExperiences);
+      } catch (e) {
+        print(
+            "🗺️ MAP SCREEN: Failed to load experiences for followee $followeeId: $e");
+        return MapEntry(followeeId, <Experience>[]);
+      }
+    }).toList();
 
     try {
       final results = await Future.wait(tasks);
@@ -621,7 +678,8 @@ class _MapScreenState extends State<MapScreen> {
       }
       final Map<String, List<Experience>> newFolloweeExperiences = {};
       final Map<String, Map<String, UserCategory>> newFolloweeCategories = {};
-      final Map<String, Map<String, ColorCategory>> newFolloweeColorCategories = {};
+      final Map<String, Map<String, ColorCategory>> newFolloweeColorCategories =
+          {};
       for (final entry in results) {
         final String followeeId = entry.key;
         final List<Experience> experiences = entry.value;
@@ -644,7 +702,8 @@ class _MapScreenState extends State<MapScreen> {
           }
           missingCategoryIds.add(categoryId);
         }
-        for (final otherId in experiences.expand((exp) => exp.otherCategories)) {
+        for (final otherId
+            in experiences.expand((exp) => exp.otherCategories)) {
           if (otherId.isEmpty || ownerCategories.containsKey(otherId)) {
             continue;
           }
@@ -668,8 +727,8 @@ class _MapScreenState extends State<MapScreen> {
         }
         if (missingCategoryIds.isNotEmpty) {
           try {
-            final fetchedCategories = await _experienceService
-                .getUserCategoriesByOwnerAndIds(
+            final fetchedCategories =
+                await _experienceService.getUserCategoriesByOwnerAndIds(
                     followeeId, missingCategoryIds.toList());
             for (final category in fetchedCategories) {
               ownerCategories[category.id] = category;
@@ -681,8 +740,8 @@ class _MapScreenState extends State<MapScreen> {
         }
         if (missingColorIds.isNotEmpty) {
           try {
-            final fetchedColors = await _experienceService
-                .getColorCategoriesByOwnerAndIds(
+            final fetchedColors =
+                await _experienceService.getColorCategoriesByOwnerAndIds(
                     followeeId, missingColorIds.toList());
             for (final color in fetchedColors) {
               ownerColors[color.id] = color;
@@ -760,7 +819,8 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-  String? _getCategoryIconForExperienceFromCategories(Experience experience, List<UserCategory> categoriesToUse) {
+  String? _getCategoryIconForExperienceFromCategories(
+      Experience experience, List<UserCategory> categoriesToUse) {
     final String? categoryId = experience.categoryId;
 
     // First try the denormalized icon
@@ -787,19 +847,17 @@ class _MapScreenState extends State<MapScreen> {
     final String? ownerId = experience.createdBy;
     final String? currentUserId = _authService.currentUser?.uid;
     final String? categoryId = experience.categoryId;
-    final bool isFolloweeExperience = ownerId != null &&
-        ownerId.isNotEmpty &&
-        ownerId != currentUserId;
+    final bool isFolloweeExperience =
+        ownerId != null && ownerId.isNotEmpty && ownerId != currentUserId;
 
     final UserCategory? accessibleCategory =
         _getAccessibleUserCategory(ownerId, categoryId);
-    if (accessibleCategory != null &&
-        accessibleCategory.icon.isNotEmpty) {
+    if (accessibleCategory != null && accessibleCategory.icon.isNotEmpty) {
       return accessibleCategory.icon;
     }
 
     if (isFolloweeExperience && categoryId != null) {
-      final bool hasAccess = _canAccessFolloweeCategory(ownerId!, categoryId);
+      final bool hasAccess = _canAccessFolloweeCategory(ownerId, categoryId);
       if (!hasAccess) {
         return null;
       }
@@ -823,8 +881,7 @@ class _MapScreenState extends State<MapScreen> {
           _followeeCategories.containsKey(ownerId)) {
         final UserCategory? followeeCategory =
             _followeeCategories[ownerId]?[categoryId];
-        if (followeeCategory != null &&
-            followeeCategory.icon.isNotEmpty) {
+        if (followeeCategory != null && followeeCategory.icon.isNotEmpty) {
           return followeeCategory.icon;
         }
       }
@@ -839,8 +896,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   String _normalizeUserSortValue(UserProfile profile) {
-    if (profile.displayName != null &&
-        profile.displayName!.trim().isNotEmpty) {
+    if (profile.displayName != null && profile.displayName!.trim().isNotEmpty) {
       return profile.displayName!.trim().toLowerCase();
     }
     if (profile.username != null && profile.username!.trim().isNotEmpty) {
@@ -850,8 +906,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   String _getUserDisplayName(UserProfile profile) {
-    if (profile.displayName != null &&
-        profile.displayName!.trim().isNotEmpty) {
+    if (profile.displayName != null && profile.displayName!.trim().isNotEmpty) {
       return profile.displayName!.trim();
     }
     if (profile.username != null && profile.username!.trim().isNotEmpty) {
@@ -988,8 +1043,8 @@ class _MapScreenState extends State<MapScreen> {
     final Map<String, ColorCategory> merged = {
       for (final color in _colorCategories) color.id: color,
     };
-    for (final color in _collectAccessibleColorCategoriesForExperience(
-        experience)) {
+    for (final color
+        in _collectAccessibleColorCategoriesForExperience(experience)) {
       merged[color.id] = color;
     }
     return merged.values.toList();
@@ -1032,8 +1087,7 @@ class _MapScreenState extends State<MapScreen> {
     if (ownerId == currentUserId) {
       return true;
     }
-    final UserCategory? category =
-        _followeeCategories[ownerId]?[categoryId];
+    final UserCategory? category = _followeeCategories[ownerId]?[categoryId];
     if (category == null) {
       return false;
     }
@@ -1066,8 +1120,8 @@ class _MapScreenState extends State<MapScreen> {
   bool _canEditEvent(Event event) {
     final String? currentUserId = _authService.currentUser?.uid;
     if (currentUserId == null) return false;
-    return event.plannerUserId == currentUserId || 
-           event.collaboratorIds.contains(currentUserId);
+    return event.plannerUserId == currentUserId ||
+        event.collaboratorIds.contains(currentUserId);
   }
 
   bool _isExperienceEffectivelyPrivate(Experience experience) {
@@ -1086,7 +1140,8 @@ class _MapScreenState extends State<MapScreen> {
       if (_isGlobalToggleActive) {
         _nearbyPublicExperiences = [];
         _publicExperienceMarkers.clear();
-        print("🗺️ MAP SCREEN: Cleared public experiences due to data reload (will refetch after)");
+        print(
+            "🗺️ MAP SCREEN: Cleared public experiences due to data reload (will refetch after)");
       }
     });
 
@@ -1113,7 +1168,8 @@ class _MapScreenState extends State<MapScreen> {
       final ownedResults = await Future.wait([
         _experienceService.getUserCategories(includeSharedEditable: true),
         _experienceService.getUserColorCategories(includeSharedEditable: true),
-        _experienceService.getExperiencesByUser(userId, limit: 0), // No limit - load all owned experiences
+        _experienceService.getExperiencesByUser(userId,
+            limit: 0), // No limit - load all owned experiences
       ]);
 
       _categories = ownedResults[0] as List<UserCategory>;
@@ -1164,7 +1220,8 @@ class _MapScreenState extends State<MapScreen> {
         }
         // ADDED: Refetch public experiences if globe is active (after saved experiences updated)
         if (_isGlobalToggleActive && _lastGlobeMapCenter != null) {
-          print("🗺️ MAP SCREEN: Refetching public experiences after data reload");
+          print(
+              "🗺️ MAP SCREEN: Refetching public experiences after data reload");
           unawaited(() async {
             try {
               await _fetchNearbyPublicExperiences(_lastGlobeMapCenter!);
@@ -1181,7 +1238,9 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _loadSharedExperiencesInBackground(String userId) async {
     try {
       if (mounted) {
-        setState(() { _isSharedLoading = true; });
+        setState(() {
+          _isSharedLoading = true;
+        });
       }
 
       if (_sharedIsFetching || !_sharedHasMore) {
@@ -1200,10 +1259,12 @@ class _MapScreenState extends State<MapScreen> {
         if (sharedExperiences.isEmpty || page.$2 == null) {
           _sharedHasMore = false;
         }
-        print("🗺️ MAP SCREEN: [BG] Loaded page with ${sharedExperiences.length} shared experiences.");
+        print(
+            "🗺️ MAP SCREEN: [BG] Loaded page with ${sharedExperiences.length} shared experiences.");
       } catch (e) {
         // Fallback: use permissions + get by IDs for compatibility until index/denorm propagates
-        print("🗺️ MAP SCREEN: [BG] Paging query failed ($e). Falling back to share_permissions path.");
+        print(
+            "🗺️ MAP SCREEN: [BG] Paging query failed ($e). Falling back to share_permissions path.");
         // On first call, fetch all permission IDs and process in pages
         if (_fallbackSharedIds == null) {
           final sharedPermissions =
@@ -1216,20 +1277,24 @@ class _MapScreenState extends State<MapScreen> {
               .toList();
           _fallbackSharedIds = allSharedExperienceIds;
           _fallbackPageOffset = 0;
-          print("🗺️ MAP SCREEN: [BG] Fallback: Found ${_fallbackSharedIds!.length} total shared experiences to page.");
+          print(
+              "🗺️ MAP SCREEN: [BG] Fallback: Found ${_fallbackSharedIds!.length} total shared experiences to page.");
         }
         if (_fallbackSharedIds != null && _fallbackSharedIds!.isNotEmpty) {
           final start = _fallbackPageOffset;
-          final end = (start + _sharedPageSize) > _fallbackSharedIds!.length 
-              ? _fallbackSharedIds!.length 
+          final end = (start + _sharedPageSize) > _fallbackSharedIds!.length
+              ? _fallbackSharedIds!.length
               : (start + _sharedPageSize);
           final idsPage = _fallbackSharedIds!.sublist(start, end);
-          print("🗺️ MAP SCREEN: [BG] Fallback: Fetching experiences from offset $start to $end (${idsPage.length} IDs).");
-          sharedExperiences = await _experienceService.getExperiencesByIds(idsPage);
+          print(
+              "🗺️ MAP SCREEN: [BG] Fallback: Fetching experiences from offset $start to $end (${idsPage.length} IDs).");
+          sharedExperiences =
+              await _experienceService.getExperiencesByIds(idsPage);
           _fallbackPageOffset = end;
           if (end >= _fallbackSharedIds!.length) {
             _sharedHasMore = false;
-            print("🗺️ MAP SCREEN: [BG] Fallback: Reached end of shared experiences.");
+            print(
+                "🗺️ MAP SCREEN: [BG] Fallback: Reached end of shared experiences.");
           }
         } else {
           _sharedHasMore = false;
@@ -1237,8 +1302,10 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       // Fetch minimal missing category/color data for this page when denorm is absent
-      final Set<String> existingCategoryIds = _categories.map((c) => c.id).toSet();
-      final Set<String> existingColorCategoryIds = _colorCategories.map((c) => c.id).toSet();
+      final Set<String> existingCategoryIds =
+          _categories.map((c) => c.id).toSet();
+      final Set<String> existingColorCategoryIds =
+          _colorCategories.map((c) => c.id).toSet();
       final Set<String> catKeys = {};
       final Set<String> colorKeys = {};
       final List<Future<UserCategory?>> categoryFetches = [];
@@ -1248,22 +1315,29 @@ class _MapScreenState extends State<MapScreen> {
         final String? ownerId = exp.createdBy;
         if (ownerId == null || ownerId.isEmpty) continue;
 
-        if ((exp.categoryIconDenorm == null || exp.categoryIconDenorm!.isEmpty)) {
+        if ((exp.categoryIconDenorm == null ||
+            exp.categoryIconDenorm!.isEmpty)) {
           final String? catId = exp.categoryId;
-          if (catId != null && catId.isNotEmpty && !existingCategoryIds.contains(catId)) {
-            final key = ownerId + '|' + catId;
+          if (catId != null &&
+              catId.isNotEmpty &&
+              !existingCategoryIds.contains(catId)) {
+            final key = '$ownerId|$catId';
             if (catKeys.add(key)) {
-              categoryFetches.add(_experienceService.getUserCategoryByOwner(ownerId, catId));
+              categoryFetches.add(
+                  _experienceService.getUserCategoryByOwner(ownerId, catId));
             }
           }
         }
 
         if ((exp.colorHexDenorm == null || exp.colorHexDenorm!.isEmpty)) {
           final String? colorId = exp.colorCategoryId;
-          if (colorId != null && colorId.isNotEmpty && !existingColorCategoryIds.contains(colorId)) {
-            final key = ownerId + '|' + colorId;
+          if (colorId != null &&
+              colorId.isNotEmpty &&
+              !existingColorCategoryIds.contains(colorId)) {
+            final key = '$ownerId|$colorId';
             if (colorKeys.add(key)) {
-              colorFetches.add(_experienceService.getColorCategoryByOwner(ownerId, colorId));
+              colorFetches.add(
+                  _experienceService.getColorCategoryByOwner(ownerId, colorId));
             }
           }
         }
@@ -1275,10 +1349,12 @@ class _MapScreenState extends State<MapScreen> {
           final newCats = fetchedCats.whereType<UserCategory>().toList();
           if (newCats.isNotEmpty) {
             _categories.addAll(newCats);
-            print("🗺️ MAP SCREEN: [BG] Added ${newCats.length} shared user categories (for icons).");
+            print(
+                "🗺️ MAP SCREEN: [BG] Added ${newCats.length} shared user categories (for icons).");
           }
         } catch (e) {
-          print("🗺️ MAP SCREEN: [BG] Error fetching shared categories for icons: $e");
+          print(
+              "🗺️ MAP SCREEN: [BG] Error fetching shared categories for icons: $e");
         }
       }
 
@@ -1288,10 +1364,12 @@ class _MapScreenState extends State<MapScreen> {
           final newColors = fetchedColors.whereType<ColorCategory>().toList();
           if (newColors.isNotEmpty) {
             _colorCategories.addAll(newColors);
-            print("🗺️ MAP SCREEN: [BG] Added ${newColors.length} shared color categories (for colors).");
+            print(
+                "🗺️ MAP SCREEN: [BG] Added ${newColors.length} shared color categories (for colors).");
           }
         } catch (e) {
-          print("🗺️ MAP SCREEN: [BG] Error fetching shared color categories for colors: $e");
+          print(
+              "🗺️ MAP SCREEN: [BG] Error fetching shared color categories for colors: $e");
         }
       }
 
@@ -1314,7 +1392,8 @@ class _MapScreenState extends State<MapScreen> {
 
       // IMPORTANT: Regenerate markers after merging to pick up newly fetched category/color data
       await _generateMarkersFromExperiences(_filterExperiences(_experiences));
-      print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated with fresh category/color data.");
+      print(
+          "🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated with fresh category/color data.");
       if (_tappedLocationDetails != null) {
         _maybeAttachSavedOrPublicExperience(_tappedLocationDetails!);
       }
@@ -1330,7 +1409,8 @@ class _MapScreenState extends State<MapScreen> {
       _sharedIsFetching = false;
       if (mounted) {
         setState(() {
-          _isSharedLoading = _sharedHasMore; // keep loading indicator until last page
+          _isSharedLoading =
+              _sharedHasMore; // keep loading indicator until last page
         });
       }
     }
@@ -1351,10 +1431,9 @@ class _MapScreenState extends State<MapScreen> {
       final position = await _mapsService.getCurrentLocation();
       final userLatLng = LatLng(position.latitude, position.longitude);
       final userLocationForMapWidget = Location(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        displayName: "My Current Location"
-      );
+          latitude: position.latitude,
+          longitude: position.longitude,
+          displayName: "My Current Location");
       print(
           "🗺️ MAP SCREEN: User location fetched: $userLatLng. Animating camera...");
 
@@ -1369,7 +1448,8 @@ class _MapScreenState extends State<MapScreen> {
         setState(() {
           _mapWidgetInitialLocation = userLocationForMapWidget;
         });
-        print("🗺️ MAP SCREEN: Updated _mapWidgetInitialLocation to user's location.");
+        print(
+            "🗺️ MAP SCREEN: Updated _mapWidgetInitialLocation to user's location.");
       }
     } catch (e) {
       print(
@@ -1382,7 +1462,7 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
   }
-  
+
   // Adjust marker icon size for web where the rendered pixels appear larger.
   int _markerSizeForPlatform(int baseSize) {
     if (kIsWeb) {
@@ -1420,7 +1500,8 @@ class _MapScreenState extends State<MapScreen> {
     final ui.ParagraphBuilder paragraphBuilder = ui.ParagraphBuilder(
       ui.ParagraphStyle(
         textAlign: TextAlign.center,
-        fontSize: effectiveSize * 0.7, // Adjust emoji size relative to marker size
+        fontSize:
+            effectiveSize * 0.7, // Adjust emoji size relative to marker size
         fontFamily: fontFamily,
       ),
     );
@@ -1440,9 +1521,8 @@ class _MapScreenState extends State<MapScreen> {
     canvas.drawParagraph(paragraph, Offset(textX, textY));
 
     // Convert canvas to image
-    final ui.Image image = await pictureRecorder
-        .endRecording()
-        .toImage(effectiveSize, effectiveSize); // Use size for both width and height
+    final ui.Image image = await pictureRecorder.endRecording().toImage(
+        effectiveSize, effectiveSize); // Use size for both width and height
 
     // Convert image to bytes
     final ByteData? byteData =
@@ -1464,13 +1544,13 @@ class _MapScreenState extends State<MapScreen> {
     const double earthRadiusMeters = 6371000; // Earth's radius in meters
     final double dLat = _degreesToRadians(lat2 - lat1);
     final double dLng = _degreesToRadians(lng2 - lng1);
-    
+
     final double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
         Math.cos(_degreesToRadians(lat1)) *
             Math.cos(_degreesToRadians(lat2)) *
             Math.sin(dLng / 2) *
             Math.sin(dLng / 2);
-    
+
     final double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return earthRadiusMeters * c;
   }
@@ -1579,12 +1659,13 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Helper method to find a category icon for a public experience
   // Searches Firestore for any Experience with the same placeId and returns its category icon
   // Also persists the icon to the public experience document so we don't need to look it up again
-  Future<String?> _findCategoryIconForPublicExperience(PublicExperience publicExp) async {
+  Future<String?> _findCategoryIconForPublicExperience(
+      PublicExperience publicExp) async {
     // If the public experience already has an icon, use it
     if (publicExp.icon != null && publicExp.icon!.isNotEmpty) {
       return publicExp.icon;
     }
-    
+
     // Search Firestore for any experience with the same placeId
     // Pass the publicExperienceId so the icon gets persisted to the document
     if (publicExp.placeID.isNotEmpty) {
@@ -1607,7 +1688,8 @@ class _MapScreenState extends State<MapScreen> {
     _publicExperienceMarkers.clear();
 
     if (!mounted) {
-      print("🗺️ MAP SCREEN: Widget unmounted, skipping public marker generation");
+      print(
+          "🗺️ MAP SCREEN: Widget unmounted, skipping public marker generation");
       return;
     }
 
@@ -1631,8 +1713,9 @@ class _MapScreenState extends State<MapScreen> {
       );
 
       // Try to find a category icon for this public experience (searches Firestore)
-      final String? categoryIcon = await _findCategoryIconForPublicExperience(publicExp);
-      
+      final String? categoryIcon =
+          await _findCategoryIconForPublicExperience(publicExp);
+
       // Determine which icons to use
       BitmapDescriptor publicIcon;
       if (categoryIcon != null && categoryIcon.isNotEmpty) {
@@ -1672,8 +1755,7 @@ class _MapScreenState extends State<MapScreen> {
           final int animationToken = ++_markerAnimationToken;
           const int finalSize = 80;
           final int startSize = _markerStartSize(finalSize);
-          final Future<BitmapDescriptor> Function(int) iconBuilder =
-              (int size) {
+          Future<BitmapDescriptor> iconBuilder(int size) {
             if (tappedCategoryIcon != null && tappedCategoryIcon.isNotEmpty) {
               return _bitmapDescriptorFromText(
                 tappedCategoryIcon,
@@ -1690,7 +1772,7 @@ class _MapScreenState extends State<MapScreen> {
               textColor: Colors.white,
               fontFamily: Icons.public.fontFamily,
             );
-          };
+          }
 
           if (!mounted || animationToken != _markerAnimationToken) {
             return;
@@ -1760,14 +1842,16 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Handle globe toggle button press
   Future<void> _handleGlobeToggle() async {
-    print("🗺️ MAP SCREEN: Globe toggle pressed. Current state: $_isGlobalToggleActive");
+    print(
+        "🗺️ MAP SCREEN: Globe toggle pressed. Current state: $_isGlobalToggleActive");
 
     // Toggle the state
     final bool newState = !_isGlobalToggleActive;
 
     if (!newState) {
       // Turning off: clear public experience data
-      print("🗺️ MAP SCREEN: Deactivating globe view, clearing public experiences");
+      print(
+          "🗺️ MAP SCREEN: Deactivating globe view, clearing public experiences");
       setState(() {
         _isGlobalToggleActive = false;
         _nearbyPublicExperiences = [];
@@ -1843,7 +1927,8 @@ class _MapScreenState extends State<MapScreen> {
         _triggerHeavyHaptic();
         // Show completion toast with count
         Fluttertoast.showToast(
-          msg: 'Showing ${_nearbyPublicExperiences.length} experiences from the community!',
+          msg:
+              'Showing ${_nearbyPublicExperiences.length} experiences from the community!',
           toastLength: Toast.LENGTH_LONG,
           gravity: ToastGravity.BOTTOM,
           timeInSecForIosWeb: 3,
@@ -1913,8 +1998,7 @@ class _MapScreenState extends State<MapScreen> {
           const SnackBar(content: Text('Unable to load events right now.')),
         );
       }
-    } finally {
-    }
+    } finally {}
   }
 
   Future<List<Event>> _loadEventsForDialog(String userId) async {
@@ -2004,7 +2088,7 @@ class _MapScreenState extends State<MapScreen> {
     if (!mounted) return;
 
     final eventListItems = _buildEventListWithHeaders(events);
-    
+
     // Find the index of the first upcoming event in the new list structure
     int anchorIndex = -1;
     if (events.isNotEmpty) {
@@ -2036,12 +2120,12 @@ class _MapScreenState extends State<MapScreen> {
         // Scroll to anchor - first jump to estimated position, then refine with ensureVisible
         void scrollToAnchor() {
           if (anchorIndex < 0 || anchorIndex >= itemKeys.length) return;
-          
+
           // Calculate estimated scroll position
           const double estimatedHeaderHeight = 40.0;
           const double estimatedCardHeight = 120.0;
           const double padding = 8.0;
-          
+
           double estimatedOffset = padding;
           for (int i = 0; i < anchorIndex; i++) {
             if (eventListItems[i].isHeader) {
@@ -2050,29 +2134,29 @@ class _MapScreenState extends State<MapScreen> {
               estimatedOffset += estimatedCardHeight;
             }
           }
-          
+
           // Wait for ListView to be ready, then scroll
           void performScroll() {
             if (!dialogContext.mounted) return;
-            
+
             // Check if scroll controller is attached
             if (!scrollController.hasClients) {
               Future.delayed(const Duration(milliseconds: 50), performScroll);
               return;
             }
-            
+
             // First, jump to estimated position to trigger ListView rendering
             final maxScroll = scrollController.position.maxScrollExtent;
             final targetOffset = estimatedOffset.clamp(0.0, maxScroll);
             scrollController.jumpTo(targetOffset);
-            
+
             // Then, after a delay, use ensureVisible for precise positioning
             // Retry multiple times since ListView.builder is lazy
             int retryCount = 0;
             void tryEnsureVisible() {
               if (!dialogContext.mounted || retryCount >= 5) return;
               retryCount++;
-              
+
               final ctx = itemKeys[anchorIndex].currentContext;
               if (ctx != null && ctx.mounted) {
                 Scrollable.ensureVisible(
@@ -2083,14 +2167,15 @@ class _MapScreenState extends State<MapScreen> {
                 );
               } else {
                 // Retry after delay to give ListView time to render
-                Future.delayed(const Duration(milliseconds: 100), tryEnsureVisible);
+                Future.delayed(
+                    const Duration(milliseconds: 100), tryEnsureVisible);
               }
             }
-            
+
             // Start trying ensureVisible after initial scroll
             Future.delayed(const Duration(milliseconds: 150), tryEnsureVisible);
           }
-          
+
           // Start scrolling after dialog frame
           WidgetsBinding.instance.addPostFrameCallback((_) {
             performScroll();
@@ -2138,7 +2223,8 @@ class _MapScreenState extends State<MapScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: theme.primaryColor,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
                           textStyle: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
@@ -2168,17 +2254,14 @@ class _MapScreenState extends State<MapScreen> {
                               Icon(
                                 Icons.event_outlined,
                                 size: 48,
-                                color: isDark
-                                    ? Colors.white38
-                                    : Colors.black45,
+                                color: isDark ? Colors.white38 : Colors.black45,
                               ),
                               const SizedBox(height: 12),
                               Text(
                                 'No events yet',
                                 style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: isDark
-                                      ? Colors.white70
-                                      : Colors.black54,
+                                  color:
+                                      isDark ? Colors.white70 : Colors.black54,
                                 ),
                               ),
                             ],
@@ -2198,7 +2281,8 @@ class _MapScreenState extends State<MapScreen> {
                                       item.event!,
                                       theme,
                                       isDark,
-                                      onTap: () => _showEventCardOptions(item.event!, dialogContext),
+                                      onTap: () => _showEventCardOptions(
+                                          item.event!, dialogContext),
                                     ),
                             );
                           },
@@ -2212,7 +2296,8 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Widget _buildMapEventCard(Event event, ThemeData theme, bool isDark, {VoidCallback? onTap}) {
+  Widget _buildMapEventCard(Event event, ThemeData theme, bool isDark,
+      {VoidCallback? onTap}) {
     final cardColor = isDark ? const Color(0xFF2B2930) : Colors.white;
     final borderColor = _getEventColor(event);
 
@@ -2224,111 +2309,111 @@ class _MapScreenState extends State<MapScreen> {
               onTap();
             },
       child: Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: borderColor.withOpacity(0.3),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: borderColor.withOpacity(0.3),
+            width: 1,
           ),
-        ],
-      ),
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: borderColor,
-                borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                decoration: BoxDecoration(
+                  color: borderColor,
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(16),
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      event.title.isEmpty ? 'Untitled Event' : event.title,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'Google Sans',
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.access_time,
-                          size: 16,
-                          color: isDark ? Colors.white60 : Colors.black54,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _formatEventTime(event),
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: isDark ? Colors.white60 : Colors.black54,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (event.description.isNotEmpty) ...[
-                      const SizedBox(height: 4),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        event.description,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: isDark ? Colors.white54 : Colors.black45,
+                        event.title.isEmpty ? 'Untitled Event' : event.title,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'Google Sans',
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                    ],
-                    if (event.experiences.isNotEmpty) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Row(
                         children: [
                           Icon(
-                            Icons.location_on_outlined,
+                            Icons.access_time,
                             size: 16,
-                            color: theme.colorScheme.primary,
+                            color: isDark ? Colors.white60 : Colors.black54,
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: _buildTruncatedCategoryIcons(
-                              event.experiences,
+                            _formatEventTime(event),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: isDark ? Colors.white60 : Colors.black54,
                             ),
                           ),
                         ],
                       ),
+                      if (event.description.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          event.description,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: isDark ? Colors.white54 : Colors.black45,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      if (event.experiences.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_on_outlined,
+                              size: 16,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: _buildTruncatedCategoryIcons(
+                                event.experiences,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
     );
   }
 
@@ -2368,7 +2453,8 @@ class _MapScreenState extends State<MapScreen> {
               children: [
                 // Event title header
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Row(
                     children: [
                       Container(
@@ -2432,7 +2518,8 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                   ),
                   title: const Text('View event map'),
-                  subtitle: Text('${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''} on map'),
+                  subtitle: Text(
+                      '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''} on map'),
                   onTap: () {
                     _triggerHeavyHaptic();
                     Navigator.of(sheetContext).pop(); // Close bottom sheet
@@ -2453,7 +2540,8 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _openEventPage(Event event) async {
     if (!mounted) return;
 
-    print("🗺️ MAP SCREEN: Opening event page for '${event.title}' (${event.id})");
+    print(
+        "🗺️ MAP SCREEN: Opening event page for '${event.title}' (${event.id})");
 
     showDialog(
       context: context,
@@ -2528,11 +2616,12 @@ class _MapScreenState extends State<MapScreen> {
         }
 
         for (final entry in event.experiences) {
-          if (entry.inlineCategoryId != null && entry.inlineCategoryId!.isNotEmpty) {
+          if (entry.inlineCategoryId != null &&
+              entry.inlineCategoryId!.isNotEmpty) {
             categoryIds.add(entry.inlineCategoryId!);
           }
-          categoryIds
-              .addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+          categoryIds.addAll(
+              entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
 
           if (entry.inlineColorCategoryId != null &&
               entry.inlineColorCategoryId!.isNotEmpty) {
@@ -2544,7 +2633,8 @@ class _MapScreenState extends State<MapScreen> {
 
         try {
           if (categoryIds.isNotEmpty) {
-            categories = await _experienceService.getUserCategoriesByOwnerAndIds(
+            categories =
+                await _experienceService.getUserCategoriesByOwnerAndIds(
               event.plannerUserId,
               categoryIds.toList(),
             );
@@ -2610,12 +2700,15 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Enter event view mode - show event's experiences on map
   Future<void> _enterEventViewMode(Event event) async {
-    print("🗺️ MAP SCREEN: Entering event view mode for '${event.title}' with ${event.experiences.length} experiences");
-    
+    print(
+        "🗺️ MAP SCREEN: Entering event view mode for '${event.title}' with ${event.experiences.length} experiences");
+
     if (event.experiences.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('This event has no experiences to show on the map.')),
+          const SnackBar(
+              content:
+                  Text('This event has no experiences to show on the map.')),
         );
       }
       return;
@@ -2643,7 +2736,7 @@ class _MapScreenState extends State<MapScreen> {
     final bool isOwner = userId != null && event.plannerUserId == userId;
     List<UserCategory> plannerCategories = [];
     List<ColorCategory> plannerColorCategories = [];
-    
+
     // Clear previous planner categories
     _plannerCategories = [];
     _plannerColorCategories = [];
@@ -2658,66 +2751,78 @@ class _MapScreenState extends State<MapScreen> {
         if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
           final experience = _eventExperiencesCache[entry.experienceId];
           if (experience != null) {
-            if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+            if (experience.categoryId != null &&
+                experience.categoryId!.isNotEmpty) {
               categoryIds.add(experience.categoryId!);
             }
-            categoryIds.addAll(experience.otherCategories.where((id) => id.isNotEmpty));
+            categoryIds.addAll(
+                experience.otherCategories.where((id) => id.isNotEmpty));
 
-            if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty) {
+            if (experience.colorCategoryId != null &&
+                experience.colorCategoryId!.isNotEmpty) {
               colorCategoryIds.add(experience.colorCategoryId!);
             }
-            colorCategoryIds.addAll(experience.otherColorCategoryIds.where((id) => id.isNotEmpty));
+            colorCategoryIds.addAll(
+                experience.otherColorCategoryIds.where((id) => id.isNotEmpty));
           }
         } else if (entry.isEventOnly) {
           // Event-only experiences
-          if (entry.inlineCategoryId != null && entry.inlineCategoryId!.isNotEmpty) {
+          if (entry.inlineCategoryId != null &&
+              entry.inlineCategoryId!.isNotEmpty) {
             categoryIds.add(entry.inlineCategoryId!);
           }
-          categoryIds.addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+          categoryIds.addAll(
+              entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
 
-          if (entry.inlineColorCategoryId != null && entry.inlineColorCategoryId!.isNotEmpty) {
+          if (entry.inlineColorCategoryId != null &&
+              entry.inlineColorCategoryId!.isNotEmpty) {
             colorCategoryIds.add(entry.inlineColorCategoryId!);
           }
-          colorCategoryIds.addAll(entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
+          colorCategoryIds.addAll(
+              entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
         }
       }
 
       try {
         if (categoryIds.isNotEmpty) {
-          plannerCategories = await _experienceService.getUserCategoriesByOwnerAndIds(
+          plannerCategories =
+              await _experienceService.getUserCategoriesByOwnerAndIds(
             event.plannerUserId,
             categoryIds.toList(),
           );
           _plannerCategories = plannerCategories;
         }
       } catch (e) {
-        print("🗺️ MAP SCREEN: Failed to fetch planner categories for event ${event.id}: $e");
+        print(
+            "🗺️ MAP SCREEN: Failed to fetch planner categories for event ${event.id}: $e");
       }
 
       try {
         if (colorCategoryIds.isNotEmpty) {
-          plannerColorCategories = await _experienceService.getColorCategoriesByOwnerAndIds(
+          plannerColorCategories =
+              await _experienceService.getColorCategoriesByOwnerAndIds(
             event.plannerUserId,
             colorCategoryIds.toList(),
           );
           _plannerColorCategories = plannerColorCategories;
         }
       } catch (e) {
-        print("🗺️ MAP SCREEN: Failed to fetch planner color categories for event ${event.id}: $e");
+        print(
+            "🗺️ MAP SCREEN: Failed to fetch planner color categories for event ${event.id}: $e");
       }
     }
 
     // Build markers for each experience in the event
     final List<LatLng> positions = [];
-    
+
     for (int i = 0; i < event.experiences.length; i++) {
       final entry = event.experiences[i];
       final int positionNumber = i + 1;
-      
+
       Location? location;
       String iconText = '📍';
       Color markerBackgroundColor = _getEventColor(event);
-      
+
       if (entry.isEventOnly) {
         // Inline experience
         location = entry.inlineLocation;
@@ -2729,7 +2834,9 @@ class _MapScreenState extends State<MapScreen> {
           location = experience.location;
           // Use planner's categories for shared events to show correct icons
           if (!isOwner && plannerCategories.isNotEmpty) {
-            iconText = _getCategoryIconForExperienceFromCategories(experience, plannerCategories) ?? '📍';
+            iconText = _getCategoryIconForExperienceFromCategories(
+                    experience, plannerCategories) ??
+                '📍';
           } else {
             iconText = _getCategoryIconForExperience(experience) ?? '📍';
           }
@@ -2737,17 +2844,19 @@ class _MapScreenState extends State<MapScreen> {
           // markerBackgroundColor remains as _getEventColor(event) set above
         }
       }
-      
-      if (location == null || (location.latitude == 0.0 && location.longitude == 0.0)) {
-        print("🗺️ MAP SCREEN: Skipping event experience $positionNumber - no valid location");
+
+      if (location == null ||
+          (location.latitude == 0.0 && location.longitude == 0.0)) {
+        print(
+            "🗺️ MAP SCREEN: Skipping event experience $positionNumber - no valid location");
         continue;
       }
-      
+
       // Capture location as non-null for use in closure
       final validLocation = location;
       final position = LatLng(validLocation.latitude, validLocation.longitude);
       positions.add(position);
-      
+
       // Generate numbered marker icon
       final markerIcon = await _bitmapDescriptorFromNumberedIcon(
         number: positionNumber,
@@ -2755,9 +2864,9 @@ class _MapScreenState extends State<MapScreen> {
         backgroundColor: markerBackgroundColor,
         size: 80, // Larger for selected state
       );
-      
+
       final markerId = MarkerId('event_view_$i');
-      
+
       // Store experience/entry data for this marker
       Experience? markerExperience;
       if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
@@ -2765,14 +2874,14 @@ class _MapScreenState extends State<MapScreen> {
       }
       _eventViewMarkerExperiences[markerId.value] = markerExperience;
       _eventViewMarkerEntries[markerId.value] = entry;
-      
+
       final marker = Marker(
         markerId: markerId,
         position: position,
         icon: markerIcon,
         zIndex: 2.0, // Above regular markers
         infoWindow: _infoWindowForPlatform(
-          entry.isEventOnly 
+          entry.isEventOnly
               ? '$positionNumber. ${entry.inlineName ?? 'Stop $positionNumber'}'
               : '$positionNumber. ${markerExperience?.name ?? 'Experience'}',
         ),
@@ -2780,20 +2889,22 @@ class _MapScreenState extends State<MapScreen> {
           _triggerHeavyHaptic();
           print("🗺️ MAP SCREEN: Event view marker $positionNumber tapped");
           FocusScope.of(context).unfocus();
-          
+
           // If this is a saved experience, show the experience details bottom sheet
           if (markerExperience != null) {
-            await _handleEventViewMarkerTap(markerExperience, validLocation, markerBackgroundColor, positionNumber);
+            await _handleEventViewMarkerTap(markerExperience, validLocation,
+                markerBackgroundColor, positionNumber);
           } else {
             // Event-only experience - show location details
-            await _handleEventOnlyMarkerTap(entry, validLocation, positionNumber);
+            await _handleEventOnlyMarkerTap(
+                entry, validLocation, positionNumber);
           }
         },
       );
-      
+
       _eventViewMarkers[markerId.value] = marker;
     }
-    
+
     if (positions.isEmpty) {
       if (mounted) {
         setState(() {
@@ -2801,20 +2912,22 @@ class _MapScreenState extends State<MapScreen> {
           _eventViewMarkers.clear();
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No valid locations found for this event.')),
+          const SnackBar(
+              content: Text('No valid locations found for this event.')),
         );
       }
       return;
     }
-    
+
     if (mounted) {
       setState(() {});
     }
-    
+
     // Fit camera to bounds of all event markers
     await _fitCameraToBounds(positions);
-    
-    print("🗺️ MAP SCREEN: Event view mode active with ${_eventViewMarkers.length} markers");
+
+    print(
+        "🗺️ MAP SCREEN: Event view mode active with ${_eventViewMarkers.length} markers");
   }
 
   // ADDED: Generate a numbered marker icon with the itinerary position
@@ -2847,17 +2960,19 @@ class _MapScreenState extends State<MapScreen> {
     iconBuilder.addText(iconText);
     iconBuilder.pop();
     final ui.Paragraph iconParagraph = iconBuilder.build();
-    iconParagraph.layout(ui.ParagraphConstraints(width: effectiveSize.toDouble()));
-    
+    iconParagraph
+        .layout(ui.ParagraphConstraints(width: effectiveSize.toDouble()));
+
     final double iconX = (effectiveSize - iconParagraph.width) / 2;
-    final double iconY = (effectiveSize - iconParagraph.height) / 2 - effectiveSize * 0.08;
+    final double iconY =
+        (effectiveSize - iconParagraph.height) / 2 - effectiveSize * 0.08;
     canvas.drawParagraph(iconParagraph, Offset(iconX, iconY));
 
     // Draw number badge in bottom-right corner
     final double badgeRadius = effectiveSize * 0.22;
     final double badgeX = effectiveSize - badgeRadius - 2;
     final double badgeY = effectiveSize - badgeRadius - 2;
-    
+
     // Badge background (white with border)
     final Paint badgeBorderPaint = Paint()
       ..color = backgroundColor
@@ -2883,7 +2998,7 @@ class _MapScreenState extends State<MapScreen> {
     numberBuilder.pop();
     final ui.Paragraph numberParagraph = numberBuilder.build();
     numberParagraph.layout(ui.ParagraphConstraints(width: badgeRadius * 2));
-    
+
     final double numberX = badgeX - numberParagraph.width / 2;
     final double numberY = badgeY - numberParagraph.height / 2;
     canvas.drawParagraph(numberParagraph, Offset(numberX, numberY));
@@ -2892,7 +3007,8 @@ class _MapScreenState extends State<MapScreen> {
     final ui.Image image = await pictureRecorder
         .endRecording()
         .toImage(effectiveSize, effectiveSize);
-    final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final ByteData? byteData =
+        await image.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) {
       throw Exception('Failed to convert numbered icon to byte data');
     }
@@ -2903,9 +3019,9 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Fit camera to show all positions
   Future<void> _fitCameraToBounds(List<LatLng> positions) async {
     if (positions.isEmpty) return;
-    
+
     _mapController ??= await _mapControllerCompleter.future;
-    
+
     if (positions.length == 1) {
       // Single position - zoom to it
       await _mapController!.animateCamera(
@@ -2913,25 +3029,25 @@ class _MapScreenState extends State<MapScreen> {
       );
       return;
     }
-    
+
     // Calculate bounds
     double minLat = positions.first.latitude;
     double maxLat = positions.first.latitude;
     double minLng = positions.first.longitude;
     double maxLng = positions.first.longitude;
-    
+
     for (final pos in positions) {
       if (pos.latitude < minLat) minLat = pos.latitude;
       if (pos.latitude > maxLat) maxLat = pos.latitude;
       if (pos.longitude < minLng) minLng = pos.longitude;
       if (pos.longitude > maxLng) maxLng = pos.longitude;
     }
-    
+
     final bounds = LatLngBounds(
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
-    
+
     await _mapController!.animateCamera(
       CameraUpdate.newLatLngBounds(bounds, 80.0),
     );
@@ -2944,38 +3060,45 @@ class _MapScreenState extends State<MapScreen> {
     Color markerBackgroundColor,
     int positionNumber,
   ) async {
-    print("🗺️ MAP SCREEN: Handling tap on saved experience in event view: '${experience.name}'");
-    
+    print(
+        "🗺️ MAP SCREEN: Handling tap on saved experience in event view: '${experience.name}'");
+
     // Get category for the experience - use planner's categories for shared events
     UserCategory? resolvedCategory;
     final String? categoryId = experience.categoryId;
     final userId = _authService.currentUser?.uid;
-    final bool isOwner = userId != null && _activeEventViewMode != null && _activeEventViewMode!.plannerUserId == userId;
-    
+    final bool isOwner = userId != null &&
+        _activeEventViewMode != null &&
+        _activeEventViewMode!.plannerUserId == userId;
+
     if (categoryId != null && categoryId.isNotEmpty) {
       try {
         // For shared events, try planner's categories first
         if (!isOwner && _plannerCategories.isNotEmpty) {
-          resolvedCategory = _plannerCategories.firstWhere((cat) => cat.id == categoryId);
+          resolvedCategory =
+              _plannerCategories.firstWhere((cat) => cat.id == categoryId);
         } else {
-          resolvedCategory = _categories.firstWhere((cat) => cat.id == categoryId);
+          resolvedCategory =
+              _categories.firstWhere((cat) => cat.id == categoryId);
         }
       } catch (_) {
         final String? ownerId = experience.createdBy;
-        if (ownerId != null && ownerId.isNotEmpty && _followeeCategories.containsKey(ownerId)) {
+        if (ownerId != null &&
+            ownerId.isNotEmpty &&
+            _followeeCategories.containsKey(ownerId)) {
           resolvedCategory = _followeeCategories[ownerId]?[categoryId];
         }
       }
     }
-    if (resolvedCategory == null) {
-      resolvedCategory = _resolveCategoryForExperience(experience);
-    }
-    
+    resolvedCategory ??= _resolveCategoryForExperience(experience);
+
     // Generate selected icon with number badge for event view mode
     // Use planner's categories for shared events to show correct icons
     final String selectedIconText;
     if (!isOwner && _plannerCategories.isNotEmpty) {
-      selectedIconText = _getCategoryIconForExperienceFromCategories(experience, _plannerCategories) ?? '❓';
+      selectedIconText = _getCategoryIconForExperienceFromCategories(
+              experience, _plannerCategories) ??
+          '❓';
     } else {
       selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
     }
@@ -2983,20 +3106,19 @@ class _MapScreenState extends State<MapScreen> {
     final int animationToken = ++_markerAnimationToken;
     const int finalSize = 100;
     final int startSize = _markerStartSize(finalSize);
-    final Future<BitmapDescriptor> Function(int) iconBuilder =
-        (int size) {
+    Future<BitmapDescriptor> iconBuilder(int size) {
       return _bitmapDescriptorFromNumberedIcon(
         number: positionNumber,
         iconText: selectedIconText,
         backgroundColor: markerBackgroundColor,
         size: size,
       );
-    };
-    
+    }
+
     if (!mounted || animationToken != _markerAnimationToken) {
       return;
     }
-    
+
     setState(() {
       _mapWidgetInitialLocation = location;
       _tappedLocationDetails = location;
@@ -3034,7 +3156,7 @@ class _MapScreenState extends State<MapScreen> {
       startSize: startSize,
       endSize: finalSize,
     ));
-    
+
     _showMarkerInfoWindow(tappedMarkerId);
     unawaited(_prefetchExperienceMedia(experience));
   }
@@ -3045,24 +3167,27 @@ class _MapScreenState extends State<MapScreen> {
     Location location,
     int positionNumber,
   ) async {
-    print("🗺️ MAP SCREEN: Handling tap on event-only experience: '${entry.inlineName}'");
-    
+    print(
+        "🗺️ MAP SCREEN: Handling tap on event-only experience: '${entry.inlineName}'");
+
     // Create a simple marker for event-only experiences
     final tappedMarkerId = MarkerId('selected_location');
     final tappedMarker = Marker(
       markerId: tappedMarkerId,
       position: LatLng(location.latitude, location.longitude),
-      infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop $positionNumber'),
+      infoWindow:
+          _infoWindowForPlatform(entry.inlineName ?? 'Stop $positionNumber'),
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
       zIndex: 1.0,
     );
-    
+
     // Fetch business status
     String? businessStatus;
     bool? openNow;
     try {
       if (location.placeId != null && location.placeId!.isNotEmpty) {
-        final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
+        final detailsMap =
+            await _mapsService.fetchPlaceDetailsData(location.placeId!);
         businessStatus = detailsMap?['businessStatus'] as String?;
         openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
       }
@@ -3070,9 +3195,9 @@ class _MapScreenState extends State<MapScreen> {
       businessStatus = null;
       openNow = null;
     }
-    
+
     if (!mounted) return;
-    
+
     setState(() {
       _mapWidgetInitialLocation = location;
       _tappedLocationDetails = location;
@@ -3087,7 +3212,7 @@ class _MapScreenState extends State<MapScreen> {
       _searchResults = [];
       _showSearchResults = false;
     });
-    
+
     _showMarkerInfoWindow(tappedMarkerId);
   }
 
@@ -3107,7 +3232,9 @@ class _MapScreenState extends State<MapScreen> {
 
     // Combine existing experiences with draft items when in add-to-event mode
     final existingExperiences = _activeEventViewMode!.experiences;
-    final draftItems = _isAddToEventModeActive ? _addToEventDraftItinerary : <EventExperienceEntry>[];
+    final draftItems = _isAddToEventModeActive
+        ? _addToEventDraftItinerary
+        : <EventExperienceEntry>[];
     final totalCount = existingExperiences.length + draftItems.length;
 
     if (totalCount == 0) {
@@ -3128,10 +3255,10 @@ class _MapScreenState extends State<MapScreen> {
       itemCount: totalCount,
       itemBuilder: (context, index) {
         final bool isNewItem = index >= existingExperiences.length;
-        final entry = isNewItem 
+        final entry = isNewItem
             ? draftItems[index - existingExperiences.length]
             : existingExperiences[index];
-        
+
         Experience? experience;
         if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
           // Find experience from cache or marker experiences map
@@ -3148,11 +3275,13 @@ class _MapScreenState extends State<MapScreen> {
           // Also check from experiences list
           if (experience == null) {
             try {
-              experience = _experiences.firstWhere((e) => e.id == entry.experienceId);
+              experience =
+                  _experiences.firstWhere((e) => e.id == entry.experienceId);
             } catch (_) {}
           }
         }
-        return _buildEventItineraryItem(entry, experience, index, isNewItem: isNewItem);
+        return _buildEventItineraryItem(entry, experience, index,
+            isNewItem: isNewItem);
       },
     );
   }
@@ -3168,27 +3297,30 @@ class _MapScreenState extends State<MapScreen> {
     final String displayName = isEventOnly
         ? (entry.inlineName ?? 'Untitled')
         : (experience?.name ?? 'Unknown Experience');
-    
-    final String? colorCategoryId = isEventOnly
-        ? entry.inlineColorCategoryId
-        : experience?.colorCategoryId;
-    
+
+    final String? colorCategoryId =
+        isEventOnly ? entry.inlineColorCategoryId : experience?.colorCategoryId;
+
     // Get category icon - use planner's categories for shared events
     String categoryIcon = '📍';
     final userId = _authService.currentUser?.uid;
-    final bool isOwner = userId != null && _activeEventViewMode != null && _activeEventViewMode!.plannerUserId == userId;
-    
+    final bool isOwner = userId != null &&
+        _activeEventViewMode != null &&
+        _activeEventViewMode!.plannerUserId == userId;
+
     if (isEventOnly) {
       categoryIcon = entry.inlineCategoryIconDenorm ?? '📍';
     } else if (experience != null) {
       // Use planner's categories for shared events to show correct icons
       if (!isOwner && _plannerCategories.isNotEmpty) {
-        categoryIcon = _getCategoryIconForExperienceFromCategories(experience, _plannerCategories) ?? '📍';
+        categoryIcon = _getCategoryIconForExperienceFromCategories(
+                experience, _plannerCategories) ??
+            '📍';
       } else {
         categoryIcon = _getCategoryIconForExperience(experience) ?? '📍';
       }
     }
-    
+
     // Get color - use planner's color categories for shared events
     Color leadingBoxColor = Colors.grey.shade200;
     if (colorCategoryId != null) {
@@ -3196,28 +3328,36 @@ class _MapScreenState extends State<MapScreen> {
         ColorCategory? colorCat;
         // For shared events, try planner's color categories first
         if (!isOwner && _plannerColorCategories.isNotEmpty) {
-          colorCat = _plannerColorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+          colorCat = _plannerColorCategories
+              .firstWhere((cc) => cc.id == colorCategoryId);
         } else {
-          colorCat = _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+          colorCat =
+              _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
         }
         leadingBoxColor = _parseColor(colorCat.colorHex).withOpacity(0.5);
       } catch (_) {
         if (isEventOnly && entry.inlineColorHexDenorm != null) {
-          leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
-        } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
-          leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+          leadingBoxColor =
+              _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+        } else if (experience?.colorHexDenorm != null &&
+            experience!.colorHexDenorm!.isNotEmpty) {
+          leadingBoxColor =
+              _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
         }
       }
     } else if (isEventOnly && entry.inlineColorHexDenorm != null) {
-      leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
-    } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
-      leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+      leadingBoxColor =
+          _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+    } else if (experience?.colorHexDenorm != null &&
+        experience!.colorHexDenorm!.isNotEmpty) {
+      leadingBoxColor =
+          _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
     }
-    
+
     final String? address = isEventOnly
         ? entry.inlineLocation?.address
         : experience?.location.address;
-    
+
     return Material(
       color: isNewItem ? Colors.green.withOpacity(0.08) : Colors.transparent,
       child: InkWell(
@@ -3235,7 +3375,9 @@ class _MapScreenState extends State<MapScreen> {
                 width: 24,
                 height: 24,
                 decoration: BoxDecoration(
-                  color: isNewItem ? Colors.green : _getEventColor(_activeEventViewMode!),
+                  color: isNewItem
+                      ? Colors.green
+                      : _getEventColor(_activeEventViewMode!),
                   shape: BoxShape.circle,
                 ),
                 child: Center(
@@ -3286,7 +3428,8 @@ class _MapScreenState extends State<MapScreen> {
                         if (isNewItem)
                           Container(
                             margin: const EdgeInsets.only(left: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.green,
                               borderRadius: BorderRadius.circular(4),
@@ -3303,7 +3446,8 @@ class _MapScreenState extends State<MapScreen> {
                         else if (isEventOnly)
                           Container(
                             margin: const EdgeInsets.only(left: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.grey.shade600,
                               borderRadius: BorderRadius.circular(4),
@@ -3366,9 +3510,9 @@ class _MapScreenState extends State<MapScreen> {
         if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
           // Try to find experience from experiences list
           experience = _experiences.cast<Experience?>().firstWhere(
-            (exp) => exp?.id == entry.experienceId,
-            orElse: () => null,
-          );
+                (exp) => exp?.id == entry.experienceId,
+                orElse: () => null,
+              );
         }
         return _buildSelectModeItineraryItem(entry, experience, index);
       },
@@ -3385,11 +3529,10 @@ class _MapScreenState extends State<MapScreen> {
     final String displayName = isEventOnly
         ? (entry.inlineName ?? 'Untitled')
         : (experience?.name ?? 'Unknown Experience');
-    
-    final String? colorCategoryId = isEventOnly
-        ? entry.inlineColorCategoryId
-        : experience?.colorCategoryId;
-    
+
+    final String? colorCategoryId =
+        isEventOnly ? entry.inlineColorCategoryId : experience?.colorCategoryId;
+
     // Get category icon
     String categoryIcon = '📍';
     if (isEventOnly) {
@@ -3397,30 +3540,37 @@ class _MapScreenState extends State<MapScreen> {
     } else if (experience != null) {
       categoryIcon = _getCategoryIconForExperience(experience) ?? '📍';
     }
-    
+
     // Get color
     Color leadingBoxColor = Colors.grey.shade200;
     if (colorCategoryId != null) {
       try {
-        final colorCat = _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+        final colorCat =
+            _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
         leadingBoxColor = _parseColor(colorCat.colorHex).withOpacity(0.5);
       } catch (_) {
         if (isEventOnly && entry.inlineColorHexDenorm != null) {
-          leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
-        } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
-          leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+          leadingBoxColor =
+              _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+        } else if (experience?.colorHexDenorm != null &&
+            experience!.colorHexDenorm!.isNotEmpty) {
+          leadingBoxColor =
+              _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
         }
       }
     } else if (isEventOnly && entry.inlineColorHexDenorm != null) {
-      leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
-    } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
-      leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+      leadingBoxColor =
+          _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+    } else if (experience?.colorHexDenorm != null &&
+        experience!.colorHexDenorm!.isNotEmpty) {
+      leadingBoxColor =
+          _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
     }
-    
+
     final String? address = isEventOnly
         ? entry.inlineLocation?.address
         : experience?.location.address;
-    
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -3489,7 +3639,8 @@ class _MapScreenState extends State<MapScreen> {
                         if (isEventOnly)
                           Container(
                             margin: const EdgeInsets.only(left: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.grey.shade600,
                               borderRadius: BorderRadius.circular(4),
@@ -3555,44 +3706,48 @@ class _MapScreenState extends State<MapScreen> {
   ) async {
     Location? location;
     Color markerBackgroundColor = _selectModeColor;
-    
+
     if (entry.isEventOnly) {
       location = entry.inlineLocation;
     } else if (experience != null) {
       location = experience.location;
       // Get marker color from experience
-      if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
+      if (experience.colorHexDenorm != null &&
+          experience.colorHexDenorm!.isNotEmpty) {
         markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
       } else if (experience.colorCategoryId != null) {
         try {
-          final colorCat = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          final colorCat = _colorCategories
+              .firstWhere((cc) => cc.id == experience.colorCategoryId);
           markerBackgroundColor = _parseColor(colorCat.colorHex);
         } catch (_) {}
       }
     }
-    
-    if (location == null || (location.latitude == 0.0 && location.longitude == 0.0)) {
+
+    if (location == null ||
+        (location.latitude == 0.0 && location.longitude == 0.0)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No valid location for this experience')),
+          const SnackBar(
+              content: Text('No valid location for this experience')),
         );
       }
       return;
     }
-    
+
     final position = LatLng(location.latitude, location.longitude);
     _mapController ??= await _mapControllerCompleter.future;
-    
+
     // Animate camera first
     await _mapController!.animateCamera(
       CameraUpdate.newLatLngZoom(position, 16.0),
     );
-    
+
     // Collapse the overlay after focusing
     setState(() {
       _isSelectModeOverlayExpanded = false;
     });
-    
+
     // Then show the bottom sheet by setting tapped state
     if (experience != null) {
       // Saved experience - show full experience details bottom sheet
@@ -3601,38 +3756,39 @@ class _MapScreenState extends State<MapScreen> {
       final String? categoryId = experience.categoryId;
       if (categoryId != null && categoryId.isNotEmpty) {
         try {
-          resolvedCategory = _categories.firstWhere((cat) => cat.id == categoryId);
+          resolvedCategory =
+              _categories.firstWhere((cat) => cat.id == categoryId);
         } catch (_) {
           final String? ownerId = experience.createdBy;
-          if (ownerId != null && ownerId.isNotEmpty && _followeeCategories.containsKey(ownerId)) {
+          if (ownerId != null &&
+              ownerId.isNotEmpty &&
+              _followeeCategories.containsKey(ownerId)) {
             resolvedCategory = _followeeCategories[ownerId]?[categoryId];
           }
         }
       }
-      if (resolvedCategory == null) {
-        resolvedCategory = _resolveCategoryForExperience(experience);
-      }
-      
+      resolvedCategory ??= _resolveCategoryForExperience(experience);
+
       // Generate selected icon with number badge for select mode
-      final String selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
+      final String selectedIconText =
+          _getCategoryIconForExperience(experience) ?? '❓';
       final tappedMarkerId = MarkerId('selected_experience_location');
       final int animationToken = ++_markerAnimationToken;
       const int finalSize = 100;
       final int startSize = _markerStartSize(finalSize);
-      final Future<BitmapDescriptor> Function(int) iconBuilder =
-          (int size) {
+      Future<BitmapDescriptor> iconBuilder(int size) {
         return _bitmapDescriptorFromNumberedIcon(
           number: index + 1,
           iconText: selectedIconText,
           backgroundColor: markerBackgroundColor,
           size: size,
         );
-      };
-      
+      }
+
       if (!mounted || animationToken != _markerAnimationToken) {
         return;
       }
-      
+
       setState(() {
         _mapWidgetInitialLocation = location;
         _tappedLocationDetails = location;
@@ -3672,7 +3828,7 @@ class _MapScreenState extends State<MapScreen> {
         startSize: startSize,
         endSize: finalSize,
       ));
-      
+
       _showMarkerInfoWindow(tappedMarkerId);
       unawaited(_prefetchExperienceMedia(experience));
     } else {
@@ -3681,17 +3837,19 @@ class _MapScreenState extends State<MapScreen> {
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
         position: position,
-        infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop ${index + 1}'),
+        infoWindow:
+            _infoWindowForPlatform(entry.inlineName ?? 'Stop ${index + 1}'),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
         zIndex: 1.0,
       );
-      
+
       // Fetch business status
       String? businessStatus;
       bool? openNow;
       try {
         if (location.placeId != null && location.placeId!.isNotEmpty) {
-          final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
+          final detailsMap =
+              await _mapsService.fetchPlaceDetailsData(location.placeId!);
           businessStatus = detailsMap?['businessStatus'] as String?;
           openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
         }
@@ -3699,9 +3857,9 @@ class _MapScreenState extends State<MapScreen> {
         businessStatus = null;
         openNow = null;
       }
-      
+
       if (!mounted) return;
-      
+
       setState(() {
         _mapWidgetInitialLocation = location;
         _tappedLocationDetails = location;
@@ -3716,7 +3874,7 @@ class _MapScreenState extends State<MapScreen> {
         _searchResults = [];
         _showSearchResults = false;
       });
-      
+
       _showMarkerInfoWindow(tappedMarkerId);
     }
   }
@@ -3729,43 +3887,48 @@ class _MapScreenState extends State<MapScreen> {
   ) async {
     Location? location;
     Color markerBackgroundColor = _getEventColor(_activeEventViewMode!);
-    
+
     if (entry.isEventOnly) {
       location = entry.inlineLocation;
     } else if (experience != null) {
       location = experience.location;
       // Get marker color from experience
-      if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
+      if (experience.colorHexDenorm != null &&
+          experience.colorHexDenorm!.isNotEmpty) {
         markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
       } else if (experience.colorCategoryId != null) {
         try {
-          final colorCat = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          final colorCat = _colorCategories
+              .firstWhere((cc) => cc.id == experience.colorCategoryId);
           markerBackgroundColor = _parseColor(colorCat.colorHex);
         } catch (_) {}
       }
     }
-    
-    if (location == null || (location.latitude == 0.0 && location.longitude == 0.0)) {
+
+    if (location == null ||
+        (location.latitude == 0.0 && location.longitude == 0.0)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No valid location for this experience')),
+          const SnackBar(
+              content: Text('No valid location for this experience')),
         );
       }
       return;
     }
-    
+
     final position = LatLng(location.latitude, location.longitude);
     _mapController ??= await _mapControllerCompleter.future;
-    
+
     // Animate camera first
     await _mapController!.animateCamera(
       CameraUpdate.newLatLngZoom(position, 16.0),
     );
-    
+
     // Then show the bottom sheet by calling the appropriate handler
     if (experience != null) {
       // Saved experience - show full experience details bottom sheet
-      await _handleEventViewMarkerTap(experience, location, markerBackgroundColor, index + 1);
+      await _handleEventViewMarkerTap(
+          experience, location, markerBackgroundColor, index + 1);
     } else {
       // Event-only experience - show location details bottom sheet
       await _handleEventOnlyMarkerTap(entry, location, index + 1);
@@ -3809,7 +3972,9 @@ class _MapScreenState extends State<MapScreen> {
 
       if (confirmed == true && mounted) {
         // If we came from event experience selector and have changes, return the updated event
-        if (widget.initialEvent != null && _activeEventViewMode != null && _addToEventDraftItinerary.isNotEmpty) {
+        if (widget.initialEvent != null &&
+            _activeEventViewMode != null &&
+            _addToEventDraftItinerary.isNotEmpty) {
           final updatedEvent = _activeEventViewMode!.copyWith(
             experiences: [
               ..._activeEventViewMode!.experiences,
@@ -3884,11 +4049,12 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Enter select mode - for creating new events by selecting experiences on map
   void _enterSelectMode() {
     print("🗺️ MAP SCREEN: Entering select mode for new event creation");
-    
+
     // Pick a random color from the palette
     final random = Math.Random();
-    final randomColor = _eventColorPalette[random.nextInt(_eventColorPalette.length)];
-    
+    final randomColor =
+        _eventColorPalette[random.nextInt(_eventColorPalette.length)];
+
     setState(() {
       _isSelectModeActive = true;
       _selectModeColor = randomColor;
@@ -3907,17 +4073,19 @@ class _MapScreenState extends State<MapScreen> {
       _isAddToEventModeActive = false;
       _addToEventDraftItinerary = [];
     });
-    
+
     // Regenerate markers to show selection state (initially none selected)
-    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+    unawaited(
+        _generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
   // ADDED: Enter add to event mode - for adding experiences to existing event
   void _enterAddToEventMode() {
     if (_activeEventViewMode == null) return;
-    
-    print("🗺️ MAP SCREEN: Entering add to event mode for '${_activeEventViewMode!.title}'");
-    
+
+    print(
+        "🗺️ MAP SCREEN: Entering add to event mode for '${_activeEventViewMode!.title}'");
+
     setState(() {
       _isAddToEventModeActive = true;
       _addToEventDraftItinerary = [];
@@ -3927,9 +4095,10 @@ class _MapScreenState extends State<MapScreen> {
       _isSelectModeOverlayExpanded = false;
       _selectModeEventOnlyMarkers.clear();
     });
-    
+
     // Regenerate markers to show selection state
-    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+    unawaited(
+        _generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
   // ADDED: Exit select mode
@@ -3942,7 +4111,8 @@ class _MapScreenState extends State<MapScreen> {
       _selectModeEventOnlyMarkers.clear();
     });
     // Regenerate markers to remove numbered badges
-    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+    unawaited(
+        _generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
   // ADDED: Exit add to event mode
@@ -3953,7 +4123,8 @@ class _MapScreenState extends State<MapScreen> {
       _addToEventDraftItinerary = [];
     });
     // Regenerate markers to remove selection state
-    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+    unawaited(
+        _generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
   // ADDED: Finish adding to event and navigate back to event editor
@@ -3979,7 +4150,7 @@ class _MapScreenState extends State<MapScreen> {
 
     // Show loading indicator
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -4011,7 +4182,8 @@ class _MapScreenState extends State<MapScreen> {
 
       List<Experience> experiences = [];
       if (allExperienceIds.isNotEmpty) {
-        experiences = await _experienceService.getExperiencesByIds(allExperienceIds);
+        experiences =
+            await _experienceService.getExperiencesByIds(allExperienceIds);
       }
 
       // Fetch user's categories and color categories
@@ -4046,10 +4218,10 @@ class _MapScreenState extends State<MapScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to open event editor: $e')),
       );
@@ -4097,7 +4269,9 @@ class _MapScreenState extends State<MapScreen> {
     if (_selectModeDraftItinerary.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select at least one experience before continuing.')),
+          const SnackBar(
+              content: Text(
+                  'Please select at least one experience before continuing.')),
         );
       }
       return;
@@ -4115,7 +4289,7 @@ class _MapScreenState extends State<MapScreen> {
 
     // Show loading indicator
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -4133,7 +4307,8 @@ class _MapScreenState extends State<MapScreen> {
       final defaultEnd = defaultStart.add(const Duration(hours: 2));
 
       // Convert select mode color to hex string
-      final colorHexString = '#${_selectModeColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+      final colorHexString =
+          '#${_selectModeColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
 
       final newEvent = Event(
         id: '',
@@ -4156,7 +4331,8 @@ class _MapScreenState extends State<MapScreen> {
 
       List<Experience> experiences = [];
       if (experienceIds.isNotEmpty) {
-        experiences = await _experienceService.getExperiencesByIds(experienceIds);
+        experiences =
+            await _experienceService.getExperiencesByIds(experienceIds);
       }
 
       // Fetch user's categories and color categories
@@ -4225,13 +4401,13 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Check if tapped item is in the active event's itinerary
   bool _isTappedItemInEventItinerary() {
-    if (_activeEventViewMode == null || _tappedLocationDetails == null) return false;
-    
+    if (_activeEventViewMode == null || _tappedLocationDetails == null)
+      return false;
+
     if (_tappedExperience != null) {
       // Check if saved experience is in event
-      return _activeEventViewMode!.experiences.any(
-        (entry) => !entry.isEventOnly && entry.experienceId == _tappedExperience!.id
-      );
+      return _activeEventViewMode!.experiences.any((entry) =>
+          !entry.isEventOnly && entry.experienceId == _tappedExperience!.id);
     } else {
       // Check if location (event-only) is in event by placeId or coordinates
       return _activeEventViewMode!.experiences.any((entry) {
@@ -4257,7 +4433,7 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Add tapped item directly to event itinerary and enter add-to-event mode
   Future<void> _addTappedItemToEvent() async {
     if (_activeEventViewMode == null || _tappedLocationDetails == null) return;
-    
+
     // Create the entry
     EventExperienceEntry entry;
     if (_tappedExperience != null) {
@@ -4274,7 +4450,7 @@ class _MapScreenState extends State<MapScreen> {
         inlineColorHexDenorm: null,
       );
     }
-    
+
     // Enter add-to-event mode with this item
     setState(() {
       _isAddToEventModeActive = true;
@@ -4289,10 +4465,11 @@ class _MapScreenState extends State<MapScreen> {
       _tappedLocationBusinessStatus = null;
       _tappedLocationOpenNow = null;
     });
-    
+
     // Regenerate markers to show selection state
-    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
-    
+    unawaited(
+        _generateMarkersFromExperiences(_filterExperiences(_experiences)));
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Added to event. Tap "✓" to save changes.'),
@@ -4304,15 +4481,14 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Remove tapped item from event itinerary
   Future<void> _removeTappedItemFromEvent() async {
     if (_activeEventViewMode == null || _tappedLocationDetails == null) return;
-    
+
     // Find the index of the item to remove
     int indexToRemove = -1;
-    
+
     if (_tappedExperience != null) {
       // Find saved experience in event
-      indexToRemove = _activeEventViewMode!.experiences.indexWhere(
-        (entry) => !entry.isEventOnly && entry.experienceId == _tappedExperience!.id
-      );
+      indexToRemove = _activeEventViewMode!.experiences.indexWhere((entry) =>
+          !entry.isEventOnly && entry.experienceId == _tappedExperience!.id);
     } else {
       // Find location (event-only) in event
       indexToRemove = _activeEventViewMode!.experiences.indexWhere((entry) {
@@ -4331,14 +4507,14 @@ class _MapScreenState extends State<MapScreen> {
         );
       });
     }
-    
+
     if (indexToRemove == -1) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Item not found in event')),
       );
       return;
     }
-    
+
     // Show loading
     showDialog(
       context: context,
@@ -4347,26 +4523,27 @@ class _MapScreenState extends State<MapScreen> {
         const Center(child: CircularProgressIndicator()),
       ),
     );
-    
+
     try {
       // Create updated experiences list without the removed item
-      final updatedExperiences = List<EventExperienceEntry>.from(_activeEventViewMode!.experiences)
-        ..removeAt(indexToRemove);
-      
+      final updatedExperiences =
+          List<EventExperienceEntry>.from(_activeEventViewMode!.experiences)
+            ..removeAt(indexToRemove);
+
       // Create updated event
       final updatedEvent = _activeEventViewMode!.copyWith(
         experiences: updatedExperiences,
         updatedAt: DateTime.now(),
       );
-      
+
       // Save the event
       await _eventService.updateEvent(updatedEvent);
-      
+
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
-      
+
       // Clear tapped location state
       setState(() {
         _tappedLocationMarker = null;
@@ -4376,10 +4553,10 @@ class _MapScreenState extends State<MapScreen> {
         _tappedLocationBusinessStatus = null;
         _tappedLocationOpenNow = null;
       });
-      
+
       // Refresh event view mode with updated event
       await _enterEventViewMode(updatedEvent);
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Removed from event'),
@@ -4424,25 +4601,29 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Check if tapped item is in draft itinerary (select mode or add-to-event mode)
   bool _isTappedItemInDraftItinerary() {
     if (_tappedLocationDetails == null) return false;
-    
+
     if (_tappedExperience != null) {
       // Check if saved experience is in draft
       if (_isSelectModeActive) {
-        return _getSelectModeDraftIndexForExperience(_tappedExperience!) != null;
+        return _getSelectModeDraftIndexForExperience(_tappedExperience!) !=
+            null;
       } else if (_isAddToEventModeActive) {
-        return _getAddToEventDraftIndexForExperience(_tappedExperience!) != null;
+        return _getAddToEventDraftIndexForExperience(_tappedExperience!) !=
+            null;
       }
     } else {
       // Check if location is in draft
       if (_isSelectModeActive) {
-        return _getSelectModeDraftIndexForLocation(_tappedLocationDetails!) != null;
+        return _getSelectModeDraftIndexForLocation(_tappedLocationDetails!) !=
+            null;
       } else if (_isAddToEventModeActive) {
         // Check in add-to-event draft
         for (final entry in _addToEventDraftItinerary) {
           if (entry.isEventOnly && entry.inlineLocation != null) {
             if (_tappedLocationDetails!.placeId != null &&
                 _tappedLocationDetails!.placeId!.isNotEmpty &&
-                entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+                entry.inlineLocation!.placeId ==
+                    _tappedLocationDetails!.placeId) {
               return true;
             }
             if (_areCoordinatesClose(
@@ -4458,19 +4639,19 @@ class _MapScreenState extends State<MapScreen> {
         }
       }
     }
-    
+
     return false;
   }
 
   // ADDED: Check if tapped item is in existing event itinerary (for add-to-event mode)
   bool _isTappedItemInExistingEventItinerary() {
-    if (_activeEventViewMode == null || _tappedLocationDetails == null) return false;
-    
+    if (_activeEventViewMode == null || _tappedLocationDetails == null)
+      return false;
+
     if (_tappedExperience != null) {
       // Check if saved experience is in event
-      return _activeEventViewMode!.experiences.any(
-        (entry) => !entry.isEventOnly && entry.experienceId == _tappedExperience!.id
-      );
+      return _activeEventViewMode!.experiences.any((entry) =>
+          !entry.isEventOnly && entry.experienceId == _tappedExperience!.id);
     } else {
       // Check if location (event-only) is in event by placeId or coordinates
       return _activeEventViewMode!.experiences.any((entry) {
@@ -4494,7 +4675,7 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Remove tapped item from draft itinerary
   void _removeTappedItemFromDraftItinerary() {
     if (_tappedLocationDetails == null) return;
-    
+
     if (_tappedExperience != null) {
       // Remove saved experience from draft
       if (_isSelectModeActive) {
@@ -4509,13 +4690,15 @@ class _MapScreenState extends State<MapScreen> {
             _addToEventDraftItinerary.removeAt(index);
           });
           // Regenerate markers to update selection state
-          unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+          unawaited(_generateMarkersFromExperiences(
+              _filterExperiences(_experiences)));
         }
       }
     } else {
       // Remove location from draft
       if (_isSelectModeActive) {
-        final index = _getSelectModeDraftIndexForLocation(_tappedLocationDetails!);
+        final index =
+            _getSelectModeDraftIndexForLocation(_tappedLocationDetails!);
         if (index != null) {
           _removeFromSelectModeDraft(index);
         }
@@ -4527,7 +4710,8 @@ class _MapScreenState extends State<MapScreen> {
           if (entry.isEventOnly && entry.inlineLocation != null) {
             if (_tappedLocationDetails!.placeId != null &&
                 _tappedLocationDetails!.placeId!.isNotEmpty &&
-                entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+                entry.inlineLocation!.placeId ==
+                    _tappedLocationDetails!.placeId) {
               indexToRemove = i;
               break;
             }
@@ -4548,7 +4732,8 @@ class _MapScreenState extends State<MapScreen> {
             _addToEventDraftItinerary.removeAt(indexToRemove!);
           });
           // Regenerate markers to update selection state
-          unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+          unawaited(_generateMarkersFromExperiences(
+              _filterExperiences(_experiences)));
         }
       }
     }
@@ -4624,18 +4809,18 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Generate markers for event-only entries in select mode
   Future<void> _generateSelectModeEventOnlyMarkers() async {
     _selectModeEventOnlyMarkers.clear();
-    
+
     for (int i = 0; i < _selectModeDraftItinerary.length; i++) {
       final entry = _selectModeDraftItinerary[i];
       if (!entry.isEventOnly || entry.inlineLocation == null) continue;
-      
+
       final location = entry.inlineLocation!;
       if (location.latitude == 0.0 && location.longitude == 0.0) continue;
-      
+
       final position = LatLng(location.latitude, location.longitude);
       final iconText = entry.inlineCategoryIconDenorm ?? '📍';
       final positionNumber = i + 1;
-      
+
       try {
         final markerIcon = await _bitmapDescriptorFromNumberedIcon(
           number: positionNumber,
@@ -4643,14 +4828,15 @@ class _MapScreenState extends State<MapScreen> {
           backgroundColor: _selectModeColor,
           size: 90, // Larger size for selected markers
         );
-        
+
         final markerId = MarkerId('select_mode_event_only_$i');
         final marker = Marker(
           markerId: markerId,
           position: position,
           icon: markerIcon,
           zIndex: 2.0, // Above regular markers
-          infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop $positionNumber'),
+          infoWindow: _infoWindowForPlatform(
+              entry.inlineName ?? 'Stop $positionNumber'),
           onTap: () async {
             _triggerHeavyHaptic();
             FocusScope.of(context).unfocus();
@@ -4664,13 +4850,14 @@ class _MapScreenState extends State<MapScreen> {
             );
           },
         );
-        
+
         _selectModeEventOnlyMarkers[markerId.value] = marker;
       } catch (e) {
-        print("🗺️ MAP SCREEN: Failed to generate marker for event-only entry: $e");
+        print(
+            "🗺️ MAP SCREEN: Failed to generate marker for event-only entry: $e");
       }
     }
-    
+
     if (mounted) {
       setState(() {});
     }
@@ -4723,9 +4910,10 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Add to event draft (similar to select mode but checks against current event)
   void _addToEventDraft(EventExperienceEntry entry) {
     if (_activeEventViewMode == null) return;
-    
+
     // Check for duplicates in current event's experiences
-    final isDuplicateInEvent = _activeEventViewMode!.experiences.any((existing) {
+    final isDuplicateInEvent =
+        _activeEventViewMode!.experiences.any((existing) {
       if (entry.isEventOnly && existing.isEventOnly) {
         return entry.inlineLocation?.placeId != null &&
             existing.inlineLocation?.placeId == entry.inlineLocation?.placeId;
@@ -4761,7 +4949,8 @@ class _MapScreenState extends State<MapScreen> {
     });
 
     // Regenerate markers to show selection state
-    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+    unawaited(
+        _generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
   String _formatEventTime(Event event) {
@@ -4954,8 +5143,8 @@ class _MapScreenState extends State<MapScreen> {
       Color markerBackgroundColor = Colors.grey;
       try {
         if (experience.colorCategoryId != null) {
-          final colorCat =
-              _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          final colorCat = _colorCategories
+              .firstWhere((cc) => cc.id == experience.colorCategoryId);
           markerBackgroundColor = _parseColor(colorCat.colorHex);
         }
       } catch (_) {}
@@ -4968,15 +5157,14 @@ class _MapScreenState extends State<MapScreen> {
               experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
           : _resolveCategoryForExperience(experience).icon;
-      final Future<BitmapDescriptor> Function(int) iconBuilder =
-          (int size) {
+      Future<BitmapDescriptor> iconBuilder(int size) {
         return _bitmapDescriptorFromText(
           iconText,
           backgroundColor: markerBackgroundColor,
           size: size,
           backgroundOpacity: 1.0,
         );
-      };
+      }
 
       if (!mounted || animationToken != _markerAnimationToken) {
         return;
@@ -5108,8 +5296,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   bool _doesLocationMatchInitialPublic(Location location) {
-    final Location? publicLocation =
-        widget.initialPublicExperience?.location;
+    final Location? publicLocation = widget.initialPublicExperience?.location;
     if (publicLocation == null) {
       return false;
     }
@@ -5135,15 +5322,14 @@ class _MapScreenState extends State<MapScreen> {
     double lng2, {
     double tolerance = 0.0005,
   }) {
-    return (lat1 - lat2).abs() <= tolerance &&
-        (lng1 - lng2).abs() <= tolerance;
+    return (lat1 - lat2).abs() <= tolerance && (lng1 - lng2).abs() <= tolerance;
   }
 
   UserCategory _resolveCategoryForExperience(Experience experience) {
     final String? categoryId = experience.categoryId;
     if (categoryId != null) {
-      final UserCategory? accessibleCategory = _getAccessibleUserCategory(
-          experience.createdBy, categoryId);
+      final UserCategory? accessibleCategory =
+          _getAccessibleUserCategory(experience.createdBy, categoryId);
       if (accessibleCategory != null) {
         return accessibleCategory;
       }
@@ -5210,8 +5396,8 @@ class _MapScreenState extends State<MapScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                  content:
-                      Text('No saved content available yet for this experience.')),
+                  content: Text(
+                      'No saved content available yet for this experience.')),
             );
           }
           return;
@@ -5229,8 +5415,7 @@ class _MapScreenState extends State<MapScreen> {
             });
           }
         } catch (e) {
-          print(
-              "🗺️ MAP SCREEN: Error loading media items for preview: $e");
+          print("🗺️ MAP SCREEN: Error loading media items for preview: $e");
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Could not load content preview: $e')),
@@ -5248,8 +5433,8 @@ class _MapScreenState extends State<MapScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-                content:
-                    Text('No saved content available yet for this experience.')),
+                content: Text(
+                    'No saved content available yet for this experience.')),
           );
         }
         return;
@@ -5298,8 +5483,8 @@ class _MapScreenState extends State<MapScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-                content:
-                    Text('No saved content available yet for this experience.')),
+                content: Text(
+                    'No saved content available yet for this experience.')),
           );
         }
         return;
@@ -5349,8 +5534,7 @@ class _MapScreenState extends State<MapScreen> {
     }
     final uri = Uri.tryParse(url);
     if (uri == null) {
-      print(
-          "🗺️ MAP SCREEN: launchExternalUrl received an invalid URI: $url");
+      print("🗺️ MAP SCREEN: launchExternalUrl received an invalid URI: $url");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Link is invalid.')),
@@ -5441,12 +5625,10 @@ class _MapScreenState extends State<MapScreen> {
     final String? ownerId = exp.createdBy;
     final bool followeeSelected =
         ownerId != null && _selectedFolloweeIds.contains(ownerId);
-    final bool followeeCategoryFiltersActive = followeeSelected &&
-        ownerId != null &&
-        _hasSelectedCategoriesForFollowee(ownerId);
-    final bool followeeColorFiltersActive = followeeSelected &&
-        ownerId != null &&
-        _hasSelectedColorCategoriesForFollowee(ownerId);
+    final bool followeeCategoryFiltersActive =
+        followeeSelected && _hasSelectedCategoriesForFollowee(ownerId);
+    final bool followeeColorFiltersActive =
+        followeeSelected && _hasSelectedColorCategoriesForFollowee(ownerId);
     final Set<String> followeeCategorySelection =
         ownerId != null && followeeCategoryFiltersActive
             ? (_followeeCategorySelections[ownerId] ?? const <String>{})
@@ -5456,14 +5638,14 @@ class _MapScreenState extends State<MapScreen> {
             ? (_followeeColorSelections[ownerId] ?? const <String>{})
             : const <String>{};
 
-    final bool categoryMatch = (!followeeSelected ||
-            followeeCategoryFiltersActive)
-        ? (_selectedCategoryIds.isEmpty ||
-            (exp.categoryId != null &&
-                _selectedCategoryIds.contains(exp.categoryId)) ||
-            exp.otherCategories.any(
-                (catId) => _selectedCategoryIds.contains(catId)))
-        : true;
+    final bool categoryMatch =
+        (!followeeSelected || followeeCategoryFiltersActive)
+            ? (_selectedCategoryIds.isEmpty ||
+                (exp.categoryId != null &&
+                    _selectedCategoryIds.contains(exp.categoryId)) ||
+                exp.otherCategories
+                    .any((catId) => _selectedCategoryIds.contains(catId)))
+            : true;
 
     final bool colorMatch = (!followeeSelected || followeeColorFiltersActive)
         ? (_selectedColorCategoryIds.isEmpty ||
@@ -5568,7 +5750,8 @@ class _MapScreenState extends State<MapScreen> {
             return _wrapWebPointerInterceptor(AlertDialog(
               backgroundColor: Colors.white,
               title: const Text('Filter Experiences'),
-              insetPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
               content: SizedBox(
                 width: MediaQuery.of(context).size.width * 0.85,
                 child: ConstrainedBox(
@@ -5576,367 +5759,433 @@ class _MapScreenState extends State<MapScreen> {
                     maxHeight: MediaQuery.of(context).size.height * 0.6,
                   ),
                   child: StatefulBuilder(
-                  // Use StatefulBuilder to manage state within the dialog
-                  builder: (BuildContext context, StateSetter setStateDialog) {
-                    void updateDialogState(VoidCallback fn) {
-                      setStateDialog(fn);
-                      setStateOuter(() {});
-                    }
-                    if (activeFolloweeId != null) {
-                  final String followeeId = activeFolloweeId!;
-                  final UserProfile? followeeProfile =
-                      activeFolloweeProfile ??
-                          _followingUsers.firstWhere(
-                              (profile) => profile.id == followeeId,
-                              orElse: () => UserProfile(id: followeeId));
-                  final String displayName =
-                      _getUserDisplayName(followeeProfile!);
-                  final List<UserCategory> detailCategories =
-                      (_followeeCategories[followeeId]?.values ??
-                              const Iterable<UserCategory>.empty())
-                          .where((category) =>
-                              _canAccessFolloweeCategory(followeeId,
-                                  category.id))
-                          .toList()
-                        ..sort((a, b) => a.name.compareTo(b.name));
-                  final List<ColorCategory> detailColors =
-                      (_followeeColorCategories[followeeId]?.values ??
-                              const Iterable<ColorCategory>.empty())
-                          .where((colorCategory) =>
-                              _canAccessFolloweeColorCategory(
-                                  followeeId, colorCategory.id))
-                          .toList()
-                        ..sort((a, b) => a.name.compareTo(b.name));
-                  final int experienceCount =
-                      _followeePublicExperiences[followeeId]?.length ?? 0;
+                    // Use StatefulBuilder to manage state within the dialog
+                    builder:
+                        (BuildContext context, StateSetter setStateDialog) {
+                      void updateDialogState(VoidCallback fn) {
+                        setStateDialog(fn);
+                        setStateOuter(() {});
+                      }
 
-                  return SingleChildScrollView(
-                    controller: dialogScrollController,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.arrow_back),
-                              tooltip: 'Back',
-                              onPressed: () {
-                                _triggerHeavyHaptic();
-                                updateDialogState(() {
-                                  activeFolloweeId = null;
-                                  activeFolloweeProfile = null;
-                                });
-                              },
-                            ),
-                            Expanded(
-                              child: Text(
-                                'Filters for $displayName',
+                      if (activeFolloweeId != null) {
+                        final String followeeId = activeFolloweeId!;
+                        final UserProfile followeeProfile =
+                            activeFolloweeProfile ??
+                                _followingUsers.firstWhere(
+                                    (profile) => profile.id == followeeId,
+                                    orElse: () => UserProfile(id: followeeId));
+                        final String displayName =
+                            _getUserDisplayName(followeeProfile);
+                        final List<UserCategory> detailCategories =
+                            (_followeeCategories[followeeId]?.values ??
+                                    const Iterable<UserCategory>.empty())
+                                .where((category) => _canAccessFolloweeCategory(
+                                    followeeId, category.id))
+                                .toList()
+                              ..sort((a, b) => a.name.compareTo(b.name));
+                        final List<ColorCategory> detailColors =
+                            (_followeeColorCategories[followeeId]?.values ??
+                                    const Iterable<ColorCategory>.empty())
+                                .where((colorCategory) =>
+                                    _canAccessFolloweeColorCategory(
+                                        followeeId, colorCategory.id))
+                                .toList()
+                              ..sort((a, b) => a.name.compareTo(b.name));
+                        final int experienceCount =
+                            _followeePublicExperiences[followeeId]?.length ?? 0;
+
+                        return SingleChildScrollView(
+                          controller: dialogScrollController,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.arrow_back),
+                                    tooltip: 'Back',
+                                    onPressed: () {
+                                      _triggerHeavyHaptic();
+                                      updateDialogState(() {
+                                        activeFolloweeId = null;
+                                        activeFolloweeProfile = null;
+                                      });
+                                    },
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      'Filters for $displayName',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                experienceCount > 0
+                                    ? '$experienceCount experiences available'
+                                    : 'No experiences yet',
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
+                                    fontSize: 13, color: Colors.black54),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          experienceCount > 0
-                              ? '$experienceCount experiences available'
-                              : 'No experiences yet',
-                          style: const TextStyle(
-                              fontSize: 13, color: Colors.black54),
-                        ),
-                        const SizedBox(height: 16),
-                        const Text('By Category:',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        if (detailCategories.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                              'No categories available.',
-                              style: TextStyle(color: Colors.black54),
-                            ),
-                          )
-                        else
-                          ...detailCategories.map((category) {
-                            return CheckboxListTile(
-                              controlAffinity: ListTileControlAffinity.leading,
-                              contentPadding: EdgeInsets.zero,
-                              title: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 16,
-                                    child: Center(child: Text(category.icon)),
+                              const SizedBox(height: 16),
+                              const Text('By Category:',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold)),
+                              if (detailCategories.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Text(
+                                    'No categories available.',
+                                    style: TextStyle(color: Colors.black54),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      category.name,
-                                      overflow: TextOverflow.ellipsis,
+                                )
+                              else
+                                ...detailCategories.map((category) {
+                                  return CheckboxListTile(
+                                    controlAffinity:
+                                        ListTileControlAffinity.leading,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 16,
+                                          child: Center(
+                                              child: Text(category.icon)),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            category.name,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
+                                    value: tempFolloweeCategorySelections[
+                                                followeeId]
+                                            ?.contains(category.id) ??
+                                        false,
+                                    onChanged: (bool? selected) {
+                                      updateDialogState(() {
+                                        if (selected == true) {
+                                          tempFolloweeCategorySelections
+                                              .putIfAbsent(
+                                                  followeeId, () => <String>{})
+                                              .add(category.id);
+                                          tempSelectedFolloweeIds
+                                              .add(followeeId);
+                                        } else {
+                                          tempFolloweeCategorySelections[
+                                                  followeeId]
+                                              ?.remove(category.id);
+                                          if (tempFolloweeCategorySelections[
+                                                      followeeId]
+                                                  ?.isEmpty ??
+                                              false) {
+                                            tempFolloweeCategorySelections
+                                                .remove(followeeId);
+                                          }
+                                        }
+                                      });
+                                    },
+                                  );
+                                }),
+                              const SizedBox(height: 16),
+                              const Text('By Color:',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold)),
+                              if (detailColors.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Text(
+                                    'No color categories available.',
+                                    style: TextStyle(color: Colors.black54),
                                   ),
-                                ],
-                              ),
-                              value: tempFolloweeCategorySelections[followeeId]
-                                      ?.contains(category.id) ??
-                                  false,
-                              onChanged: (bool? selected) {
-                                updateDialogState(() {
-                                  if (selected == true) {
-                                    tempFolloweeCategorySelections
-                                        .putIfAbsent(followeeId, () => <String>{})
-                                        .add(category.id);
-                                    tempSelectedFolloweeIds.add(followeeId);
-                                  } else {
-                                    tempFolloweeCategorySelections[followeeId]
-                                        ?.remove(category.id);
-                                    if (tempFolloweeCategorySelections[followeeId]
-                                            ?.isEmpty ??
-                                        false) {
-                                      tempFolloweeCategorySelections
-                                          .remove(followeeId);
-                                    }
-                                  }
-                                });
-                              },
-                            );
-                          }),
-                        const SizedBox(height: 16),
-                        const Text('By Color:',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        if (detailColors.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                              'No color categories available.',
-                              style: TextStyle(color: Colors.black54),
-                            ),
-                          )
-                        else
-                          ...detailColors.map((colorCategory) {
-                            return CheckboxListTile(
-                              controlAffinity: ListTileControlAffinity.leading,
-                              contentPadding: EdgeInsets.zero,
-                              title: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 16,
-                                    height: 16,
-                                    decoration: BoxDecoration(
-                                      color: _parseColor(
-                                          colorCategory.colorHex),
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.grey),
+                                )
+                              else
+                                ...detailColors.map((colorCategory) {
+                                  return CheckboxListTile(
+                                    controlAffinity:
+                                        ListTileControlAffinity.leading,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                            color: _parseColor(
+                                                colorCategory.colorHex),
+                                            shape: BoxShape.circle,
+                                            border:
+                                                Border.all(color: Colors.grey),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            colorCategory.name,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      colorCategory.name,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              value: tempFolloweeColorSelections[followeeId]
-                                      ?.contains(colorCategory.id) ??
-                                  false,
-                              onChanged: (bool? selected) {
-                                updateDialogState(() {
-                                  if (selected == true) {
-                                    tempFolloweeColorSelections
-                                        .putIfAbsent(followeeId, () => <String>{})
-                                        .add(colorCategory.id);
-                                    tempSelectedFolloweeIds.add(followeeId);
-                                  } else {
-                                    tempFolloweeColorSelections[followeeId]
-                                        ?.remove(colorCategory.id);
-                                    if (tempFolloweeColorSelections[followeeId]
-                                            ?.isEmpty ??
-                                        false) {
-                                      tempFolloweeColorSelections
-                                          .remove(followeeId);
-                                    }
-                                  }
-                                });
-                              },
-                            );
-                          }),
-                      ],
-                    ),
-                  );
-                }
+                                    value:
+                                        tempFolloweeColorSelections[followeeId]
+                                                ?.contains(colorCategory.id) ??
+                                            false,
+                                    onChanged: (bool? selected) {
+                                      updateDialogState(() {
+                                        if (selected == true) {
+                                          tempFolloweeColorSelections
+                                              .putIfAbsent(
+                                                  followeeId, () => <String>{})
+                                              .add(colorCategory.id);
+                                          tempSelectedFolloweeIds
+                                              .add(followeeId);
+                                        } else {
+                                          tempFolloweeColorSelections[
+                                                  followeeId]
+                                              ?.remove(colorCategory.id);
+                                          if (tempFolloweeColorSelections[
+                                                      followeeId]
+                                                  ?.isEmpty ??
+                                              false) {
+                                            tempFolloweeColorSelections
+                                                .remove(followeeId);
+                                          }
+                                        }
+                                      });
+                                    },
+                                  );
+                                }),
+                            ],
+                          ),
+                        );
+                      }
 
-                return SingleChildScrollView(
-                  controller: dialogScrollController,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      const Text('By Category:',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      // FIX: Correctly use map().toList() to generate CheckboxListTiles
-                      ...(_categories.toList()
-                            ..sort((a, b) => a.name.compareTo(b.name)))
-                          .map((category) {
-                        final bool isSharedOwner = category.ownerUserId != _authService.currentUser?.uid;
-                        final String? ownerName = isSharedOwner ? _ownerNameByUserId[category.ownerUserId] : null;
-                        final String? shareLabel = isSharedOwner
-                            ? 'Shared by ${ownerName ?? 'Someone'}'
-                            : null;
-                        // This map returns a Widget (CheckboxListTile)
-                        return CheckboxListTile(
-                          controlAffinity: ListTileControlAffinity.leading,
-                          contentPadding: EdgeInsets.zero,
-                          title: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 16,
-                                    child: Center(child: Text(category.icon)),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      category.name,
-                                      overflow: TextOverflow.ellipsis,
+                      return SingleChildScrollView(
+                        controller: dialogScrollController,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text('By Category:',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            // FIX: Correctly use map().toList() to generate CheckboxListTiles
+                            ...(_categories.toList()
+                                  ..sort((a, b) => a.name.compareTo(b.name)))
+                                .map((category) {
+                              final bool isSharedOwner = category.ownerUserId !=
+                                  _authService.currentUser?.uid;
+                              final String? ownerName = isSharedOwner
+                                  ? _ownerNameByUserId[category.ownerUserId]
+                                  : null;
+                              final String? shareLabel = isSharedOwner
+                                  ? 'Shared by ${ownerName ?? 'Someone'}'
+                                  : null;
+                              // This map returns a Widget (CheckboxListTile)
+                              return CheckboxListTile(
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                contentPadding: EdgeInsets.zero,
+                                title: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 16,
+                                          child: Center(
+                                              child: Text(category.icon)),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            category.name,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                ],
-                              ),
-                              if (shareLabel != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 28),
-                                  child: Text(
-                                    shareLabel,
-                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                                  ),
+                                    if (shareLabel != null)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(left: 28),
+                                        child: Text(
+                                          shareLabel,
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey[600]),
+                                        ),
+                                      ),
+                                  ],
                                 ),
-                            ],
-                          ),
-                          subtitle: null,
-                          value: tempSelectedCategoryIds.contains(category.id),
-                          onChanged: (bool? selected) {
-                            updateDialogState(() {
-                              if (selected == true) {
-                                tempSelectedCategoryIds.add(category.id);
-                              } else {
-                                tempSelectedCategoryIds.remove(category.id);
-                              }
-                            });
-                          },
-                        );
-                      }), // This creates List<CheckboxListTile>
-                      const SizedBox(height: 16),
-                      const Text('By Color:',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      // FIX: Correctly use map().toList() to generate CheckboxListTiles
-                      ...(_colorCategories.toList()
-                            ..sort((a, b) => a.name.compareTo(b.name)))
-                          .map((colorCategory) {
-                        final bool isSharedOwner = colorCategory.ownerUserId != _authService.currentUser?.uid;
-                        final String? ownerName = isSharedOwner ? _ownerNameByUserId[colorCategory.ownerUserId] : null;
-                        final String? shareLabel = isSharedOwner
-                            ? 'Shared by ${ownerName ?? 'Someone'}'
-                            : null;
-                        // This map returns a Widget (CheckboxListTile)
-                        return CheckboxListTile(
-                          controlAffinity: ListTileControlAffinity.leading,
-                          contentPadding: EdgeInsets.zero,
-                          title: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 16,
-                                    height: 16,
-                                    decoration: BoxDecoration(
-                                        color: _parseColor(colorCategory.colorHex),
-                                        shape: BoxShape.circle,
-                                        border: Border.all(color: Colors.grey)),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      colorCategory.name,
-                                      overflow: TextOverflow.ellipsis,
+                                subtitle: null,
+                                value: tempSelectedCategoryIds
+                                    .contains(category.id),
+                                onChanged: (bool? selected) {
+                                  updateDialogState(() {
+                                    if (selected == true) {
+                                      tempSelectedCategoryIds.add(category.id);
+                                    } else {
+                                      tempSelectedCategoryIds
+                                          .remove(category.id);
+                                    }
+                                  });
+                                },
+                              );
+                            }), // This creates List<CheckboxListTile>
+                            const SizedBox(height: 16),
+                            const Text('By Color:',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            // FIX: Correctly use map().toList() to generate CheckboxListTiles
+                            ...(_colorCategories.toList()
+                                  ..sort((a, b) => a.name.compareTo(b.name)))
+                                .map((colorCategory) {
+                              final bool isSharedOwner =
+                                  colorCategory.ownerUserId !=
+                                      _authService.currentUser?.uid;
+                              final String? ownerName = isSharedOwner
+                                  ? _ownerNameByUserId[
+                                      colorCategory.ownerUserId]
+                                  : null;
+                              final String? shareLabel = isSharedOwner
+                                  ? 'Shared by ${ownerName ?? 'Someone'}'
+                                  : null;
+                              // This map returns a Widget (CheckboxListTile)
+                              return CheckboxListTile(
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                contentPadding: EdgeInsets.zero,
+                                title: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                              color: _parseColor(
+                                                  colorCategory.colorHex),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                  color: Colors.grey)),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            colorCategory.name,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                ],
-                              ),
-                              if (shareLabel != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 28),
-                                  child: Text(
-                                    shareLabel,
-                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                                  ),
+                                    if (shareLabel != null)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(left: 28),
+                                        child: Text(
+                                          shareLabel,
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey[600]),
+                                        ),
+                                      ),
+                                  ],
                                 ),
-                            ],
-                          ),
-                          subtitle: null,
-                          value: tempSelectedColorCategoryIds
-                              .contains(colorCategory.id),
-                          onChanged: (bool? selected) {
-                            updateDialogState(() {
-                              if (selected == true) {
-                                tempSelectedColorCategoryIds
-                                    .add(colorCategory.id);
-                              } else {
-                                tempSelectedColorCategoryIds
-                                    .remove(colorCategory.id);
-                              }
-                            });
-                          },
-                        );
-                      }),
-                      const SizedBox(height: 16),
-                      const Text('By People You Follow:',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      if (_followingUsers.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Text(
-                            'Follow friends to filter their public experiences.',
-                            style: TextStyle(color: Colors.black54),
-                          ),
-                        )
-                      else
-                        ..._followingUsers.map((profile) {
-                          final String displayName =
-                              _getUserDisplayName(profile);
-                          final int experienceCount =
-                              _followeePublicExperiences[profile.id]?.length ??
-                              0;
-                          final Widget leadingAvatar;
-                          if (profile.photoURL != null &&
-                              profile.photoURL!.trim().isNotEmpty) {
-                            leadingAvatar = ClipOval(
-                              child: CachedNetworkImage(
-                                imageUrl: profile.photoURL!.trim(),
-                                width: 40,
-                                height: 40,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: Colors.grey[200],
-                                  child: const SizedBox.shrink(),
+                                subtitle: null,
+                                value: tempSelectedColorCategoryIds
+                                    .contains(colorCategory.id),
+                                onChanged: (bool? selected) {
+                                  updateDialogState(() {
+                                    if (selected == true) {
+                                      tempSelectedColorCategoryIds
+                                          .add(colorCategory.id);
+                                    } else {
+                                      tempSelectedColorCategoryIds
+                                          .remove(colorCategory.id);
+                                    }
+                                  });
+                                },
+                              );
+                            }),
+                            const SizedBox(height: 16),
+                            const Text('By People You Follow:',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            if (_followingUsers.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Text(
+                                  'Follow friends to filter their public experiences.',
+                                  style: TextStyle(color: Colors.black54),
                                 ),
-                                errorWidget: (context, url, error) {
+                              )
+                            else
+                              ..._followingUsers.map((profile) {
+                                final String displayName =
+                                    _getUserDisplayName(profile);
+                                final int experienceCount =
+                                    _followeePublicExperiences[profile.id]
+                                            ?.length ??
+                                        0;
+                                final Widget leadingAvatar;
+                                if (profile.photoURL != null &&
+                                    profile.photoURL!.trim().isNotEmpty) {
+                                  leadingAvatar = ClipOval(
+                                    child: CachedNetworkImage(
+                                      imageUrl: profile.photoURL!.trim(),
+                                      width: 40,
+                                      height: 40,
+                                      fit: BoxFit.cover,
+                                      placeholder: (context, url) =>
+                                          CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: Colors.grey[200],
+                                        child: const SizedBox.shrink(),
+                                      ),
+                                      errorWidget: (context, url, error) {
+                                        final String initial =
+                                            displayName.isNotEmpty
+                                                ? displayName
+                                                    .substring(0, 1)
+                                                    .toUpperCase()
+                                                : profile.id
+                                                    .substring(0, 1)
+                                                    .toUpperCase();
+                                        return CircleAvatar(
+                                          radius: 20,
+                                          backgroundColor: Colors.grey[300],
+                                          child: Text(
+                                            initial,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  );
+                                } else {
                                   final String initial = displayName.isNotEmpty
-                                      ? displayName.substring(0, 1).toUpperCase()
-                                      : profile.id.substring(0, 1).toUpperCase();
-                                  return CircleAvatar(
+                                      ? displayName
+                                          .substring(0, 1)
+                                          .toUpperCase()
+                                      : profile.id
+                                          .substring(0, 1)
+                                          .toUpperCase();
+                                  leadingAvatar = CircleAvatar(
                                     radius: 20,
                                     backgroundColor: Colors.grey[300],
                                     child: Text(
@@ -5946,187 +6195,180 @@ class _MapScreenState extends State<MapScreen> {
                                           color: Colors.white),
                                     ),
                                   );
-                                },
-                              ),
-                            );
-                          } else {
-                            final String initial = displayName.isNotEmpty
-                                ? displayName.substring(0, 1).toUpperCase()
-                                : profile.id.substring(0, 1).toUpperCase();
-                            leadingAvatar = CircleAvatar(
-                              radius: 20,
-                              backgroundColor: Colors.grey[300],
-                              child: Text(
-                                initial,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
-                              ),
-                            );
-                          }
+                                }
 
-                          final bool isSelected = tempSelectedFolloweeIds
-                              .contains(profile.id);
-                          final Set<String> followeeCategoryIds =
-                              _getFolloweeAccessibleCategoryIds(profile.id);
-                          final Set<String> followeeColorIds =
-                              _getFolloweeAccessibleColorCategoryIds(profile.id);
+                                final bool isSelected = tempSelectedFolloweeIds
+                                    .contains(profile.id);
+                                final Set<String> followeeCategoryIds =
+                                    _getFolloweeAccessibleCategoryIds(
+                                        profile.id);
+                                final Set<String> followeeColorIds =
+                                    _getFolloweeAccessibleColorCategoryIds(
+                                        profile.id);
 
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Checkbox(
-                                  value: isSelected,
-                                  onChanged: (bool? selected) {
-                                    updateDialogState(() {
-                                      if (selected == true) {
-                                        tempSelectedFolloweeIds.add(profile.id);
-                                      } else {
-                                        tempSelectedFolloweeIds
-                                            .remove(profile.id);
-                                        tempSelectedCategoryIds.removeWhere(
-                                            followeeCategoryIds.contains);
-                                        tempSelectedColorCategoryIds
-                                            .removeWhere(
-                                                followeeColorIds.contains);
-                                      }
-                                    });
-                                  },
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () {
-                                      _triggerHeavyHaptic();
-                                      updateDialogState(() {
-                                        activeFolloweeId = profile.id;
-                                        activeFolloweeProfile = profile;
-                                      });
-                                      dialogScrollController.animateTo(
-                                        0,
-                                        duration:
-                                            const Duration(milliseconds: 200),
-                                        curve: Curves.easeOut,
-                                      );
-                                    },
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        leadingAvatar,
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Column(
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 4),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Checkbox(
+                                        value: isSelected,
+                                        onChanged: (bool? selected) {
+                                          updateDialogState(() {
+                                            if (selected == true) {
+                                              tempSelectedFolloweeIds
+                                                  .add(profile.id);
+                                            } else {
+                                              tempSelectedFolloweeIds
+                                                  .remove(profile.id);
+                                              tempSelectedCategoryIds
+                                                  .removeWhere(
+                                                      followeeCategoryIds
+                                                          .contains);
+                                              tempSelectedColorCategoryIds
+                                                  .removeWhere(followeeColorIds
+                                                      .contains);
+                                            }
+                                          });
+                                        },
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () {
+                                            _triggerHeavyHaptic();
+                                            updateDialogState(() {
+                                              activeFolloweeId = profile.id;
+                                              activeFolloweeProfile = profile;
+                                            });
+                                            dialogScrollController.animateTo(
+                                              0,
+                                              duration: const Duration(
+                                                  milliseconds: 200),
+                                              curve: Curves.easeOut,
+                                            );
+                                          },
+                                          child: Row(
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                displayName,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                    fontWeight:
-                                                        FontWeight.w600),
+                                              leadingAvatar,
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      displayName,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.w600),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      experienceCount > 0
+                                                          ? '$experienceCount experiences'
+                                                          : 'No experiences yet',
+                                                      style: const TextStyle(
+                                                          fontSize: 12,
+                                                          color:
+                                                              Colors.black54),
+                                                    ),
+                                                  ],
+                                                ),
                                               ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                experienceCount > 0
-                                                    ? '$experienceCount experiences'
-                                                    : 'No experiences yet',
-                                                style: const TextStyle(
-                                                    fontSize: 12,
-                                                    color: Colors.black54),
-                                              ),
+                                              const Icon(Icons.chevron_right),
                                             ],
                                           ),
                                         ),
-                                        const Icon(Icons.chevron_right),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
-                    ],
+                                );
+                              }),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
-          ),
-        ),
-          actions: <Widget>[
-            if (activeFolloweeId == null)
-              TextButton(
-                child: const Text('Show All'),
-                onPressed: () {
-                  _triggerHeavyHaptic();
-                  tempSelectedCategoryIds.clear();
-                  tempSelectedColorCategoryIds.clear();
-                  tempSelectedFolloweeIds.clear();
-                  tempFolloweeCategorySelections.clear();
-                  tempFolloweeColorSelections.clear();
-
-                  setState(() {
-                    _selectedCategoryIds =
-                        tempSelectedCategoryIds; // Now empty
-                    _selectedColorCategoryIds =
-                        tempSelectedColorCategoryIds; // Now empty
-                    _selectedFolloweeIds = tempSelectedFolloweeIds;
-                    _followeeCategorySelections
-                      ..clear()
-                      ..addAll(tempFolloweeCategorySelections);
-                    _followeeColorSelections
-                      ..clear()
-                      ..addAll(tempFolloweeColorSelections);
-                  });
-                  unawaited(_persistFilterSelections(
-                    _selectedCategoryIds,
-                    _selectedColorCategoryIds,
-                    _selectedFolloweeIds,
-                  ));
-
-                  Navigator.of(context).pop();
-                  _applyFiltersAndUpdateMarkers();
-                },
+                ),
               ),
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () {
-                _triggerHeavyHaptic();
-                Navigator.of(context).pop(); // Close dialog without applying
-              },
-            ),
-            TextButton(
-              child: const Text('Apply'),
-              onPressed: () {
-                _triggerHeavyHaptic();
-                // Apply the selected filters from the temporary sets
-                setState(() {
-                  _selectedCategoryIds = tempSelectedCategoryIds;
-                  _selectedColorCategoryIds = tempSelectedColorCategoryIds;
-                  _selectedFolloweeIds = tempSelectedFolloweeIds;
-                  _followeeCategorySelections
-                    ..clear()
-                    ..addAll(tempFolloweeCategorySelections);
-                  _followeeColorSelections
-                    ..clear()
-                    ..addAll(tempFolloweeColorSelections);
-                });
-                unawaited(_persistFilterSelections(
-                  _selectedCategoryIds,
-                  _selectedColorCategoryIds,
-                  _selectedFolloweeIds,
-                ));
-                Navigator.of(context).pop(); // Close the dialog
-                _applyFiltersAndUpdateMarkers(); // Apply filters and update map
-              },
-            ),
-          ],
-        ));
+              actions: <Widget>[
+                if (activeFolloweeId == null)
+                  TextButton(
+                    child: const Text('Show All'),
+                    onPressed: () {
+                      _triggerHeavyHaptic();
+                      tempSelectedCategoryIds.clear();
+                      tempSelectedColorCategoryIds.clear();
+                      tempSelectedFolloweeIds.clear();
+                      tempFolloweeCategorySelections.clear();
+                      tempFolloweeColorSelections.clear();
+
+                      setState(() {
+                        _selectedCategoryIds =
+                            tempSelectedCategoryIds; // Now empty
+                        _selectedColorCategoryIds =
+                            tempSelectedColorCategoryIds; // Now empty
+                        _selectedFolloweeIds = tempSelectedFolloweeIds;
+                        _followeeCategorySelections
+                          ..clear()
+                          ..addAll(tempFolloweeCategorySelections);
+                        _followeeColorSelections
+                          ..clear()
+                          ..addAll(tempFolloweeColorSelections);
+                      });
+                      unawaited(_persistFilterSelections(
+                        _selectedCategoryIds,
+                        _selectedColorCategoryIds,
+                        _selectedFolloweeIds,
+                      ));
+
+                      Navigator.of(context).pop();
+                      _applyFiltersAndUpdateMarkers();
+                    },
+                  ),
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed: () {
+                    _triggerHeavyHaptic();
+                    Navigator.of(context)
+                        .pop(); // Close dialog without applying
+                  },
+                ),
+                TextButton(
+                  child: const Text('Apply'),
+                  onPressed: () {
+                    _triggerHeavyHaptic();
+                    // Apply the selected filters from the temporary sets
+                    setState(() {
+                      _selectedCategoryIds = tempSelectedCategoryIds;
+                      _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                      _selectedFolloweeIds = tempSelectedFolloweeIds;
+                      _followeeCategorySelections
+                        ..clear()
+                        ..addAll(tempFolloweeCategorySelections);
+                      _followeeColorSelections
+                        ..clear()
+                        ..addAll(tempFolloweeColorSelections);
+                    });
+                    unawaited(_persistFilterSelections(
+                      _selectedCategoryIds,
+                      _selectedColorCategoryIds,
+                      _selectedFolloweeIds,
+                    ));
+                    Navigator.of(context).pop(); // Close the dialog
+                    _applyFiltersAndUpdateMarkers(); // Apply filters and update map
+                  },
+                ),
+              ],
+            ));
           },
         );
       },
@@ -6144,7 +6386,8 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       // Filter experiences based on selected IDs
-      final List<Experience> workingExperiences = List<Experience>.from(_experiences);
+      final List<Experience> workingExperiences =
+          List<Experience>.from(_experiences);
       if (_selectedFolloweeIds.isNotEmpty) {
         for (final followeeId in _selectedFolloweeIds) {
           final List<Experience>? followeeExperiences =
@@ -6157,8 +6400,7 @@ class _MapScreenState extends State<MapScreen> {
       final Map<String, Experience> deduped = {
         for (final experience in workingExperiences) experience.id: experience
       };
-      final filteredExperiences =
-          _filterExperiences(deduped.values.toList());
+      final filteredExperiences = _filterExperiences(deduped.values.toList());
 
       print(
           "🗺️ MAP SCREEN: Filtered ${deduped.length} experiences down to ${filteredExperiences.length}");
@@ -6176,7 +6418,8 @@ class _MapScreenState extends State<MapScreen> {
       _mapController ??= await _mapControllerCompleter.future;
       final bounds = _calculateBoundsFromMarkers(_markers);
       if (bounds != null && _mapController != null) {
-        _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
+        _mapController!
+            .animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
       }
     } catch (e, stackTrace) {
       print("🗺️ MAP SCREEN: Error applying filters: $e");
@@ -6213,9 +6456,8 @@ class _MapScreenState extends State<MapScreen> {
 
       final String? ownerId = experience.createdBy;
       final String? currentUserId = _authService.currentUser?.uid;
-      final bool isFolloweeExperience = ownerId != null &&
-          ownerId.isNotEmpty &&
-          ownerId != currentUserId;
+      final bool isFolloweeExperience =
+          ownerId != null && ownerId.isNotEmpty && ownerId != currentUserId;
 
       UserCategory? resolvedCategory;
       final String? categoryId = experience.categoryId;
@@ -6232,12 +6474,11 @@ class _MapScreenState extends State<MapScreen> {
         }
       }
       if (isFolloweeExperience &&
-          !_canAccessFolloweeCategory(ownerId!, categoryId)) {
+          !_canAccessFolloweeCategory(ownerId, categoryId)) {
         resolvedCategory = null;
       }
 
-      final String iconText =
-          _getCategoryIconForExperience(experience) ?? '❓';
+      final String iconText = _getCategoryIconForExperience(experience) ?? '❓';
 
       // Find the corresponding color category *based on the experience's property*
       ColorCategory? colorCategory;
@@ -6274,7 +6515,7 @@ class _MapScreenState extends State<MapScreen> {
           experienceColorCategoryId != null &&
           experienceColorCategoryId.isNotEmpty &&
           !_canAccessFolloweeColorCategory(
-              ownerId!, experienceColorCategoryId)) {
+              ownerId, experienceColorCategoryId)) {
         canUseColor = false;
         colorCategory = null;
       }
@@ -6298,11 +6539,13 @@ class _MapScreenState extends State<MapScreen> {
       final int? addToEventIndex = _isAddToEventModeActive
           ? _getAddToEventDraftIndexForExperience(experience)
           : null;
-      final bool isSelectedInDraft = selectModeIndex != null || addToEventIndex != null;
+      final bool isSelectedInDraft =
+          selectModeIndex != null || addToEventIndex != null;
       final int? selectedIndex = selectModeIndex ?? addToEventIndex;
-      final Color selectionColor = _isAddToEventModeActive && _activeEventViewMode != null
-          ? _getEventColor(_activeEventViewMode!)
-          : _selectModeColor;
+      final Color selectionColor =
+          _isAddToEventModeActive && _activeEventViewMode != null
+              ? _getEventColor(_activeEventViewMode!)
+              : _selectModeColor;
       final int regularMarkerSizeKey = _markerSizeForPlatform(70);
 
       BitmapDescriptor categoryIconBitmap =
@@ -6321,7 +6564,8 @@ class _MapScreenState extends State<MapScreen> {
           print(
               "🗺️ MAP SCREEN: Failed to generate numbered icon for selected experience: $e");
           // Fall back to regular icon generation
-          final String cacheKey = '${iconText}_${markerBackgroundColor.value}_$regularMarkerSizeKey';
+          final String cacheKey =
+              '${iconText}_${markerBackgroundColor.value}_$regularMarkerSizeKey';
           if (_categoryIconCache.containsKey(cacheKey)) {
             categoryIconBitmap = _categoryIconCache[cacheKey]!;
           } else {
@@ -6336,7 +6580,8 @@ class _MapScreenState extends State<MapScreen> {
       } else {
         // Regular marker generation
         // Generate a unique cache key including the color and the *icon*
-        final String cacheKey = '${iconText}_${markerBackgroundColor.value}_$regularMarkerSizeKey';
+        final String cacheKey =
+            '${iconText}_${markerBackgroundColor.value}_$regularMarkerSizeKey';
 
         // Use cache or generate new icon
         if (_categoryIconCache.containsKey(cacheKey)) {
@@ -6353,7 +6598,8 @@ class _MapScreenState extends State<MapScreen> {
               backgroundColor: markerBackgroundColor,
               size: 70, // Base size; scaled inside helper
             );
-            _categoryIconCache[cacheKey] = categoryIconBitmap; // Cache the result
+            _categoryIconCache[cacheKey] =
+                categoryIconBitmap; // Cache the result
           } catch (e) {
             print(
                 "🗺️ MAP SCREEN: Failed to generate bitmap for icon '$cacheKey': $e");
@@ -6381,8 +6627,9 @@ class _MapScreenState extends State<MapScreen> {
         onTap: () async {
           _triggerHeavyHaptic();
           FocusScope.of(context).unfocus(); // Unfocus search bar
-          print("🗺️ MAP SCREEN: Experience marker tapped for '${experience.name}'. Showing location details panel.");
-          
+          print(
+              "🗺️ MAP SCREEN: Experience marker tapped for '${experience.name}'. Showing location details panel.");
+
           // --- REGENERATING ICON FOR SELECTED STATE ---
           final Color selectedMarkerBackgroundColor = markerBackgroundColor;
 
@@ -6392,15 +6639,14 @@ class _MapScreenState extends State<MapScreen> {
           final int animationToken = ++_markerAnimationToken;
           const int finalSize = 100;
           final int startSize = _markerStartSize(finalSize);
-          final Future<BitmapDescriptor> Function(int) iconBuilder =
-              (int size) {
+          Future<BitmapDescriptor> iconBuilder(int size) {
             return _bitmapDescriptorFromText(
               selectedIconText,
               backgroundColor: selectedMarkerBackgroundColor,
               size: size, // 125% of 70
               backgroundOpacity: 1.0, // Fully opaque
             );
-          };
+          }
           // --- END ICON REGENERATION ---
 
           if (!mounted || animationToken != _markerAnimationToken) {
@@ -6411,14 +6657,16 @@ class _MapScreenState extends State<MapScreen> {
             _tappedLocationDetails = experience.location;
             _tappedLocationMarker = null;
             _tappedExperience = experience; // Set associated experience
-            _tappedExperienceCategory = resolvedCategory; // Set associated category
+            _tappedExperienceCategory =
+                resolvedCategory; // Set associated category
             _tappedLocationBusinessStatus = null; // Set business status
             _tappedLocationOpenNow = null; // Set open-now status
             _searchController.clear();
             _searchResults = [];
             _showSearchResults = false;
           });
-          unawaited(_refreshBusinessStatus(experience.location.placeId, animationToken));
+          unawaited(_refreshBusinessStatus(
+              experience.location.placeId, animationToken));
           if (!mounted || animationToken != _markerAnimationToken) {
             return;
           }
@@ -6499,8 +6747,7 @@ class _MapScreenState extends State<MapScreen> {
         final detailsMap = await _mapsService
             .fetchPlaceDetailsData(finalLocationDetails.placeId!);
         businessStatus = detailsMap?['businessStatus'] as String?;
-        openNow =
-            (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
       }
     } catch (e) {
       print("🗺️ MAP SCREEN: Failed to fetch business status: $e");
@@ -6515,7 +6762,8 @@ class _MapScreenState extends State<MapScreen> {
     if (_mapController != null) {
       currentMapController = _mapController!;
     } else {
-      print("🗺️ MAP SCREEN: Awaiting map controller before selecting location.");
+      print(
+          "🗺️ MAP SCREEN: Awaiting map controller before selecting location.");
       currentMapController = await _mapControllerCompleter.future;
       print("🗺️ MAP SCREEN: Map controller ready for selection.");
       _mapController = currentMapController;
@@ -6561,35 +6809,39 @@ class _MapScreenState extends State<MapScreen> {
     print(
         "🗺️ MAP SCREEN: Location selected via widget callback: ${locationDetails.displayName}");
 
-    print("🗺️ MAP SCREEN: (_handleLocationSelected) Removing search listener before clearing text");
+    print(
+        "🗺️ MAP SCREEN: (_handleLocationSelected) Removing search listener before clearing text");
     _searchController.removeListener(_onSearchChanged);
-    print("🗺️ MAP SCREEN: (_handleLocationSelected) Listener removed. Clearing text next.");
+    print(
+        "🗺️ MAP SCREEN: (_handleLocationSelected) Listener removed. Clearing text next.");
 
     // Clear the search text. If listener was still active, this would trigger _onSearchChanged.
-    _searchController.clear(); 
+    _searchController.clear();
     print("🗺️ MAP SCREEN: (_handleLocationSelected) Text cleared.");
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Re-adding search listener.");
+        print(
+            "🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Re-adding search listener.");
         _searchController.addListener(_onSearchChanged);
-        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Search listener re-added.");
+        print(
+            "🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Search listener re-added.");
       } else {
-        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) NOT RUNNING because !mounted.");
+        print(
+            "🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) NOT RUNNING because !mounted.");
       }
     });
 
-    _isProgrammaticTextUpdate = false; 
+    _isProgrammaticTextUpdate = false;
 
     // Show loading immediately for this operation
-    if(mounted){
+    if (mounted) {
       setState(() {
-        _isLoading = true; 
+        _isLoading = true;
         _searchResults = [];
         _showSearchResults = false;
       });
     }
-    
 
     try {
       await _selectLocationOnMap(locationDetails);
@@ -6695,9 +6947,9 @@ class _MapScreenState extends State<MapScreen> {
   // --- ADDED: Share selected experience ---
   Future<void> _shareSelectedExperience() async {
     if (!mounted || _tappedExperience == null) return;
-    
+
     final Experience experience = _tappedExperience!;
-    
+
     await showShareExperienceBottomSheet(
       context: context,
       onDirectShare: () => _directShareExperience(experience),
@@ -6793,16 +7045,16 @@ class _MapScreenState extends State<MapScreen> {
       final experienceName = experience.name.toLowerCase();
       final locationName = experience.location.displayName?.toLowerCase() ?? '';
       final locationAddress = experience.location.address?.toLowerCase() ?? '';
-      
+
       // Check if query matches experience name, location name, or address
-      if (experienceName.contains(queryLower) || 
-          locationName.contains(queryLower) || 
+      if (experienceName.contains(queryLower) ||
+          locationName.contains(queryLower) ||
           locationAddress.contains(queryLower)) {
-        
         // Find the category for display
         final category = _categories.firstWhere(
           (cat) => cat.id == experience.categoryId,
-          orElse: () => UserCategory(id: '', name: 'Uncategorized', icon: '❓', ownerUserId: ''),
+          orElse: () => UserCategory(
+              id: '', name: 'Uncategorized', icon: '❓', ownerUserId: ''),
         );
 
         matchingExperiences.add({
@@ -6827,25 +7079,30 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _searchPlaces(String query) async {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () async {
-      print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Query: '$query', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
+      print(
+          "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Query: '$query', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
 
       if (_isProgrammaticTextUpdate) {
         // This path should ideally not be taken if _selectSearchResult resets the flag.
         // If it is taken, it means a search was triggered while the flag was still true.
-        print("🗺️ MAP SCREEN: (_searchPlaces) Safeguard: Detected _isProgrammaticTextUpdate = true. Suppressing search and resetting flag.");
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces) Safeguard: Detected _isProgrammaticTextUpdate = true. Suppressing search and resetting flag.");
         if (mounted) {
           setState(() {
-            _isSearching = false; // Ensure _isSearching is false if this path is taken.
+            _isSearching =
+                false; // Ensure _isSearching is false if this path is taken.
             _showSearchResults = false; // Ensure results list is hidden
           });
         }
         _isProgrammaticTextUpdate = false; // Reset immediately.
-        print("🗺️ MAP SCREEN: (_searchPlaces) Reset _isProgrammaticTextUpdate directly inside safeguard.");
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces) Reset _isProgrammaticTextUpdate directly inside safeguard.");
         return;
       }
 
       if (query.isEmpty) {
-        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Query is empty. Clearing results.");
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Query is empty. Clearing results.");
         if (mounted) {
           setState(() {
             _searchResults = [];
@@ -6871,13 +7128,15 @@ class _MapScreenState extends State<MapScreen> {
       try {
         // MODIFIED: First search user's experiences
         final experienceResults = _searchUserExperiences(query);
-        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Found ${experienceResults.length} matching user experiences for query: '$query'");
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Found ${experienceResults.length} matching user experiences for query: '$query'");
 
         // Then search Google Maps
-        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Calling _mapsService.searchPlaces for query: '$query'");
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Calling _mapsService.searchPlaces for query: '$query'");
         final mapsResults = await _mapsService.searchPlaces(query);
-        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Received ${mapsResults.length} results from _mapsService for query: '$query'");
-        
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Received ${mapsResults.length} results from _mapsService for query: '$query'");
 
         // Mark Google Maps results as type 'place'
         final markedMapsResults = mapsResults.map((result) {
@@ -6894,7 +7153,7 @@ class _MapScreenState extends State<MapScreen> {
         if (_mapController != null) {
           try {
             if (mounted) {
-                 mapCenter = await _mapController!.getLatLng(ScreenCoordinate(
+              mapCenter = await _mapController!.getLatLng(ScreenCoordinate(
                   x: MediaQuery.of(context).size.width ~/ 2,
                   y: MediaQuery.of(context).size.height ~/ 2));
             }
@@ -6904,8 +7163,10 @@ class _MapScreenState extends State<MapScreen> {
         }
 
         allResults.sort((a, b) {
-          final String nameA = (a['description'] ?? '').toString().toLowerCase();
-          final String nameB = (b['description'] ?? '').toString().toLowerCase();
+          final String nameA =
+              (a['description'] ?? '').toString().toLowerCase();
+          final String nameB =
+              (b['description'] ?? '').toString().toLowerCase();
           final String queryLower = query.toLowerCase();
 
           // Prioritize user experiences over Google Maps results
@@ -6918,13 +7179,17 @@ class _MapScreenState extends State<MapScreen> {
           // Simplified scoring from LocationPickerScreen (no businessNameHint)
           int getScore(String name, String currentQuery) {
             int score = 0;
-            if (name == currentQuery) { // Exact match
+            if (name == currentQuery) {
+              // Exact match
               score += 5000;
-            } else if (name.startsWith(currentQuery)) { // Starts with
+            } else if (name.startsWith(currentQuery)) {
+              // Starts with
               score += 2000;
-            } else if (name.contains(currentQuery)) { // Contains
+            } else if (name.contains(currentQuery)) {
+              // Contains
               score += 1000;
-            } else if (currentQuery.contains(name) && name.length > 3){ // Query contains name
+            } else if (currentQuery.contains(name) && name.length > 3) {
+              // Query contains name
               score += 500;
             }
             return score;
@@ -6945,7 +7210,11 @@ class _MapScreenState extends State<MapScreen> {
           final double? latB = b['latitude'];
           final double? lngB = b['longitude'];
 
-          if (mapCenter != null && latA != null && lngA != null && latB != null && lngB != null) {
+          if (mapCenter != null &&
+              latA != null &&
+              lngA != null &&
+              latB != null &&
+              lngB != null) {
             final distanceA = _calculateDistance(
                 mapCenter.latitude, mapCenter.longitude, latA, lngA);
             final distanceB = _calculateDistance(
@@ -6960,7 +7229,8 @@ class _MapScreenState extends State<MapScreen> {
             _searchResults = allResults;
             _showSearchResults = allResults.isNotEmpty;
             _isSearching = false;
-            print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length} (${experienceResults.length} experiences + ${mapsResults.length} places)");
+            print(
+                "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length} (${experienceResults.length} experiences + ${mapsResults.length} places)");
           });
         }
       } catch (e) {
@@ -6978,23 +7248,27 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _selectSearchResult(Map<String, dynamic> result) async {
-    _debounce?.cancel(); 
-    FocusScope.of(context).unfocus(); 
+    _debounce?.cancel();
+    FocusScope.of(context).unfocus();
 
-    _isProgrammaticTextUpdate = true; 
-    print("🗺️ MAP SCREEN: (_selectSearchResult) Set _isProgrammaticTextUpdate = true");
+    _isProgrammaticTextUpdate = true;
+    print(
+        "🗺️ MAP SCREEN: (_selectSearchResult) Set _isProgrammaticTextUpdate = true");
 
-    print("🗺️ MAP SCREEN: (_selectSearchResult) Removing search listener before setting text");
+    print(
+        "🗺️ MAP SCREEN: (_selectSearchResult) Removing search listener before setting text");
     _searchController.removeListener(_onSearchChanged);
     print("🗺️ MAP SCREEN: (_selectSearchResult) Listener removed.");
 
     // Check if this is a user's saved experience
     if (result['type'] == 'experience') {
-      print("🗺️ MAP SCREEN: (_selectSearchResult) Selected result is a saved experience. Showing location details panel.");
-      
+      print(
+          "🗺️ MAP SCREEN: (_selectSearchResult) Selected result is a saved experience. Showing location details panel.");
+
       final Experience experience = result['experience'];
       final UserCategory category = result['category'];
-      final LatLng targetLatLng = LatLng(experience.location.latitude, experience.location.longitude);
+      final LatLng targetLatLng =
+          LatLng(experience.location.latitude, experience.location.longitude);
 
       // Animate camera to the experience location
       if (_mapController != null) {
@@ -7012,35 +7286,37 @@ class _MapScreenState extends State<MapScreen> {
       Color markerBackgroundColor = Colors.grey;
       try {
         if (experience.colorCategoryId != null) {
-          final colorCategory = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          final colorCategory = _colorCategories
+              .firstWhere((cc) => cc.id == experience.colorCategoryId);
           markerBackgroundColor = _parseColor(colorCategory.colorHex);
         }
-      } catch (e) { /* Use default grey color */ }
+      } catch (e) {/* Use default grey color */}
 
-      final String selectedIconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
+      final String selectedIconText = (experience.categoryIconDenorm != null &&
+              experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
-        : '*';
+          : '*';
       final tappedMarkerId = MarkerId('selected_experience_location');
       final int animationToken = ++_markerAnimationToken;
       const int finalSize = 88;
       final int startSize = _markerStartSize(finalSize);
-      final Future<BitmapDescriptor> Function(int) iconBuilder =
-          (int size) {
+      Future<BitmapDescriptor> iconBuilder(int size) {
         return _bitmapDescriptorFromText(
           selectedIconText,
           backgroundColor: markerBackgroundColor,
           size: size, // 125% of 70
           backgroundOpacity: 1.0, // Fully opaque
         );
-      };
+      }
       // --- END ICON REGENERATION ---
 
       // Set search text to experience name
       _searchController.text = experience.name;
-      
+
       // Reset the flag immediately after the programmatic text update
       _isProgrammaticTextUpdate = false;
-      print("🗺️ MAP SCREEN: (_selectSearchResult) Reset _isProgrammaticTextUpdate = false for experience.");
+      print(
+          "🗺️ MAP SCREEN: (_selectSearchResult) Reset _isProgrammaticTextUpdate = false for experience.");
 
       if (mounted) {
         setState(() {
@@ -7048,7 +7324,8 @@ class _MapScreenState extends State<MapScreen> {
           _tappedLocationDetails = experience.location;
           _tappedLocationMarker = null;
           _tappedExperience = experience; // ADDED: Set associated experience
-          _tappedExperienceCategory = category; // ADDED: Set associated category
+          _tappedExperienceCategory =
+              category; // ADDED: Set associated category
           _tappedLocationBusinessStatus = null; // ADDED: Set business status
           _tappedLocationOpenNow = null; // ADDED: Set open-now status
           _isSearching = false;
@@ -7095,12 +7372,12 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     // Handle Google Maps places (original logic)
-    final placeId = result['placeId']; 
+    final placeId = result['placeId'];
 
     // Show loading indicator immediately for this specific operation
     if (mounted) {
       setState(() {
-        _isSearching = true; 
+        _isSearching = true;
       });
     }
 
@@ -7121,17 +7398,19 @@ class _MapScreenState extends State<MapScreen> {
 
       // Animate camera BEFORE setState that updates markers/details
       if (_mapController != null) {
-        print("🗺️ MAP SCREEN: (_selectSearchResult) Animating BEFORE setState to $targetLatLng");
+        print(
+            "🗺️ MAP SCREEN: (_selectSearchResult) Animating BEFORE setState to $targetLatLng");
         _mapController!.animateCamera(
           CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
         );
       } else {
-        print("🗺️ MAP SCREEN: (_selectSearchResult) _mapController is NULL before animation. Animation might be delayed or rely on initial setup.");
+        print(
+            "🗺️ MAP SCREEN: (_selectSearchResult) _mapController is NULL before animation. Animation might be delayed or rely on initial setup.");
         // If controller is null here, it's unexpected as map should be ready for user interaction.
         // Awaiting the completer here could introduce a delay if map isn't ready,
         // but it's a fallback.
         final GoogleMapController c = await _mapControllerCompleter.future;
-         c.animateCamera(
+        c.animateCamera(
           CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
         );
       }
@@ -7139,37 +7418,45 @@ class _MapScreenState extends State<MapScreen> {
       final tappedMarkerId = MarkerId('selected_location');
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
-        position: targetLatLng, 
+        position: targetLatLng,
         infoWindow: _infoWindowForPlatform(location.getPlaceName()),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
         zIndex: 1.0,
       );
 
-      print('🗺️ MAP SCREEN: (_selectSearchResult) Before setting text, location is: ${location.getPlaceName()}');
-      _searchController.text = location.displayName ?? location.address ?? 'Selected Location';
-      
+      print(
+          '🗺️ MAP SCREEN: (_selectSearchResult) Before setting text, location is: ${location.getPlaceName()}');
+      _searchController.text =
+          location.displayName ?? location.address ?? 'Selected Location';
+
       // Reset the flag immediately after the programmatic text update & before listener is re-added.
       _isProgrammaticTextUpdate = false;
-      print("🗺️ MAP SCREEN: (_selectSearchResult) Reset _isProgrammaticTextUpdate = false (IMMEDIATELY after text set).");
+      print(
+          "🗺️ MAP SCREEN: (_selectSearchResult) Reset _isProgrammaticTextUpdate = false (IMMEDIATELY after text set).");
 
       if (mounted) {
-        print('🗺️ MAP SCREEN: (_selectSearchResult) Setting state with new location details and map initial location.');
+        print(
+            '🗺️ MAP SCREEN: (_selectSearchResult) Setting state with new location details and map initial location.');
         setState(() {
-          _mapWidgetInitialLocation = location; // Update map widget's initial location
+          _mapWidgetInitialLocation =
+              location; // Update map widget's initial location
           _tappedLocationDetails = location;
           _tappedLocationMarker = tappedMarker;
-          _tappedExperience = null; // ADDED: Clear associated experience for Google Maps places
-          _tappedExperienceCategory = null; // ADDED: Clear associated category for Google Maps places
-          _tappedLocationBusinessStatus = businessStatus; // ADDED: Set business status
+          _tappedExperience =
+              null; // ADDED: Clear associated experience for Google Maps places
+          _tappedExperienceCategory =
+              null; // ADDED: Clear associated category for Google Maps places
+          _tappedLocationBusinessStatus =
+              businessStatus; // ADDED: Set business status
           _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
-          _isSearching = false; 
-          _showSearchResults = false; 
+          _isSearching = false;
+          _showSearchResults = false;
         });
-        print('🗺️ MAP SCREEN: (_selectSearchResult) After setState, _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()} and _mapWidgetInitialLocation is: ${_mapWidgetInitialLocation?.getPlaceName()}');
+        print(
+            '🗺️ MAP SCREEN: (_selectSearchResult) After setState, _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()} and _mapWidgetInitialLocation is: ${_mapWidgetInitialLocation?.getPlaceName()}');
         _maybeAttachSavedOrPublicExperience(location);
         _showMarkerInfoWindow(tappedMarkerId);
       }
-
     } catch (e) {
       print('🗺️ MAP SCREEN: Error selecting search result: $e');
       if (mounted) {
@@ -7185,15 +7472,19 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) { // Check mounted again inside callback
-          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Re-adding search listener.");
+        if (mounted) {
+          // Check mounted again inside callback
+          print(
+              "🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Re-adding search listener.");
           // The flag should already be false here.
           // print("🗺️ MAP SCREEN: (_selectSearchResult) State of _isProgrammaticTextUpdate in post-frame: $_isProgrammaticTextUpdate");
 
           _searchController.addListener(_onSearchChanged);
-          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Search listener re-added.");
+          print(
+              "🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Search listener re-added.");
         } else {
-          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) NOT RUNNING because !mounted.");
+          print(
+              "🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) NOT RUNNING because !mounted.");
         }
       });
     }
@@ -7202,7 +7493,8 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Separate method for onChanged to easily add/remove listener
   void _onSearchChanged() {
-    print("🗺️ MAP SCREEN: (_onSearchChanged) Text: '${_searchController.text}', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
+    print(
+        "🗺️ MAP SCREEN: (_onSearchChanged) Text: '${_searchController.text}', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
     _searchPlaces(_searchController.text);
   }
 
@@ -7256,11 +7548,13 @@ class _MapScreenState extends State<MapScreen> {
   Widget _buildOtherCategoriesWidget() {
     if (_tappedExperience == null ||
         _tappedExperience!.otherCategories.isEmpty) {
-      return const SizedBox.shrink(); // Return empty space if no other categories
+      return const SizedBox
+          .shrink(); // Return empty space if no other categories
     }
 
     if (!_canDisplayFolloweeMetadata(_tappedExperience!)) {
-      return const SizedBox.shrink(); // Return empty space if no other categories
+      return const SizedBox
+          .shrink(); // Return empty space if no other categories
     }
 
     // Get the full UserCategory objects from the IDs
@@ -7318,11 +7612,11 @@ class _MapScreenState extends State<MapScreen> {
     ColorCategory? primaryColorCategory =
         _getAccessibleColorCategory(ownerId, experience.colorCategoryId);
 
-    final List<ColorCategory> otherColorCategories =
-        experience.otherColorCategoryIds
-            .map((id) => _getAccessibleColorCategory(ownerId, id))
-            .whereType<ColorCategory>()
-            .toList();
+    final List<ColorCategory> otherColorCategories = experience
+        .otherColorCategoryIds
+        .map((id) => _getAccessibleColorCategory(ownerId, id))
+        .whereType<ColorCategory>()
+        .toList();
 
     if (primaryColorCategory == null && otherColorCategories.isEmpty) {
       return const SizedBox.shrink();
@@ -7428,9 +7722,8 @@ class _MapScreenState extends State<MapScreen> {
     final int tappedExperienceMediaCount = _tappedExperience != null
         ? _getMediaCountForExperience(_tappedExperience!)
         : 0;
-    final int publicExperienceMediaCount = hasPublicFallback
-        ? _publicPreviewMediaItems?.length ?? 0
-        : 0;
+    final int publicExperienceMediaCount =
+        hasPublicFallback ? _publicPreviewMediaItems?.length ?? 0 : 0;
     final int selectedMediaCount = _tappedExperience != null
         ? tappedExperienceMediaCount
         : publicExperienceMediaCount;
@@ -7503,9 +7796,10 @@ class _MapScreenState extends State<MapScreen> {
     // so it can be replaced by the styled _tappedLocationMarker.
     if (_tappedExperience != null) {
       allMarkers.remove(_tappedExperience!.id);
-      print("🗺️ MAP SCREEN: Hiding original marker for '${_tappedExperience!.name}' to show selected marker.");
+      print(
+          "🗺️ MAP SCREEN: Hiding original marker for '${_tappedExperience!.name}' to show selected marker.");
     }
-    
+
     if (_tappedLocationMarker != null) {
       allMarkers[_tappedLocationMarker!.markerId.value] =
           _tappedLocationMarker!;
@@ -7517,8 +7811,10 @@ class _MapScreenState extends State<MapScreen> {
     print(
         "🗺️ MAP SCREEN: Total markers being sent to widget: ${allMarkers.length}");
 
-    print("🗺️ MAP SCREEN: (build) _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()}");
-    print("🗺️ MAP SCREEN: (build) Condition for BottomNav/Details Panel is: ${_tappedLocationDetails != null}");
+    print(
+        "🗺️ MAP SCREEN: (build) _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()}");
+    print(
+        "🗺️ MAP SCREEN: (build) Condition for BottomNav/Details Panel is: ${_tappedLocationDetails != null}");
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -7528,13 +7824,16 @@ class _MapScreenState extends State<MapScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
         titleSpacing: 0,
-        leading: (_isEventViewModeActive || _isAddToEventModeActive) && widget.initialEvent != null
+        leading: (_isEventViewModeActive || _isAddToEventModeActive) &&
+                widget.initialEvent != null
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () async {
                   _triggerHeavyHaptic();
                   // If in add-to-event mode with changes, return the updated event
-                  if (_isAddToEventModeActive && _addToEventDraftItinerary.isNotEmpty && _activeEventViewMode != null) {
+                  if (_isAddToEventModeActive &&
+                      _addToEventDraftItinerary.isNotEmpty &&
+                      _activeEventViewMode != null) {
                     final updatedEvent = _activeEventViewMode!.copyWith(
                       experiences: [
                         ..._activeEventViewMode!.experiences,
@@ -7571,10 +7870,10 @@ class _MapScreenState extends State<MapScreen> {
                 child: child,
               ),
               child: ((_isLoading ||
-                      _isSharedLoading ||
-                      _isGlobeLoading ||
-                      _isCalendarDialogLoading) &&
-                  !_isSearching)
+                          _isSharedLoading ||
+                          _isGlobeLoading ||
+                          _isCalendarDialogLoading) &&
+                      !_isSearching)
                   ? SizedBox(
                       key: const ValueKey('appbar_spinner'),
                       width: 18,
@@ -7655,10 +7954,14 @@ class _MapScreenState extends State<MapScreen> {
                   setState(() {
                     _tappedLocationMarker = null;
                     _tappedLocationDetails = null;
-                    _tappedExperience = null; // ADDED: Clear associated experience
-                    _tappedExperienceCategory = null; // ADDED: Clear associated category
-                    _tappedLocationBusinessStatus = null; // ADDED: Clear business status
-                    _tappedLocationOpenNow = null; // ADDED: Clear open-now status
+                    _tappedExperience =
+                        null; // ADDED: Clear associated experience
+                    _tappedExperienceCategory =
+                        null; // ADDED: Clear associated category
+                    _tappedLocationBusinessStatus =
+                        null; // ADDED: Clear business status
+                    _tappedLocationOpenNow =
+                        null; // ADDED: Clear open-now status
                     _searchController.clear();
                     _searchResults = [];
                     _showSearchResults = false;
@@ -7684,68 +7987,72 @@ class _MapScreenState extends State<MapScreen> {
                     borderRadius: BorderRadius.circular(25.0),
                   ),
                   child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: TextField(
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    decoration: InputDecoration(
-                      hintText: 'Search for a place or address',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(25.0),
-                        borderSide: BorderSide.none,
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: TextField(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      decoration: InputDecoration(
+                        hintText: 'Search for a place or address',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(25.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(25.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(25.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: AppColors.backgroundColorDark,
+                        prefixIcon: Icon(Icons.search,
+                            color: Theme.of(context).primaryColor),
+                        suffixIcon:
+                            _isSearching // Show loading indicator in search bar
+                                ? SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4.0),
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    ),
+                                  )
+                                : _searchController.text.isNotEmpty
+                                    ? IconButton(
+                                        icon: Icon(Icons.clear),
+                                        onPressed: () {
+                                          _triggerHeavyHaptic();
+                                          setState(() {
+                                            _searchController.clear();
+                                            _searchResults = [];
+                                            _showSearchResults = false;
+                                            // Clear tapped location when search is cleared
+                                            _tappedLocationDetails = null;
+                                            _tappedLocationMarker = null;
+                                            _tappedExperience = null;
+                                            _tappedExperienceCategory = null;
+                                            _tappedLocationBusinessStatus =
+                                                null;
+                                            _tappedLocationOpenNow = null;
+                                          });
+                                        },
+                                      )
+                                    : null,
                       ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(25.0),
-                        borderSide: BorderSide.none,
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(25.0),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: AppColors.backgroundColorDark,
-                      prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
-                      suffixIcon: _isSearching // Show loading indicator in search bar
-                          ? SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          : _searchController.text.isNotEmpty
-                              ? IconButton(
-                                  icon: Icon(Icons.clear),
-                                  onPressed: () {
-                                    _triggerHeavyHaptic();
-                                    setState(() {
-                                      _searchController.clear();
-                                      _searchResults = [];
-                                      _showSearchResults = false;
-                                      // Clear tapped location when search is cleared
-                                      _tappedLocationDetails = null;
-                                      _tappedLocationMarker = null;
-                                      _tappedExperience = null;
-                                      _tappedExperienceCategory = null;
-                                      _tappedLocationBusinessStatus = null;
-                                      _tappedLocationOpenNow = null;
-                                    });
-                                  },
-                                )
-                              : null,
+                      onTap: () {
+                        _triggerHeavyHaptic();
+                        // When search bar is tapped, clear any existing map-tapped location
+                        // to avoid confusion if the user then selects from search results.
+                        // However, don't clear if a search result was *just* selected.
+                        // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
+                      },
                     ),
-                    onTap: () {
-                      _triggerHeavyHaptic();
-                      // When search bar is tapped, clear any existing map-tapped location
-                      // to avoid confusion if the user then selects from search results.
-                      // However, don't clear if a search result was *just* selected.
-                      // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
-                    },
                   ),
                 ),
               ),
-            ),
             ),
             // --- END Search bar ---
 
@@ -7755,8 +8062,10 @@ class _MapScreenState extends State<MapScreen> {
                 constraints: BoxConstraints(
                   // Adjust max height based on keyboard visibility
                   maxHeight: isKeyboardVisible
-                      ? MediaQuery.of(context).size.height * 0.35 // More space when keyboard is up
-                      : MediaQuery.of(context).size.height * 0.3, // Less space otherwise
+                      ? MediaQuery.of(context).size.height *
+                          0.35 // More space when keyboard is up
+                      : MediaQuery.of(context).size.height *
+                          0.3, // Less space otherwise
                 ),
                 margin: EdgeInsets.symmetric(horizontal: 8.0),
                 decoration: BoxDecoration(
@@ -7774,23 +8083,22 @@ class _MapScreenState extends State<MapScreen> {
                   shrinkWrap: true,
                   padding: EdgeInsets.symmetric(vertical: 8),
                   itemCount: _searchResults.length,
-                  separatorBuilder: (context, index) =>
-                      Divider(
-                        height: 1,
-                        indent: 56,
-                        endIndent: 16,
-                        color: AppColors.backgroundColorMid,
-                      ),
+                  separatorBuilder: (context, index) => Divider(
+                    height: 1,
+                    indent: 56,
+                    endIndent: 16,
+                    color: AppColors.backgroundColorMid,
+                  ),
                   itemBuilder: (context, index) {
                     final result = _searchResults[index];
-                    final bool isUserExperience = result['type'] == 'experience';
+                    final bool isUserExperience =
+                        result['type'] == 'experience';
                     final bool hasRating = result['rating'] != null;
                     final double rating =
                         hasRating ? (result['rating'] as double) : 0.0;
                     final String? address = result['address'] ??
                         (result['structured_formatting'] != null
-                            ? result['structured_formatting']
-                                ['secondary_text']
+                            ? result['structured_formatting']['secondary_text']
                             : null);
 
                     return Material(
@@ -7806,9 +8114,11 @@ class _MapScreenState extends State<MapScreen> {
                           child: ListTile(
                             tileColor: AppColors.backgroundColor,
                             leading: CircleAvatar(
-                              backgroundColor: isUserExperience 
-                                  ? Colors.green.withOpacity(0.1) 
-                                  : Theme.of(context).primaryColor.withOpacity(0.1),
+                              backgroundColor: isUserExperience
+                                  ? Colors.green.withOpacity(0.1)
+                                  : Theme.of(context)
+                                      .primaryColor
+                                      .withOpacity(0.1),
                               child: isUserExperience
                                   ? Icon(
                                       Icons.bookmark,
@@ -7828,11 +8138,13 @@ class _MapScreenState extends State<MapScreen> {
                               children: [
                                 if (isUserExperience) ...[
                                   Container(
-                                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(
                                       color: Colors.green.withOpacity(0.1),
                                       borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                      border: Border.all(
+                                          color: Colors.green.withOpacity(0.3)),
                                     ),
                                     child: Text(
                                       'Saved',
@@ -7866,8 +8178,7 @@ class _MapScreenState extends State<MapScreen> {
                                     child: Row(
                                       children: [
                                         Icon(Icons.location_on,
-                                            size: 14,
-                                            color: Colors.grey[600]),
+                                            size: 14, color: Colors.grey[600]),
                                         SizedBox(width: 4),
                                         Expanded(
                                           child: Text(
@@ -7900,8 +8211,7 @@ class _MapScreenState extends State<MapScreen> {
                                                   color: Colors.amber,
                                                 )),
                                         SizedBox(width: 4),
-                                        if (result['userRatingCount'] !=
-                                            null)
+                                        if (result['userRatingCount'] != null)
                                           Text(
                                             '(${result['userRatingCount']})',
                                             style: TextStyle(
@@ -7928,12 +8238,15 @@ class _MapScreenState extends State<MapScreen> {
               child: Stack(
                 children: [
                   GoogleMapsWidget(
-                    initialLocation: _mapWidgetInitialLocation, // Use the dynamic initial location
+                    initialLocation:
+                        _mapWidgetInitialLocation, // Use the dynamic initial location
                     showUserLocation: true,
                     allowSelection: true,
                     onLocationSelected: _handleLocationSelected,
                     showControls: true,
-                    mapToolbarEnabled: !_canOpenSelectedExperience && !_isEventViewModeActive && !_isAddToEventModeActive,
+                    mapToolbarEnabled: !_canOpenSelectedExperience &&
+                        !_isEventViewModeActive &&
+                        !_isAddToEventModeActive,
                     additionalMarkers: allMarkers,
                     onMapControllerCreated: _onMapWidgetCreated,
                   ),
@@ -7959,7 +8272,8 @@ class _MapScreenState extends State<MapScreen> {
                             constraints: _isEventOverlayExpanded
                                 ? BoxConstraints(
                                     maxHeight:
-                                        MediaQuery.of(context).size.height * 0.6,
+                                        MediaQuery.of(context).size.height *
+                                            0.6,
                                   )
                                 : const BoxConstraints(),
                             decoration: BoxDecoration(
@@ -8000,11 +8314,10 @@ class _MapScreenState extends State<MapScreen> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Text(
-                                              _activeEventViewMode!.title
-                                                      .isEmpty
+                                              _activeEventViewMode!
+                                                      .title.isEmpty
                                                   ? 'Untitled Event'
-                                                  : _activeEventViewMode!
-                                                      .title,
+                                                  : _activeEventViewMode!.title,
                                               style: const TextStyle(
                                                 fontWeight: FontWeight.w600,
                                                 fontSize: 16,
@@ -8065,10 +8378,10 @@ class _MapScreenState extends State<MapScreen> {
                                                   color: _getEventColor(
                                                     _activeEventViewMode!,
                                                   ).withOpacity(
-                                                        _isEventOverlayExpanded
-                                                            ? 0.8
-                                                            : 0.6,
-                                                      ),
+                                                    _isEventOverlayExpanded
+                                                        ? 0.8
+                                                        : 0.6,
+                                                  ),
                                                   shape: BoxShape.circle,
                                                 ),
                                                 child: const Icon(
@@ -8083,8 +8396,7 @@ class _MapScreenState extends State<MapScreen> {
                                             right: -4,
                                             bottom: -4,
                                             child: Container(
-                                              padding:
-                                                  const EdgeInsets.all(4),
+                                              padding: const EdgeInsets.all(4),
                                               decoration: BoxDecoration(
                                                 color: _getEventColor(
                                                     _activeEventViewMode!),
@@ -8106,77 +8418,76 @@ class _MapScreenState extends State<MapScreen> {
                                       ),
                                       // Add experiences button (or finish button when in add mode)
                                       // Only show if user can edit the event
-                                      if (_canEditEvent(_activeEventViewMode!))
-                                        ...[
-                                          const SizedBox(width: 4),
-                                          Stack(
-                                            clipBehavior: Clip.none,
-                                            children: [
-                                              Material(
-                                                color: Colors.transparent,
-                                                child: InkWell(
-                                                  onTap: () {
-                                                    _triggerHeavyHaptic();
-                                                    if (_isAddToEventModeActive) {
-                                                      _finishAddToEvent();
-                                                    } else {
-                                                      _enterAddToEventMode();
-                                                    }
-                                                  },
-                                                  borderRadius:
-                                                      BorderRadius.circular(20),
-                                                  child: Container(
-                                                    padding:
-                                                        const EdgeInsets.all(8),
-                                                    decoration: BoxDecoration(
-                                                      color:
-                                                          _isAddToEventModeActive
-                                                              ? Colors.green
-                                                              : Theme.of(
-                                                                      context)
-                                                                  .primaryColor,
-                                                      shape: BoxShape.circle,
-                                                    ),
-                                                    child: Icon(
-                                                      _isAddToEventModeActive
-                                                          ? Icons.check
-                                                          : Icons.add,
-                                                      size: 20,
+                                      if (_canEditEvent(
+                                          _activeEventViewMode!)) ...[
+                                        const SizedBox(width: 4),
+                                        Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            Material(
+                                              color: Colors.transparent,
+                                              child: InkWell(
+                                                onTap: () {
+                                                  _triggerHeavyHaptic();
+                                                  if (_isAddToEventModeActive) {
+                                                    _finishAddToEvent();
+                                                  } else {
+                                                    _enterAddToEventMode();
+                                                  }
+                                                },
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.all(8),
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        _isAddToEventModeActive
+                                                            ? Colors.green
+                                                            : Theme.of(context)
+                                                                .primaryColor,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: Icon(
+                                                    _isAddToEventModeActive
+                                                        ? Icons.check
+                                                        : Icons.add,
+                                                    size: 20,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            if (_isAddToEventModeActive)
+                                              Positioned(
+                                                right: -4,
+                                                bottom: -4,
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.all(4),
+                                                  decoration: BoxDecoration(
+                                                    color: _addToEventDraftItinerary
+                                                            .isNotEmpty
+                                                        ? Colors.red
+                                                        : _getEventColor(
+                                                            _activeEventViewMode!),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: Text(
+                                                    '${_addToEventDraftItinerary.length}',
+                                                    style: const TextStyle(
                                                       color: Colors.white,
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.bold,
                                                     ),
                                                   ),
                                                 ),
                                               ),
-                                              if (_isAddToEventModeActive)
-                                                Positioned(
-                                                  right: -4,
-                                                  bottom: -4,
-                                                  child: Container(
-                                                    padding:
-                                                        const EdgeInsets.all(4),
-                                                    decoration: BoxDecoration(
-                                                      color: _addToEventDraftItinerary
-                                                              .isNotEmpty
-                                                          ? Colors.red
-                                                          : _getEventColor(
-                                                              _activeEventViewMode!),
-                                                      shape: BoxShape.circle,
-                                                    ),
-                                                    child: Text(
-                                                      '${_addToEventDraftItinerary.length}',
-                                                      style: const TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 10,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                          const SizedBox(width: 4),
-                                        ],
+                                          ],
+                                        ),
+                                        const SizedBox(width: 4),
+                                      ],
                                       const SizedBox(width: 4),
                                       // Close button
                                       Material(
@@ -8228,7 +8539,8 @@ class _MapScreenState extends State<MapScreen> {
                         Container(
                           constraints: _isSelectModeOverlayExpanded
                               ? BoxConstraints(
-                                  maxHeight: MediaQuery.of(context).size.height * 0.6,
+                                  maxHeight:
+                                      MediaQuery.of(context).size.height * 0.6,
                                 )
                               : const BoxConstraints(),
                           decoration: BoxDecoration(
@@ -8245,676 +8557,941 @@ class _MapScreenState extends State<MapScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                            // Header row
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 4,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: _selectModeColor,
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Text(
-                                          'Select experiences',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _selectModeDraftItinerary.isEmpty
-                                              ? 'Tap locations to add them'
-                                              : '${_selectModeDraftItinerary.length} item${_selectModeDraftItinerary.length != 1 ? 's' : ''} selected',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Colors.grey[600],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  // List icon button
-                                  Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: () {
-                                            _triggerHeavyHaptic();
-                                            setState(() {
-                                              _isSelectModeOverlayExpanded = !_isSelectModeOverlayExpanded;
-                                            });
-                                          },
-                                          borderRadius: BorderRadius.circular(20),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: _selectModeColor.withOpacity(
-                                                _isSelectModeOverlayExpanded ? 0.8 : 0.6
-                                              ),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(
-                                              Icons.list,
-                                              size: 20,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      Positioned(
-                                        right: -4,
-                                        bottom: -4,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: _selectModeColor,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Text(
-                                            '${_selectModeDraftItinerary.length}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(width: 4),
-                                  // Checkmark button
-                                  Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: () {
-                                            _triggerHeavyHaptic();
-                                            _finishSelectModeAndOpenEditor();
-                                          },
-                                          borderRadius: BorderRadius.circular(20),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: Theme.of(context).primaryColor,
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(
-                                              Icons.check,
-                                              size: 20,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      Positioned(
-                                        right: -4,
-                                        bottom: -4,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: _selectModeDraftItinerary.isNotEmpty 
-                                                ? Colors.red 
-                                                : _selectModeColor,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Text(
-                                            '${_selectModeDraftItinerary.length}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(width: 4),
-                                  // Close button
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        _triggerHeavyHaptic();
-                                        _confirmExitSelectMode();
-                                      },
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey[100],
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.close,
-                                          size: 20,
-                                          color: Colors.black54,
-                                        ),
+                              // Header row
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 4,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        color: _selectModeColor,
+                                        borderRadius: BorderRadius.circular(2),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Expanded itinerary list
-                            if (_isSelectModeOverlayExpanded)
-                              const Divider(height: 1, thickness: 1),
-                            if (_isSelectModeOverlayExpanded)
-                              Flexible(
-                                child: _buildSelectModeItineraryList(),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-            // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 420),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) {
-                final offsetAnimation = Tween<Offset>(
-                  begin: const Offset(0, 0.35),
-                  end: Offset.zero,
-                ).animate(animation);
-                return SlideTransition(
-                  position: offsetAnimation,
-                  child: FadeTransition(opacity: animation, child: child),
-                );
-              },
-              child: (_tappedLocationDetails != null && !isKeyboardVisible)
-                  ? Align(
-                      key: ValueKey(
-                        _tappedExperience?.id ??
-                            _tappedLocationDetails?.placeId ??
-                            selectedTitle,
-                      ),
-                      alignment: Alignment.bottomCenter,
-                      child: _wrapWebPointerInterceptor(
-                        ConstrainedBox(
-                          constraints: kIsWeb
-                              ? const BoxConstraints(maxWidth: 480)
-                              : const BoxConstraints(),
-                          child: Container(
-                            padding: EdgeInsets.fromLTRB(
-                              16,
-                              16,
-                              16,
-                              2 + MediaQuery.of(context).padding.bottom / 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.backgroundColor,
-                              borderRadius: const BorderRadius.only(
-                                topLeft: Radius.circular(28),
-                                topRight: Radius.circular(28),
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 8,
-                                  offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
-                                ),
-                              ],
-                            ),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                // ADDED: Positioned "Tap to view" text at the very top
-                                if (showExperiencePrompt)
-                                  Positioned(
-                                    top: -12, // Move it further up, closer to the edge
-                                    left: 0,
-                                    right: 0,
-                                    child: Center(
-                                      child: Text(
-                                        'Tap to view experience details',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[500],
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                GestureDetector(
-                                  onTap: showExperiencePrompt
-                                      ? () {
-                                          _triggerHeavyHaptic();
-                                          _handleTappedLocationNavigation();
-                                        }
-                                      : null,
-                                  behavior: HitTestBehavior.translucent,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // ADDED: Add space at the top for the positioned text
-                                      if (showExperiencePrompt)
-                                        SizedBox(height: 12),
-                                      // Only show "Selected Location" for non-experience locations
-                                      if (!showExperiencePrompt) ...[
-                                        Text(
-                                          'Selected Location',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.normal,
-                                            fontSize: 14,
-                                            color: Colors.grey[800],
-                                          ),
-                                        ),
-                                        SizedBox(height: 12),
-                                      ],
-                                      Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Expanded(
-                                            child: Padding(
-                                              padding: const EdgeInsets.only(top: 4.0),
-                                              child: Row(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  if (selectedIcon != null && selectedIcon.isNotEmpty && selectedIcon != '*') ...[
-                                                    SizedBox(
-                                                      width: 24,
-                                                      child: Center(
-                                                        child: Text(
-                                                          selectedIcon,
-                                                          style: const TextStyle(
-                                                            fontSize: 16,
-                                                          ),
-                                                          textAlign: TextAlign.center,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 4),
-                                                  ],
-                                                  Expanded(
-                                                    child: Text(
-                                                      selectedName,
-                                                      style: const TextStyle(
-                                                        fontWeight: FontWeight.w500,
-                                                        fontSize: 16,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
+                                          const Text(
+                                            'Select experiences',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 16,
                                             ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              // Share button - only show when experience is selected
-                                              if (_tappedExperience != null) ...[
-                                                const SizedBox(width: 8),
-                                                IconButton(
-                                                  onPressed: () {
-                                                    _triggerHeavyHaptic();
-                                                    _shareSelectedExperience();
-                                                  },
-                                                  icon: const Icon(Icons.share_outlined, color: Colors.blue, size: 28),
-                                                  tooltip: 'Share',
-                                                  padding: EdgeInsets.zero,
-                                                  constraints: const BoxConstraints(),
-                                                  style: IconButton.styleFrom(
-                                                    minimumSize: Size.zero,
-                                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 12),
-                                              ],
-                                              IconButton(
-                                                onPressed: () {
-                                                  _triggerHeavyHaptic();
-                                                  if (_tappedLocationDetails != null) {
-                                                    _launchMapLocation(_tappedLocationDetails!);
-                                                  }
-                                                },
-                                                icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
-                                                tooltip: 'Open in map app',
-                                                padding: EdgeInsets.zero,
-                                                constraints: const BoxConstraints(),
-                                                style: IconButton.styleFrom(
-                                                  minimumSize: Size.zero,
-                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              IconButton(
-                                                onPressed: () {
-                                                  _triggerHeavyHaptic();
-                                                  if (_tappedLocationDetails != null) {
-                                                    _openDirectionsForLocation(_tappedLocationDetails!);
-                                                  }
-                                                },
-                                                icon: Icon(Icons.directions, color: Colors.blue, size: 28),
-                                                tooltip: 'Get Directions',
-                                                padding: EdgeInsets.zero,
-                                                constraints: const BoxConstraints(),
-                                                style: IconButton.styleFrom(
-                                                  minimumSize: Size.zero,
-                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              IconButton(
-                                                onPressed: () {
-                                                  _triggerHeavyHaptic();
-                                                  setState(() {
-                                                    _tappedLocationMarker = null;
-                                                    _tappedLocationDetails = null;
-                                                    _tappedExperience = null;
-                                                    _tappedExperienceCategory = null;
-                                                    _tappedLocationBusinessStatus = null;
-                                                    _tappedLocationOpenNow = null;
-                                                  });
-                                                },
-                                                icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
-                                                tooltip: 'Close',
-                                                padding: EdgeInsets.zero,
-                                                constraints: const BoxConstraints(),
-                                                style: IconButton.styleFrom(
-                                                  minimumSize: Size.zero,
-                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                ),
-                                              ),
-                                              if (kIsWeb) const SizedBox(width: 8),
-                                            ],
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            _selectModeDraftItinerary.isEmpty
+                                                ? 'Tap locations to add them'
+                                                : '${_selectModeDraftItinerary.length} item${_selectModeDraftItinerary.length != 1 ? 's' : ''} selected',
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: Colors.grey[600],
+                                            ),
                                           ),
                                         ],
                                       ),
-                              if (_tappedExperience != null) ...[
-                                if (_tappedExperience!.otherCategories.isNotEmpty) ...[
-                                  _buildOtherCategoriesWidget(),
-                                ],
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: _buildColorCategoryWidget(),
-                                ),
-                              ],
-                              const SizedBox(height: 0), // Removed top padding
-                              if (_tappedLocationDetails!.address != null &&
-                                  _tappedLocationDetails!.address!.isNotEmpty) ...[
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        _tappedLocationDetails!.address!,
-                                        style: TextStyle(color: Colors.grey[700]),
-                                      ),
-                                    ),
-                                    if (_tappedExperience != null || hasPublicFallback) ...[
-                                      const SizedBox(width: 12),
-                                      SizedBox(
-                                        width: 48,
-                                        height: 48,
-                                        child: OverflowBox(
-                                          minHeight: 48,
-                                          maxHeight: 48,
-                                          alignment: Alignment.center,
-                                          child: GestureDetector(
-                                            onTap: () {
-                                              _triggerHeavyHaptic();
-                                              _onPlayExperienceContent();
-                                            },
-                                            child: Opacity(
-                                              opacity: canPreviewContent ? 1.0 : 0.45,
-                                              child: Stack(
-                                                clipBehavior: Clip.none,
-                                                children: [
-                                                  Container(
-                                                    width: 48,
-                                                    height: 48,
-                                                    decoration: BoxDecoration(
-                                                      color: Theme.of(context).primaryColor,
-                                                      shape: BoxShape.circle,
-                                                    ),
-                                                    child: const Icon(
-                                                      Icons.play_arrow,
-                                                      color: Colors.white,
-                                                      size: 24,
-                                                    ),
-                                                  ),
-                                                  Positioned(
-                                                    bottom: -2,
-                                                    right: -2,
-                                                    child: Container(
-                                                      width: 22,
-                                                      height: 22,
-                                                      decoration: BoxDecoration(
-                                                        color: Colors.white,
-                                                        shape: BoxShape.circle,
-                                                        border: Border.all(
-                                                          color: Theme.of(context).primaryColor,
-                                                          width: 2,
-                                                        ),
-                                                      ),
-                                                      child: Center(
-                                                        child: Text(
-                                                          selectedMediaCount.toString(),
-                                                          style: TextStyle(
-                                                            color: Theme.of(context).primaryColor,
-                                                            fontSize: 12,
-                                                            fontWeight: FontWeight.w600,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                const SizedBox(height: 0),
-                              ],
-                              if (selectedAdditionalNotes != null) ...[
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Icon(
-                                      Icons.notes,
-                                      size: 18,
-                                      color: Colors.grey[700],
                                     ),
                                     const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        selectedAdditionalNotes!,
-                                        style: TextStyle(
-                                          color: Colors.grey[800],
-                                          fontStyle: FontStyle.italic,
+                                    // List icon button
+                                    Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            onTap: () {
+                                              _triggerHeavyHaptic();
+                                              setState(() {
+                                                _isSelectModeOverlayExpanded =
+                                                    !_isSelectModeOverlayExpanded;
+                                              });
+                                            },
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(
+                                                color: _selectModeColor.withOpacity(
+                                                    _isSelectModeOverlayExpanded
+                                                        ? 0.8
+                                                        : 0.6),
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(
+                                                Icons.list,
+                                                size: 20,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
                                         ),
-                                        maxLines: 3,
-                                        overflow: TextOverflow.ellipsis,
+                                        Positioned(
+                                          right: -4,
+                                          bottom: -4,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: _selectModeColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Text(
+                                              '${_selectModeDraftItinerary.length}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    // Checkmark button
+                                    Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            onTap: () {
+                                              _triggerHeavyHaptic();
+                                              _finishSelectModeAndOpenEditor();
+                                            },
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context)
+                                                    .primaryColor,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(
+                                                Icons.check,
+                                                size: 20,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          right: -4,
+                                          bottom: -4,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: _selectModeDraftItinerary
+                                                      .isNotEmpty
+                                                  ? Colors.red
+                                                  : _selectModeColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Text(
+                                              '${_selectModeDraftItinerary.length}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    // Close button
+                                    Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: () {
+                                          _triggerHeavyHaptic();
+                                          _confirmExitSelectMode();
+                                        },
+                                        borderRadius: BorderRadius.circular(20),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[100],
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.close,
+                                            size: 20,
+                                            color: Colors.black54,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 8),
-                              ],
-                              // ADDED: Star Rating
-                              if (_tappedLocationDetails!.rating != null) ...[
-                                Row(
-                                  children: [
-                                    ...List.generate(5, (i) {
-                                      final ratingValue = _tappedLocationDetails!.rating!;
-                                      return Icon(
-                                        i < ratingValue.floor()
-                                            ? Icons.star
-                                            : (i < ratingValue)
-                                                ? Icons.star_half
-                                                : Icons.star_border,
-                                        size: 18, 
-                                        color: Colors.amber,
-                                      );
-                                    }),
-                                    SizedBox(width: 8),
-                                    if (_tappedLocationDetails!.userRatingCount != null && _tappedLocationDetails!.userRatingCount! > 0)
-                                      Text(
-                                        '(${_tappedLocationDetails!.userRatingCount})',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
-                              ],
-
-                              // ADDED: Business Status row below star rating
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Expanded(child: _buildBusinessStatusWidget()),
-                                ],
                               ),
-
-                              // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
-                              // Only show for add-to-event mode if user can edit the event
-                              if ((_isSelectModeActive || (_isAddToEventModeActive && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!))) && _tappedLocationDetails != null) ...[
-                                const SizedBox(height: 12),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: (() {
-                                    // Check if item is in itinerary (existing event or draft)
-                                    final bool isInExistingEvent = _isAddToEventModeActive && _isTappedItemInExistingEventItinerary();
-                                    final bool isInDraft = _isTappedItemInDraftItinerary();
-                                    final bool isInItinerary = isInExistingEvent || isInDraft;
-                                    
-                                    return isInItinerary
-                                          ? ElevatedButton.icon(
-                                            onPressed: () {
-                                              _triggerHeavyHaptic();
-                                              if (isInDraft) {
-                                                // Remove from draft
-                                                _removeTappedItemFromDraftItinerary();
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  const SnackBar(
-                                                    content: Text('Removed from itinerary'),
-                                                    duration: Duration(seconds: 1),
-                                                  ),
-                                                );
-                                              } else if (isInExistingEvent) {
-                                                // Remove from existing event
-                                                _removeTappedItemFromEvent();
-                                              }
-                                            },
-                                            icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                            label: const Text('Remove from event'),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.red.shade600,
-                                              foregroundColor: Colors.white,
-                                              padding: const EdgeInsets.symmetric(vertical: 12),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                              ),
-                                            ),
-                                          )
-                                        : ElevatedButton.icon(
-                                            onPressed: () {
-                                              _triggerHeavyHaptic();
-                                              _handleSelectForEvent();
-                                            },
-                                            icon: const Icon(Icons.add_circle_outline, size: 20),
-                                            label: const Text('Add to Event'),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: _isAddToEventModeActive && _activeEventViewMode != null
-                                                  ? _getEventColor(_activeEventViewMode!)
-                                                  : _selectModeColor,
-                                              foregroundColor: Colors.white,
-                                              padding: const EdgeInsets.symmetric(vertical: 12),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                              ),
-                                            ),
-                                          );
-                                  })(),
+                              // Expanded itinerary list
+                              if (_isSelectModeOverlayExpanded)
+                                const Divider(height: 1, thickness: 1),
+                              if (_isSelectModeOverlayExpanded)
+                                Flexible(
+                                  child: _buildSelectModeItineraryList(),
                                 ),
-                              ],
-
-                              // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
-                              // Only show if user can edit the event
-                              if (_isEventViewModeActive && !_isAddToEventModeActive && !_isSelectModeActive && _tappedLocationDetails != null && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!)) ...[
-                                const SizedBox(height: 12),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: _isTappedItemInEventItinerary()
-                                      ? ElevatedButton.icon(
-                                          onPressed: () {
-                                            _triggerHeavyHaptic();
-                                            _removeTappedItemFromEvent();
-                                          },
-                                          icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                          label: const Text('Remove from event'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.red.shade600,
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(vertical: 12),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                          ),
-                                        )
-                                      : ElevatedButton.icon(
-                                          onPressed: () {
-                                            _triggerHeavyHaptic();
-                                            _addTappedItemToEvent();
-                                          },
-                                          icon: const Icon(Icons.add_circle_outline, size: 20),
-                                          label: const Text('Add to event'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: _getEventColor(_activeEventViewMode!),
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(vertical: 12),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                          ),
-                                        ),
-                                ),
-                              ],
-
-                              const SizedBox(height: 0),
                             ],
-                                  ),
-                                ),
-                              ],
-                            ),
                           ),
                         ),
                       ),
-                    )
-                  : const SizedBox.shrink(
-                      key: ValueKey('selected_location_sheet_empty'),
                     ),
-            ),
-            // --- END Tapped Location Details ---
+                  // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
+                  // Wrapped in RepaintBoundary to isolate animation from rest of widget tree
+                  RepaintBoundary(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 420),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        final offsetAnimation = Tween<Offset>(
+                          begin: const Offset(0, 0.35),
+                          end: Offset.zero,
+                        ).animate(animation);
+                        return SlideTransition(
+                          position: offsetAnimation,
+                          child:
+                              FadeTransition(opacity: animation, child: child),
+                        );
+                      },
+                      child: (_tappedLocationDetails != null &&
+                              !isKeyboardVisible)
+                          ? Align(
+                              key: ValueKey(
+                                _tappedExperience?.id ??
+                                    _tappedLocationDetails?.placeId ??
+                                    selectedTitle,
+                              ),
+                              alignment: Alignment.bottomCenter,
+                              child: _wrapWebPointerInterceptor(
+                                ConstrainedBox(
+                                  constraints: kIsWeb
+                                      ? const BoxConstraints(maxWidth: 480)
+                                      : const BoxConstraints(),
+                                  child: Container(
+                                    padding: EdgeInsets.fromLTRB(
+                                      16,
+                                      16,
+                                      16,
+                                      2 +
+                                          MediaQuery.of(context)
+                                                  .padding
+                                                  .bottom /
+                                              2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.backgroundColor,
+                                      borderRadius: const BorderRadius.only(
+                                        topLeft: Radius.circular(28),
+                                        topRight: Radius.circular(28),
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: Offset(0,
+                                              -3), // Shadow upwards as it's at the bottom of content
+                                        ),
+                                      ],
+                                    ),
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        // ADDED: Positioned "Tap to view" text at the very top
+                                        if (showExperiencePrompt)
+                                          Positioned(
+                                            top:
+                                                -12, // Move it further up, closer to the edge
+                                            left: 0,
+                                            right: 0,
+                                            child: Center(
+                                              child: Text(
+                                                'Tap to view experience details',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey[500],
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        GestureDetector(
+                                          onTap: showExperiencePrompt
+                                              ? () {
+                                                  _triggerHeavyHaptic();
+                                                  _handleTappedLocationNavigation();
+                                                }
+                                              : null,
+                                          behavior: HitTestBehavior.translucent,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // ADDED: Add space at the top for the positioned text
+                                              if (showExperiencePrompt)
+                                                SizedBox(height: 12),
+                                              // Only show "Selected Location" for non-experience locations
+                                              if (!showExperiencePrompt) ...[
+                                                Text(
+                                                  'Selected Location',
+                                                  style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.normal,
+                                                    fontSize: 14,
+                                                    color: Colors.grey[800],
+                                                  ),
+                                                ),
+                                                SizedBox(height: 12),
+                                              ],
+                                              Row(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Expanded(
+                                                    child: Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              top: 4.0),
+                                                      child: Row(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          if (selectedIcon !=
+                                                                  null &&
+                                                              selectedIcon
+                                                                  .isNotEmpty &&
+                                                              selectedIcon !=
+                                                                  '*') ...[
+                                                            SizedBox(
+                                                              width: 24,
+                                                              child: Center(
+                                                                child: Text(
+                                                                  selectedIcon,
+                                                                  style:
+                                                                      const TextStyle(
+                                                                    fontSize:
+                                                                        16,
+                                                                  ),
+                                                                  textAlign:
+                                                                      TextAlign
+                                                                          .center,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            const SizedBox(
+                                                                width: 4),
+                                                          ],
+                                                          Expanded(
+                                                            child: Text(
+                                                              selectedName,
+                                                              style:
+                                                                  const TextStyle(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w500,
+                                                                fontSize: 16,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      // Share button - only show when experience is selected
+                                                      if (_tappedExperience !=
+                                                          null) ...[
+                                                        const SizedBox(
+                                                            width: 8),
+                                                        IconButton(
+                                                          onPressed: () {
+                                                            _triggerHeavyHaptic();
+                                                            _shareSelectedExperience();
+                                                          },
+                                                          icon: const Icon(
+                                                              Icons
+                                                                  .share_outlined,
+                                                              color:
+                                                                  Colors.blue,
+                                                              size: 28),
+                                                          tooltip: 'Share',
+                                                          padding:
+                                                              EdgeInsets.zero,
+                                                          constraints:
+                                                              const BoxConstraints(),
+                                                          style: IconButton
+                                                              .styleFrom(
+                                                            minimumSize:
+                                                                Size.zero,
+                                                            tapTargetSize:
+                                                                MaterialTapTargetSize
+                                                                    .shrinkWrap,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                            width: 12),
+                                                      ],
+                                                      IconButton(
+                                                        onPressed: () {
+                                                          _triggerHeavyHaptic();
+                                                          if (_tappedLocationDetails !=
+                                                              null) {
+                                                            _launchMapLocation(
+                                                                _tappedLocationDetails!);
+                                                          }
+                                                        },
+                                                        icon: Icon(
+                                                            Icons.map_outlined,
+                                                            color: Colors
+                                                                .green[700],
+                                                            size: 28),
+                                                        tooltip:
+                                                            'Open in map app',
+                                                        padding:
+                                                            EdgeInsets.zero,
+                                                        constraints:
+                                                            const BoxConstraints(),
+                                                        style: IconButton
+                                                            .styleFrom(
+                                                          minimumSize:
+                                                              Size.zero,
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 12),
+                                                      IconButton(
+                                                        onPressed: () {
+                                                          _triggerHeavyHaptic();
+                                                          if (_tappedLocationDetails !=
+                                                              null) {
+                                                            _openDirectionsForLocation(
+                                                                _tappedLocationDetails!);
+                                                          }
+                                                        },
+                                                        icon: Icon(
+                                                            Icons.directions,
+                                                            color: Colors.blue,
+                                                            size: 28),
+                                                        tooltip:
+                                                            'Get Directions',
+                                                        padding:
+                                                            EdgeInsets.zero,
+                                                        constraints:
+                                                            const BoxConstraints(),
+                                                        style: IconButton
+                                                            .styleFrom(
+                                                          minimumSize:
+                                                              Size.zero,
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 12),
+                                                      IconButton(
+                                                        onPressed: () {
+                                                          _triggerHeavyHaptic();
+                                                          setState(() {
+                                                            _tappedLocationMarker =
+                                                                null;
+                                                            _tappedLocationDetails =
+                                                                null;
+                                                            _tappedExperience =
+                                                                null;
+                                                            _tappedExperienceCategory =
+                                                                null;
+                                                            _tappedLocationBusinessStatus =
+                                                                null;
+                                                            _tappedLocationOpenNow =
+                                                                null;
+                                                          });
+                                                        },
+                                                        icon: Icon(Icons.close,
+                                                            color: Colors
+                                                                .grey[600],
+                                                            size: 28),
+                                                        tooltip: 'Close',
+                                                        padding:
+                                                            EdgeInsets.zero,
+                                                        constraints:
+                                                            const BoxConstraints(),
+                                                        style: IconButton
+                                                            .styleFrom(
+                                                          minimumSize:
+                                                              Size.zero,
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                      ),
+                                                      if (kIsWeb)
+                                                        const SizedBox(
+                                                            width: 8),
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                              if (_tappedExperience !=
+                                                  null) ...[
+                                                if (_tappedExperience!
+                                                    .otherCategories
+                                                    .isNotEmpty) ...[
+                                                  _buildOtherCategoriesWidget(),
+                                                ],
+                                                Align(
+                                                  alignment:
+                                                      Alignment.centerLeft,
+                                                  child:
+                                                      _buildColorCategoryWidget(),
+                                                ),
+                                              ],
+                                              const SizedBox(
+                                                  height:
+                                                      0), // Removed top padding
+                                              if (_tappedLocationDetails!
+                                                          .address !=
+                                                      null &&
+                                                  _tappedLocationDetails!
+                                                      .address!.isNotEmpty) ...[
+                                                Row(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.center,
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(
+                                                        _tappedLocationDetails!
+                                                            .address!,
+                                                        style: TextStyle(
+                                                            color: Colors
+                                                                .grey[700]),
+                                                      ),
+                                                    ),
+                                                    if (_tappedExperience !=
+                                                            null ||
+                                                        hasPublicFallback) ...[
+                                                      const SizedBox(width: 12),
+                                                      SizedBox(
+                                                        width: 48,
+                                                        height: 48,
+                                                        child: OverflowBox(
+                                                          minHeight: 48,
+                                                          maxHeight: 48,
+                                                          alignment:
+                                                              Alignment.center,
+                                                          child:
+                                                              GestureDetector(
+                                                            onTap: () {
+                                                              _triggerHeavyHaptic();
+                                                              _onPlayExperienceContent();
+                                                            },
+                                                            child:
+                                                                AnimatedOpacity(
+                                                              duration:
+                                                                  const Duration(
+                                                                      milliseconds:
+                                                                          200),
+                                                              opacity:
+                                                                  canPreviewContent
+                                                                      ? 1.0
+                                                                      : 0.45,
+                                                              child: Stack(
+                                                                clipBehavior:
+                                                                    Clip.none,
+                                                                children: [
+                                                                  Container(
+                                                                    width: 48,
+                                                                    height: 48,
+                                                                    decoration:
+                                                                        BoxDecoration(
+                                                                      color: Theme.of(
+                                                                              context)
+                                                                          .primaryColor,
+                                                                      shape: BoxShape
+                                                                          .circle,
+                                                                    ),
+                                                                    child:
+                                                                        const Icon(
+                                                                      Icons
+                                                                          .play_arrow,
+                                                                      color: Colors
+                                                                          .white,
+                                                                      size: 24,
+                                                                    ),
+                                                                  ),
+                                                                  Positioned(
+                                                                    bottom: -2,
+                                                                    right: -2,
+                                                                    child:
+                                                                        Container(
+                                                                      width: 22,
+                                                                      height:
+                                                                          22,
+                                                                      decoration:
+                                                                          BoxDecoration(
+                                                                        color: Colors
+                                                                            .white,
+                                                                        shape: BoxShape
+                                                                            .circle,
+                                                                        border:
+                                                                            Border.all(
+                                                                          color:
+                                                                              Theme.of(context).primaryColor,
+                                                                          width:
+                                                                              2,
+                                                                        ),
+                                                                      ),
+                                                                      child:
+                                                                          Center(
+                                                                        child:
+                                                                            Text(
+                                                                          selectedMediaCount
+                                                                              .toString(),
+                                                                          style:
+                                                                              TextStyle(
+                                                                            color:
+                                                                                Theme.of(context).primaryColor,
+                                                                            fontSize:
+                                                                                12,
+                                                                            fontWeight:
+                                                                                FontWeight.w600,
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 0),
+                                              ],
+                                              if (selectedAdditionalNotes !=
+                                                  null) ...[
+                                                Row(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Icon(
+                                                      Icons.notes,
+                                                      size: 18,
+                                                      color: Colors.grey[700],
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Expanded(
+                                                      child: Text(
+                                                        selectedAdditionalNotes,
+                                                        style: TextStyle(
+                                                          color:
+                                                              Colors.grey[800],
+                                                          fontStyle:
+                                                              FontStyle.italic,
+                                                        ),
+                                                        maxLines: 3,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 8),
+                                              ],
+                                              // ADDED: Star Rating
+                                              if (_tappedLocationDetails!
+                                                      .rating !=
+                                                  null) ...[
+                                                Row(
+                                                  children: [
+                                                    ...List.generate(5, (i) {
+                                                      final ratingValue =
+                                                          _tappedLocationDetails!
+                                                              .rating!;
+                                                      return Icon(
+                                                        i < ratingValue.floor()
+                                                            ? Icons.star
+                                                            : (i < ratingValue)
+                                                                ? Icons
+                                                                    .star_half
+                                                                : Icons
+                                                                    .star_border,
+                                                        size: 18,
+                                                        color: Colors.amber,
+                                                      );
+                                                    }),
+                                                    SizedBox(width: 8),
+                                                    if (_tappedLocationDetails!
+                                                                .userRatingCount !=
+                                                            null &&
+                                                        _tappedLocationDetails!
+                                                                .userRatingCount! >
+                                                            0)
+                                                      Text(
+                                                        '(${_tappedLocationDetails!.userRatingCount})',
+                                                        style: TextStyle(
+                                                          color:
+                                                              Colors.grey[600],
+                                                          fontSize: 13,
+                                                        ),
+                                                      ),
+                                                  ],
+                                                ),
+                                                SizedBox(
+                                                    height:
+                                                        8), // Added SizedBox after rating like in location_picker_screen
+                                              ],
+
+                                              // ADDED: Business Status row below star rating
+                                              Row(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.center,
+                                                children: [
+                                                  Expanded(
+                                                      child:
+                                                          _buildBusinessStatusWidget()),
+                                                ],
+                                              ),
+
+                                              // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
+                                              // Only show for add-to-event mode if user can edit the event
+                                              if ((_isSelectModeActive ||
+                                                      (_isAddToEventModeActive &&
+                                                          _activeEventViewMode !=
+                                                              null &&
+                                                          _canEditEvent(
+                                                              _activeEventViewMode!))) &&
+                                                  _tappedLocationDetails !=
+                                                      null) ...[
+                                                const SizedBox(height: 12),
+                                                SizedBox(
+                                                  width: double.infinity,
+                                                  child: (() {
+                                                    // Check if item is in itinerary (existing event or draft)
+                                                    final bool
+                                                        isInExistingEvent =
+                                                        _isAddToEventModeActive &&
+                                                            _isTappedItemInExistingEventItinerary();
+                                                    final bool isInDraft =
+                                                        _isTappedItemInDraftItinerary();
+                                                    final bool isInItinerary =
+                                                        isInExistingEvent ||
+                                                            isInDraft;
+
+                                                    return isInItinerary
+                                                        ? ElevatedButton.icon(
+                                                            onPressed: () {
+                                                              _triggerHeavyHaptic();
+                                                              if (isInDraft) {
+                                                                // Remove from draft
+                                                                _removeTappedItemFromDraftItinerary();
+                                                                ScaffoldMessenger.of(
+                                                                        context)
+                                                                    .showSnackBar(
+                                                                  const SnackBar(
+                                                                    content: Text(
+                                                                        'Removed from itinerary'),
+                                                                    duration: Duration(
+                                                                        seconds:
+                                                                            1),
+                                                                  ),
+                                                                );
+                                                              } else if (isInExistingEvent) {
+                                                                // Remove from existing event
+                                                                _removeTappedItemFromEvent();
+                                                              }
+                                                            },
+                                                            icon: const Icon(
+                                                                Icons
+                                                                    .remove_circle_outline,
+                                                                size: 20),
+                                                            label: const Text(
+                                                                'Remove from event'),
+                                                            style:
+                                                                ElevatedButton
+                                                                    .styleFrom(
+                                                              backgroundColor:
+                                                                  Colors.red
+                                                                      .shade600,
+                                                              foregroundColor:
+                                                                  Colors.white,
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      vertical:
+                                                                          12),
+                                                              shape:
+                                                                  RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius
+                                                                        .circular(
+                                                                            8),
+                                                              ),
+                                                            ),
+                                                          )
+                                                        : ElevatedButton.icon(
+                                                            onPressed: () {
+                                                              _triggerHeavyHaptic();
+                                                              _handleSelectForEvent();
+                                                            },
+                                                            icon: const Icon(
+                                                                Icons
+                                                                    .add_circle_outline,
+                                                                size: 20),
+                                                            label: const Text(
+                                                                'Add to Event'),
+                                                            style:
+                                                                ElevatedButton
+                                                                    .styleFrom(
+                                                              backgroundColor: _isAddToEventModeActive &&
+                                                                      _activeEventViewMode !=
+                                                                          null
+                                                                  ? _getEventColor(
+                                                                      _activeEventViewMode!)
+                                                                  : _selectModeColor,
+                                                              foregroundColor:
+                                                                  Colors.white,
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      vertical:
+                                                                          12),
+                                                              shape:
+                                                                  RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius
+                                                                        .circular(
+                                                                            8),
+                                                              ),
+                                                            ),
+                                                          );
+                                                  })(),
+                                                ),
+                                              ],
+
+                                              // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
+                                              // Only show if user can edit the event
+                                              if (_isEventViewModeActive &&
+                                                  !_isAddToEventModeActive &&
+                                                  !_isSelectModeActive &&
+                                                  _tappedLocationDetails !=
+                                                      null &&
+                                                  _activeEventViewMode !=
+                                                      null &&
+                                                  _canEditEvent(
+                                                      _activeEventViewMode!)) ...[
+                                                const SizedBox(height: 12),
+                                                SizedBox(
+                                                  width: double.infinity,
+                                                  child:
+                                                      _isTappedItemInEventItinerary()
+                                                          ? ElevatedButton.icon(
+                                                              onPressed: () {
+                                                                _triggerHeavyHaptic();
+                                                                _removeTappedItemFromEvent();
+                                                              },
+                                                              icon: const Icon(
+                                                                  Icons
+                                                                      .remove_circle_outline,
+                                                                  size: 20),
+                                                              label: const Text(
+                                                                  'Remove from event'),
+                                                              style:
+                                                                  ElevatedButton
+                                                                      .styleFrom(
+                                                                backgroundColor:
+                                                                    Colors.red
+                                                                        .shade600,
+                                                                foregroundColor:
+                                                                    Colors
+                                                                        .white,
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .symmetric(
+                                                                        vertical:
+                                                                            12),
+                                                                shape:
+                                                                    RoundedRectangleBorder(
+                                                                  borderRadius:
+                                                                      BorderRadius
+                                                                          .circular(
+                                                                              8),
+                                                                ),
+                                                              ),
+                                                            )
+                                                          : ElevatedButton.icon(
+                                                              onPressed: () {
+                                                                _triggerHeavyHaptic();
+                                                                _addTappedItemToEvent();
+                                                              },
+                                                              icon: const Icon(
+                                                                  Icons
+                                                                      .add_circle_outline,
+                                                                  size: 20),
+                                                              label: const Text(
+                                                                  'Add to event'),
+                                                              style:
+                                                                  ElevatedButton
+                                                                      .styleFrom(
+                                                                backgroundColor:
+                                                                    _getEventColor(
+                                                                        _activeEventViewMode!),
+                                                                foregroundColor:
+                                                                    Colors
+                                                                        .white,
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .symmetric(
+                                                                        vertical:
+                                                                            12),
+                                                                shape:
+                                                                    RoundedRectangleBorder(
+                                                                  borderRadius:
+                                                                      BorderRadius
+                                                                          .circular(
+                                                                              8),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                ),
+                                              ],
+
+                                              const SizedBox(height: 0),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(
+                              key: ValueKey('selected_location_sheet_empty'),
+                            ),
+                    ),
+                  ),
+                  // --- END Tapped Location Details ---
                 ],
               ),
             ),

@@ -275,20 +275,24 @@ class _TutorialMapScreenModalState extends State<TutorialMapScreenModal> {
                 ),
               ),
               const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _mapSlides.length,
-                  (index) => AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    height: 8,
-                    width: _currentPage == index ? 20 : 8,
-                    decoration: BoxDecoration(
-                      color: _currentPage == index
-                          ? theme.colorScheme.primary
-                          : Colors.grey[300],
-                      borderRadius: BorderRadius.circular(12),
+              RepaintBoundary(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    _mapSlides.length,
+                    (index) => RepaintBoundary(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        height: 8,
+                        width: _currentPage == index ? 20 : 8,
+                        decoration: BoxDecoration(
+                          color: _currentPage == index
+                              ? theme.colorScheme.primary
+                              : Colors.grey[300],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
                     ),
                   ),
                 ),

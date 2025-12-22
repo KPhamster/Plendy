@@ -149,7 +149,7 @@ class LinkLocationExtractionService {
     }
 
     print('🎬 CAPTION EXTRACTION: Analyzing $platform caption...');
-    print('📝 Caption preview: ${caption.length > 100 ? caption.substring(0, 100) + "..." : caption}');
+    print('📝 Caption preview: ${caption.length > 100 ? "${caption.substring(0, 100)}..." : caption}');
     
     List<ExtractedLocationData> results = [];
 
@@ -815,7 +815,7 @@ class LinkLocationExtractionService {
           resolvedName = placeDetails.displayName ?? finalResult['description'] as String?;
           website = placeDetails.website;
           
-          print('✅ PLACES RESOLVE: Got details - "${resolvedName}" at $coords');
+          print('✅ PLACES RESOLVE: Got details - "$resolvedName" at $coords');
           if (website != null) {
             print('🌐 PLACES RESOLVE: Got website: $website');
           }
@@ -830,7 +830,7 @@ class LinkLocationExtractionService {
         resolvedAddress = finalResult['address'] as String?;
       }
       
-      print('✅ PLACES RESOLVE: Final result "${resolvedName}" at $coords');
+      print('✅ PLACES RESOLVE: Final result "$resolvedName" at $coords');
 
       return ExtractedLocationData(
         placeId: placeId,
@@ -1095,7 +1095,7 @@ class LinkLocationExtractionService {
         results.add(ExtractedLocationData(
           placeId: null,
           name: location.name,
-          address: location.city != null ? location.city : null,
+          address: location.city,
           coordinates: null, // No coordinates - don't use placeholder (0,0)
           type: PlaceType.unknown,
           source: ExtractionSource.geminiGrounding,
@@ -1687,7 +1687,7 @@ class LinkLocationExtractionService {
                 if (isJustAddress && businessName.isNotEmpty) {
                   name = businessName;
                   print('📷 IMAGE EXTRACTION: Found business name from place details: $name');
-                } else if (name == null || name.isEmpty) {
+                } else if (name.isEmpty) {
                   name = businessName;
                 }
                 print('📷 IMAGE EXTRACTION: Got coordinates from place details: ${coordinates.latitude}, ${coordinates.longitude}');
@@ -1795,7 +1795,7 @@ class LinkLocationExtractionService {
                     address = newPlaceDetails.address ?? address;
                     website = newPlaceDetails.website ?? website;
                     name = newPlaceDetails.displayName ?? finalPlaceResult['name'] as String? ?? name;
-                    print('✅ IMAGE EXTRACTION: AI-reranked result: "$name" at ${coordinates?.latitude}, ${coordinates?.longitude}');
+                    print('✅ IMAGE EXTRACTION: AI-reranked result: "$name" at ${coordinates.latitude}, ${coordinates.longitude}');
                   }
                 } catch (e) {
                   print('⚠️ IMAGE EXTRACTION: Error fetching AI-reranked place details: $e');
@@ -2665,9 +2665,7 @@ class LinkLocationExtractionService {
                 }
                 
                 // If no direct match, use scoring
-                if (bestMatch == null) {
-                  bestMatch = _selectBestPlaceResult(contextResults, specificPlaceName, geminiType: 'restaurant');
-                }
+                bestMatch ??= _selectBestPlaceResult(contextResults, specificPlaceName, geminiType: 'restaurant');
                 
                 if (bestMatch != null) {
                   final contextResultName = (bestMatch['name'] ?? bestMatch['description']?.toString().split(',').first ?? '') as String;
@@ -2745,7 +2743,7 @@ class LinkLocationExtractionService {
                 if (isJustAddress && businessName.isNotEmpty) {
                   name = businessName;
                   print('📷 IMAGE EXTRACTION: Found business name from place details: $name');
-                } else if (name == null || name.isEmpty) {
+                } else if (name.isEmpty) {
                   name = businessName;
                 }
                 if (website != null) {
@@ -3685,8 +3683,12 @@ class LinkLocationExtractionService {
 
     final matrix = List.generate(len1 + 1, (_) => List<int>.filled(len2 + 1, 0));
 
-    for (int i = 0; i <= len1; i++) matrix[i][0] = i;
-    for (int j = 0; j <= len2; j++) matrix[0][j] = j;
+    for (int i = 0; i <= len1; i++) {
+      matrix[i][0] = i;
+    }
+    for (int j = 0; j <= len2; j++) {
+      matrix[0][j] = j;
+    }
 
     for (int i = 1; i <= len1; i++) {
       for (int j = 1; j <= len2; j++) {

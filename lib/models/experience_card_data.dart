@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/colors.dart';
 import '../models/experience.dart';
 
 /// Enum to track the source of the shared content for an experience card.
@@ -62,6 +63,8 @@ class ExperienceCardData {
   String? selectedColorCategoryId;
   /// Whether this experience should remain private (default public)
   bool isPrivate = false;
+  /// Background color for the card UI.
+  final Color backgroundColor = AppColors.backgroundColor;
 
   /// Selected IDs for "other" categories
   List<String> selectedOtherCategoryIds = [];

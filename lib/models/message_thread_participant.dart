@@ -37,7 +37,7 @@ class MessageThreadParticipant {
       return displayName!;
     }
     if (username?.isNotEmpty == true) {
-      return '@' + username!;
+      return '@${username!}';
     }
     return fallback;
   }

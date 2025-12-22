@@ -20,6 +20,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:plendy/models/share_permission.dart';
 import 'package:plendy/models/enums/share_enums.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
+import 'package:plendy/config/colors.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -318,7 +319,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         barrierDismissible: false,
         builder: (dialogContext) {
           return AlertDialog(
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.backgroundColor,
             title: const Text('Potential Duplicate Found'),
             content: Text(
                 'You already saved an experience named "${duplicate.name}" located at "${duplicate.location.address ?? 'No address provided'}." Do you want to use this existing experience?'),
@@ -584,7 +585,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     .toList();
 
             return Dialog(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.backgroundColor,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16.0)),
               child: ConstrainedBox(
@@ -621,17 +622,26 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: AppColors.backgroundColorDark,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.blue),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
                           ),
                         ),
                         onChanged: (value) {
@@ -703,7 +713,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               final newCategory =
                                   await showModalBottomSheet<UserCategory>(
                                 context: stfContext,
-                                backgroundColor: Colors.white,
+                                backgroundColor: AppColors.backgroundColor,
                                 builder: (context) => const AddCategoryModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
@@ -741,7 +751,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               final bool? categoriesChanged =
                                   await showModalBottomSheet<bool>(
                                 context: stfContext,
-                                backgroundColor: Colors.white,
+                                backgroundColor: AppColors.backgroundColor,
                                 builder: (context) =>
                                     const EditCategoriesModal(),
                                 isScrollControlled: true,
@@ -1005,7 +1015,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     FocusScope.of(context).unfocus();
     final newCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       builder: (context) => const AddColorCategoryModal(), // Use the modal
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -1038,7 +1048,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     FocusScope.of(context).unfocus();
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       builder: (context) => const EditColorCategoriesModal(), // Use the modal
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -1099,7 +1109,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     .toList();
 
             return Dialog(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.backgroundColor,
               shape:
                   RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
               child: ConstrainedBox(
@@ -1138,17 +1148,26 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: AppColors.backgroundColorDark,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.blue),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
                           ),
                         ),
                         onChanged: (value) {
@@ -1297,7 +1316,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           onEditCategories: () async {
             final bool? categoriesChanged = await showModalBottomSheet<bool>(
               context: dialogContext,
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.backgroundColor,
               builder: (context) => const EditCategoriesModal(),
               isScrollControlled: true,
               shape: const RoundedRectangleBorder(
@@ -1332,7 +1351,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           onAddCategory: () async {
             final newCategory = await showModalBottomSheet<UserCategory>(
               context: dialogContext,
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.backgroundColor,
               builder: (context) => const AddCategoryModal(),
               isScrollControlled: true,
               shape: const RoundedRectangleBorder(
@@ -1499,28 +1518,37 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
+    final ThemeData baseTheme = Theme.of(context);
+    final ThemeData fieldTheme = baseTheme.copyWith(
+      inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
+        filled: true,
+        fillColor: Colors.white,
+      ),
+    );
+    final ThemeData theme = baseTheme;
     final bool isSaveEnabled = _isSaveEnabled;
     // Make modal content scrollable and handle keyboard padding
-    return ScaffoldMessenger(
-      key: _localMessengerKey,
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Material(
-          color: Colors.white,
-          child: Padding(
-            padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-                left: 16,
-                right: 16,
-                top: 16),
-            child: SingleChildScrollView(
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min, // Fit content vertically
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+    return Theme(
+      data: fieldTheme,
+      child: ScaffoldMessenger(
+        key: _localMessengerKey,
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Material(
+            color: AppColors.backgroundColor,
+            child: Padding(
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                  left: 16,
+                  right: 16,
+                  top: 16),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min, // Fit content vertically
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     // Modal Title
                     Text(
                       'Edit Experience',
@@ -1550,13 +1578,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       : null,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border.all(
-                          color: _cardData.locationEnabled.value
-                              ? Colors.grey
-                              : Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
+                    color: Colors.white,
+                    border: Border.all(
+                        color: _cardData.locationEnabled.value
+                            ? AppColors.backgroundColorDark
+                            : AppColors.backgroundColorDark),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                     padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     child: Row(
                       children: [
@@ -1627,7 +1655,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                 _cardData.locationEnabled.value = value;
                               });
                             },
-                            activeColor: Colors.blue,
+                            activeThumbColor: const Color(0xFF2F6F6D),
                             materialTapTargetSize:
                                 MaterialTapTargetSize.shrinkWrap,
                           ),
@@ -1644,6 +1672,17 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   decoration: InputDecoration(
                     labelText: 'Experience Title',
                     border: OutlineInputBorder(),
+                    enabledBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                      ),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                        width: 2,
+                      ),
+                    ),
                     prefixIcon: Icon(Icons.title),
                     filled: true,
                     fillColor: Colors.white,
@@ -1688,13 +1727,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       borderRadius: BorderRadius.circular(16),
                       child: Padding(
                         padding: const EdgeInsets.all(4.0),
-                        child: Icon(
-                          Icons.map_outlined,
-                          size: 22,
-                          color: Colors.green[700],
-                        ),
+                      child: Icon(
+                        Icons.map_outlined,
+                        size: 22,
+                        color: const Color(0xFF6D8B74),
                       ),
                     ),
+                  ),
                   ],
                 ),
                 SizedBox(height: 16),
@@ -1715,7 +1754,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         horizontal: 12, vertical: 15),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8.0)),
-                    side: BorderSide(color: Colors.grey),
+                    side: BorderSide(color: AppColors.backgroundColorDark),
                     alignment: Alignment.centerLeft,
                     backgroundColor: Colors.white,
                   ),
@@ -1766,7 +1805,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         padding: const EdgeInsets.all(12.0),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          border: Border.all(color: Colors.grey),
+                          border: Border.all(
+                              color: AppColors.backgroundColorDark),
                           borderRadius: BorderRadius.circular(8.0),
                         ),
                         child: Wrap(
@@ -1836,7 +1876,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         horizontal: 12, vertical: 15),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8.0)),
-                    side: BorderSide(color: Colors.grey),
+                    side: BorderSide(color: AppColors.backgroundColorDark),
                     alignment: Alignment.centerLeft,
                     backgroundColor: Colors.white,
                   ),
@@ -1890,7 +1930,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         padding: const EdgeInsets.all(12.0),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          border: Border.all(color: Colors.grey),
+                          border: Border.all(
+                              color: AppColors.backgroundColorDark),
                           borderRadius: BorderRadius.circular(8.0),
                         ),
                         child: Wrap(
@@ -1961,7 +2002,23 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   decoration: InputDecoration(
                       labelText: 'Official Website (optional)',
                       border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.language),
+                      enabledBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
+                      ),
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
+                      ),
+                      prefixIcon: Icon(
+                        Icons.language,
+                        color: _cardData.websiteController.text.isNotEmpty
+                            ? AppColors.teal
+                            : null,
+                      ),
                       filled: true,
                       fillColor: Colors.white,
                       // --- MODIFIED: Add Paste button to suffix ---
@@ -1995,7 +2052,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             child: Padding(
                               padding: const EdgeInsets.all(4.0),
                               child: Icon(Icons.content_paste,
-                                  size: 22, color: Colors.blue[700]),
+                                  size: 22, color: Color(0xFF1F2A44)),
                             ),
                           ),
 
@@ -2022,7 +2079,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                           _isValidUrl(_cardData
                                               .websiteController.text
                                               .trim())
-                                      ? Colors.blue[700]
+                                      ? AppColors.teal
                                       : Colors.grey),
                             ),
                           ),
@@ -2048,6 +2105,17 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   decoration: InputDecoration(
                     labelText: 'Notes (optional)', // Or 'Description'
                     border: OutlineInputBorder(),
+                    enabledBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                      ),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                        width: 2,
+                      ),
+                    ),
                     prefixIcon: Icon(Icons.notes),
                     alignLabelWithHint: true,
                     filled: true,
@@ -2093,7 +2161,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         ),
       ),
     ),
-  );
+    ));
   }
 
   // --- ADDED: Helper method to launch Generic URLs (if not already present) ---
@@ -2203,7 +2271,7 @@ class _OtherCategoriesSelectionDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       title: const Text('Select Other Categories'),
       contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(
@@ -2258,17 +2326,26 @@ class _OtherCategoriesSelectionDialogState
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.backgroundColorDark,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.blue),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {
@@ -2447,7 +2524,7 @@ class _OtherColorCategoriesSelectionDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       title: const Text('Select Other Color Categories'),
       contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(
@@ -2494,17 +2571,26 @@ class _OtherColorCategoriesSelectionDialogState
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.backgroundColorDark,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.blue),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {

@@ -272,7 +272,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
 
     final embedHtml = '''
 <!DOCTYPE html>
-<html style="height: ${cssHeight}; margin: 0; padding: 0;">
+<html style="height: $cssHeight; margin: 0; padding: 0;">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
@@ -280,9 +280,9 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
       margin: 0 !important;
       padding: 0 !important;
       background: #000 !important;
-      height: ${cssHeight} !important;
-      min-height: ${cssHeight} !important;
-      max-height: ${cssHeight} !important;
+      height: $cssHeight !important;
+      min-height: $cssHeight !important;
+      max-height: $cssHeight !important;
       overflow: hidden;
     }
     body {
@@ -299,7 +299,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
     }
     iframe {
       width: 100%;
-      height: ${cssHeight};
+      height: $cssHeight;
       border: none;
       max-width: 400px;
     }
@@ -390,7 +390,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
   Widget build(BuildContext context) {
     super.build(context);
     final double height = _isPhotoCarousel ? 500.0 : 700.0;
-    print('🎬 TIKTOK BUILD: Photo=${_isPhotoCarousel}, Height=${height}px');
+    print('🎬 TIKTOK BUILD: Photo=$_isPhotoCarousel, Height=${height}px');
 
     Widget webViewContent = Container(
       color: Colors.black,

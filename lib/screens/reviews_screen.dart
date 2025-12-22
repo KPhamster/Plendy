@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:plendy/config/colors.dart';
 import '../models/review.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -188,7 +189,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: const BoxDecoration(color: Colors.white),
+      decoration: const BoxDecoration(color: AppColors.backgroundColor),
       child: Text(
         '$count ${count == 1 ? 'Review' : 'Reviews'}',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -241,7 +242,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       elevation: 1,
-      color: const Color.fromARGB(225, 250, 250, 250),
+      color: AppColors.backgroundColorDark,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -631,9 +632,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         title: const Text('My Reviews'),
       ),

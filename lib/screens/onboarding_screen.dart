@@ -601,7 +601,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: VideoProgressIndicator(
-                controller!,
+                controller,
                 allowScrubbing: true,
                 padding: EdgeInsets.zero,
               ),
@@ -642,23 +642,28 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 24),
           media,
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              tutorialSlides.length,
-              (index) {
-                final isActive = index == (_currentPage - _tutorialStartIndex);
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  height: 8,
-                  width: isActive ? 24 : 8,
-                  decoration: BoxDecoration(
-                    color: isActive ? theme.primaryColor : Colors.grey[300],
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                );
-              },
+          RepaintBoundary(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                tutorialSlides.length,
+                (index) {
+                  final isActive =
+                      index == (_currentPage - _tutorialStartIndex);
+                  return RepaintBoundary(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      height: 8,
+                      width: isActive ? 24 : 8,
+                      decoration: BoxDecoration(
+                        color: isActive ? theme.primaryColor : Colors.grey[300],
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ],

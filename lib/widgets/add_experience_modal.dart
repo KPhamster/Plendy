@@ -18,6 +18,7 @@ import 'package:collection/collection.dart';
 import 'package:plendy/screens/location_picker_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:plendy/config/app_constants.dart';
+import 'package:plendy/config/colors.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 
 class AddExperienceModal extends StatefulWidget {
@@ -308,7 +309,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                     .toList();
 
             return Dialog(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.backgroundColor,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16.0)),
               child: ConstrainedBox(
@@ -345,17 +346,26 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: AppColors.backgroundColorDark,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.blue),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
                           ),
                         ),
                         onChanged: (value) {
@@ -770,7 +780,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                     .toList();
 
             return Dialog(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.backgroundColor,
               shape:
                   RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
               child: ConstrainedBox(
@@ -809,17 +819,26 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: AppColors.backgroundColorDark,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.blue),
+                            borderSide: const BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
                           ),
                         ),
                         onChanged: (value) {
@@ -1211,21 +1230,31 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      child: Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-            left: 16,
-            right: 16,
-            top: 16),
-        child: SingleChildScrollView(
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+    final ThemeData baseTheme = Theme.of(context);
+    final ThemeData fieldTheme = baseTheme.copyWith(
+      inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
+        filled: true,
+        fillColor: Colors.white,
+      ),
+    );
+
+    return Theme(
+      data: fieldTheme,
+      child: Material(
+        color: AppColors.backgroundColor,
+        child: Padding(
+          padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+              left: 16,
+              right: 16,
+              top: 16),
+          child: SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
               Text(
                 'Add Experience',
                 style: Theme.of(context).textTheme.headlineSmall,
@@ -1251,10 +1280,11 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                     : null,
                 child: Container(
                   decoration: BoxDecoration(
+                    color: Colors.white,
                     border: Border.all(
                         color: _cardData.locationEnabled.value
-                            ? Colors.grey
-                            : Colors.grey.shade300),
+                            ? AppColors.backgroundColorDark
+                            : AppColors.backgroundColorDark),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -1310,7 +1340,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                               _cardData.locationEnabled.value = value;
                             });
                           },
-                          activeColor: Colors.blue,
+                          activeThumbColor: const Color(0xFF2F6F6D),
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
                         ),
@@ -1327,6 +1357,17 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 decoration: InputDecoration(
                   labelText: 'Experience Title',
                   border: OutlineInputBorder(),
+                  enabledBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: AppColors.backgroundColorDark,
+                    ),
+                  ),
+                  focusedBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: AppColors.backgroundColorDark,
+                      width: 2,
+                    ),
+                  ),
                   prefixIcon: Icon(Icons.title),
                 ),
                 validator: (value) {
@@ -1371,7 +1412,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                       child: Icon(
                         Icons.map_outlined,
                         size: 22,
-                        color: Colors.green[700],
+                        color: const Color(0xFF6D8B74),
                       ),
                     ),
                   ),
@@ -1394,8 +1435,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8.0)),
-                  side: BorderSide(color: Colors.grey),
+                  side: BorderSide(color: AppColors.backgroundColorDark),
                   alignment: Alignment.centerLeft,
+                  backgroundColor: Colors.white,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1439,7 +1481,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(12.0),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey),
+                        color: Colors.white,
+                        border:
+                            Border.all(color: AppColors.backgroundColorDark),
                         borderRadius: BorderRadius.circular(8.0),
                       ),
                       child: Wrap(
@@ -1505,8 +1549,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8.0)),
-                  side: BorderSide(color: Colors.grey),
+                  side: BorderSide(color: AppColors.backgroundColorDark),
                   alignment: Alignment.centerLeft,
+                  backgroundColor: Colors.white,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1555,7 +1600,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(12.0),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey),
+                        color: Colors.white,
+                        border:
+                            Border.all(color: AppColors.backgroundColorDark),
                         borderRadius: BorderRadius.circular(8.0),
                       ),
                       child: Wrap(
@@ -1622,7 +1669,23 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 decoration: InputDecoration(
                     labelText: 'Official Website (optional)',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.language),
+                    enabledBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                      ),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: AppColors.backgroundColorDark,
+                        width: 2,
+                      ),
+                    ),
+                    prefixIcon: Icon(
+                      Icons.language,
+                      color: _cardData.websiteController.text.isNotEmpty
+                          ? AppColors.teal
+                          : null,
+                    ),
                     suffixIconConstraints:
                         BoxConstraints.tightFor(width: 110, height: 48),
                     suffixIcon: Row(
@@ -1648,7 +1711,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                           child: Padding(
                             padding: const EdgeInsets.all(4.0),
                             child: Icon(Icons.content_paste,
-                                size: 22, color: Colors.blue[700]),
+                                size: 22, color: Color(0xFF1F2A44)),
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -1670,7 +1733,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                                         _isValidUrl(_cardData
                                             .websiteController.text
                                             .trim())
-                                    ? Colors.blue[700]
+                                    ? AppColors.teal
                                     : Colors.grey),
                           ),
                         ),
@@ -1694,6 +1757,17 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 decoration: InputDecoration(
                   labelText: 'Notes (optional)',
                   border: OutlineInputBorder(),
+                  enabledBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: AppColors.backgroundColorDark,
+                    ),
+                  ),
+                  focusedBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: AppColors.backgroundColorDark,
+                      width: 2,
+                    ),
+                  ),
                   prefixIcon: Icon(Icons.notes),
                   alignLabelWithHint: true,
                 ),
@@ -1738,7 +1812,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
         ),
       ),
       ),
-    );
+    ));
   }
 
   // ADDED: Method to load defaults from SharedPreferences
@@ -1866,7 +1940,7 @@ class _OtherCategoriesSelectionDialogState
   @override
       Widget build(BuildContext context) {
         return AlertDialog(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.backgroundColor,
       title: const Text('Select Other Categories'),
       contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(
@@ -1919,17 +1993,26 @@ class _OtherCategoriesSelectionDialogState
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.backgroundColorDark,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.blue),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {
@@ -2001,6 +2084,7 @@ class _OtherCategoriesSelectionDialogState
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () async {
                           await widget.onAddCategory();
+                          if (!context.mounted) return;
                           FocusScope.of(context).unfocus();
                           Navigator.of(context).pop();
                         },
@@ -2016,7 +2100,7 @@ class _OtherCategoriesSelectionDialogState
                             style: TextStyle(color: Colors.orange[700])),
                         onPressed: () async {
                           final result = await widget.onEditCategories();
-                          if (result == true) {
+                          if (result == true && context.mounted) {
                             FocusScope.of(context).unfocus();
                             Navigator.of(context).pop();
                           }
@@ -2103,7 +2187,7 @@ class _OtherColorCategoriesSelectionDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       title: const Text('Select Other Color Categories'),
       contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(
@@ -2150,17 +2234,26 @@ class _OtherColorCategoriesSelectionDialogState
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.backgroundColorDark,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.blue),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {

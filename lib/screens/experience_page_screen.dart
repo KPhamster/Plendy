@@ -27,7 +27,6 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
-import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/yelp_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
@@ -60,8 +59,6 @@ import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/experience_share_service.dart'; // ADDED: Import ExperienceShareService
 import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../config/app_constants.dart';
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../widgets/save_to_experiences_modal.dart';
@@ -981,7 +978,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               child: Center(
                 child: Text(
                   _computeSharePreviewCategoryLabel() ??
-                      '${_shareBannerDisplayName} wants you to check out this experience! Save it to create your own copy of the experience.',
+                      '$_shareBannerDisplayName wants you to check out this experience! Save it to create your own copy of the experience.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: Colors.white,
@@ -1398,16 +1395,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
 
-  // New method to handle loading/error states for details section
+  // New method to handle error states for details section
   Widget _buildDynamicDetailsSection(BuildContext context) {
-    if (_isLoadingDetails) {
-      return const Center(
-          child: Padding(
-        padding: EdgeInsets.all(32.0),
-        child: CircularProgressIndicator(),
-      ));
-    }
-
     if (_errorLoadingDetails != null) {
       return Center(
           child: Padding(
@@ -1420,7 +1409,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       ));
     }
 
-    // If loaded successfully, build the details section with data
+    // Build the details section with whatever data is available
     return _buildDetailsSection(context, _currentExperience, _placeDetailsData);
   }
 
@@ -1485,7 +1474,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    description!.trim(),
+                    description.trim(),
                     style: textTheme,
                   ),
                 ],
@@ -2746,7 +2735,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                 ),
                               ),
                             ),
-                            if (isExpanded && mediaWidget != null) mediaWidget!,
+                            if (isExpanded && mediaWidget != null) mediaWidget,
                           ],
                         ),
                       ),

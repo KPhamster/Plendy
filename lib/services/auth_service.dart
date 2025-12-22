@@ -688,7 +688,7 @@ class AuthService extends ChangeNotifier {
   Future<void> _saveTokenToFirestore(String userId, String token) async {
     if (userId.isEmpty || token.isEmpty) {
       print(
-          "DEBUG: Cannot save FCM token - userId: '${userId}', token: '${token.isEmpty ? 'empty' : 'not empty'}'");
+          "DEBUG: Cannot save FCM token - userId: '$userId', token: '${token.isEmpty ? 'empty' : 'not empty'}'");
       return;
     }
     try {

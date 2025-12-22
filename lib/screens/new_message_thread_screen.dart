@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/message_thread.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/message_service.dart';
@@ -177,7 +176,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
       Navigator.pop(context, thread);
     } catch (error) {
       if (mounted) {
-        final message = 'Could not start chat: ' + error.toString();
+        final message = 'Could not start chat: $error';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
@@ -194,7 +193,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
   @override
   Widget build(BuildContext context) {
     final selectionSuffix = _selectedProfiles.length > 1
-        ? ' (' + _selectedProfiles.length.toString() + ' people)'
+        ? ' (${_selectedProfiles.length} people)'
         : '';
     final canCreate = _selectedProfiles.isNotEmpty && !_creatingChat;
 
@@ -213,15 +212,15 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
             child: ElevatedButton(
               style: ButtonStyle(
                 backgroundColor:
-                    MaterialStateProperty.resolveWith<Color?>((states) {
-                  if (states.contains(MaterialState.disabled)) {
+                    WidgetStateProperty.resolveWith<Color?>((states) {
+                  if (states.contains(WidgetState.disabled)) {
                     return null; // Use default disabled color
                   }
                   return Theme.of(context).primaryColor;
                 }),
                 foregroundColor:
-                    MaterialStateProperty.resolveWith<Color?>((states) {
-                  if (states.contains(MaterialState.disabled)) {
+                    WidgetStateProperty.resolveWith<Color?>((states) {
+                  if (states.contains(WidgetState.disabled)) {
                     return null; // Use default disabled color
                   }
                   return Colors.white;
@@ -235,7 +234,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white),
                     )
-                  : Text('Start chat' + selectionSuffix),
+                  : Text('Start chat$selectionSuffix'),
             ),
           ),
         ),
@@ -348,7 +347,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
         final isSelected = _selectedProfiles.containsKey(profile.id);
         final title = profile.displayName ?? profile.username ?? 'Friend';
         final subtitle =
-            profile.username != null ? '@' + profile.username! : null;
+            profile.username != null ? '@${profile.username!}' : null;
 
         return ListTile(
           leading: CachedProfileAvatar(

@@ -16,7 +16,6 @@ import '../screens/receive_share/widgets/tiktok_preview_widget.dart';
 import '../screens/receive_share/widgets/facebook_preview_widget.dart';
 import '../screens/receive_share/widgets/youtube_preview_widget.dart';
 import '../screens/receive_share/widgets/generic_url_preview_widget.dart';
-import '../screens/receive_share/widgets/web_url_preview_widget.dart';
 import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../screens/receive_share/widgets/yelp_preview_widget.dart';
 import '../services/google_maps_service.dart';
@@ -35,8 +34,10 @@ class SharedMediaPreviewModal extends StatefulWidget {
   final List<ColorCategory> userColorCategories;
   final List<UserCategory> additionalUserCategories;
   final bool showSavedDate; // Whether to show the "Saved" date/time in metadata
-  final bool isPublicExperience; // Whether this is a public experience from the community
-  final VoidCallback? onViewExperience; // Custom handler for viewing the experience
+  final bool
+      isPublicExperience; // Whether this is a public experience from the community
+  final VoidCallback?
+      onViewExperience; // Custom handler for viewing the experience
 
   const SharedMediaPreviewModal({
     super.key,
@@ -66,7 +67,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   // For Maps preview parity with ExperiencePageScreen
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
-  final ExperienceShareService _experienceShareService = ExperienceShareService();
+  final ExperienceShareService _experienceShareService =
+      ExperienceShareService();
   static const double _defaultPreviewHeight = 640.0;
   static const double _maxExpandedPreviewHeight = 845.0;
   static const List<String> _monthAbbreviations = [
@@ -88,9 +90,12 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   void initState() {
     super.initState();
     // Initialize current index based on provided mediaItem
-    final initialIdx = widget.mediaItems.indexWhere((it) => it.id == widget.mediaItem.id);
+    final initialIdx =
+        widget.mediaItems.indexWhere((it) => it.id == widget.mediaItem.id);
     _currentIndex = initialIdx >= 0 ? initialIdx : 0;
-    _activeItem = widget.mediaItems.isNotEmpty ? widget.mediaItems[_currentIndex] : widget.mediaItem;
+    _activeItem = widget.mediaItems.isNotEmpty
+        ? widget.mediaItems[_currentIndex]
+        : widget.mediaItem;
     _pageController = PageController(initialPage: _currentIndex);
   }
 
@@ -159,7 +164,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
   }
 
-  double _getEffectivePreviewHeight(BuildContext context, SharedMediaItem item) {
+  double _getEffectivePreviewHeight(
+      BuildContext context, SharedMediaItem item) {
     final double baseHeight = _getPreviewHeight(context);
     final double minimumHeight = _getMinimumPreviewHeightForItem(item);
     return baseHeight >= minimumHeight ? baseHeight : minimumHeight;
@@ -248,8 +254,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       if (mounted) {
         messenger.showSnackBar(
           const SnackBar(
-            content:
-                Text('Unable to generate a share link. Please try again.'),
+            content: Text('Unable to generate a share link. Please try again.'),
           ),
         );
       }
@@ -366,8 +371,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                 const SizedBox(height: 8),
                 Expanded(
                   child: SingleChildScrollView(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -458,71 +463,71 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     if (type == _MediaType.tiktok) {
       return kIsWeb
           ? WebMediaPreviewCard(
-            url: url,
-            experienceName: widget.experience.name,
-            onOpenPressed: () => widget.onLaunchUrl(url),
-          )
+              url: url,
+              experienceName: widget.experience.name,
+              onOpenPressed: () => widget.onLaunchUrl(url),
+            )
           : TikTokPreviewWidget(
-        key: ValueKey(url),
-        url: url,
-        launchUrlCallback: widget.onLaunchUrl,
-        showControls: false,
-      );
+              key: ValueKey(url),
+              url: url,
+              launchUrlCallback: widget.onLaunchUrl,
+              showControls: false,
+            );
     }
 
     if (type == _MediaType.instagram) {
       final double instagramHeight = heightOverride ?? 640.0;
       return kIsWeb
           ? WebMediaPreviewCard(
-            url: url,
-            experienceName: widget.experience.name,
-            onOpenPressed: () => widget.onLaunchUrl(url),
-          )
+              url: url,
+              experienceName: widget.experience.name,
+              onOpenPressed: () => widget.onLaunchUrl(url),
+            )
           : instagram_widget.InstagramWebView(
-        key: ValueKey(url),
-        url: url,
-        height: instagramHeight,
-        launchUrlCallback: widget.onLaunchUrl,
-        onWebViewCreated: (_) {},
-        onPageFinished: (_) {},
-      );
+              key: ValueKey(url),
+              url: url,
+              height: instagramHeight,
+              launchUrlCallback: widget.onLaunchUrl,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+            );
     }
 
     if (type == _MediaType.facebook) {
       final double facebookHeight = heightOverride ?? 500.0;
       return kIsWeb
           ? WebMediaPreviewCard(
-            url: url,
-            experienceName: widget.experience.name,
-            onOpenPressed: () => widget.onLaunchUrl(url),
-          )
+              url: url,
+              experienceName: widget.experience.name,
+              onOpenPressed: () => widget.onLaunchUrl(url),
+            )
           : FacebookPreviewWidget(
-        key: ValueKey(url),
-        url: url,
-        height: facebookHeight,
-        onWebViewCreated: (_) {},
-        onPageFinished: (_) {},
-        launchUrlCallback: widget.onLaunchUrl,
-        showControls: false,
-      );
+              key: ValueKey(url),
+              url: url,
+              height: facebookHeight,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+              launchUrlCallback: widget.onLaunchUrl,
+              showControls: false,
+            );
     }
 
     if (type == _MediaType.youtube) {
       final double? youtubeHeight = heightOverride;
       return kIsWeb
           ? WebMediaPreviewCard(
-            url: url,
-            experienceName: widget.experience.name,
-            onOpenPressed: () => widget.onLaunchUrl(url),
-          )
+              url: url,
+              experienceName: widget.experience.name,
+              onOpenPressed: () => widget.onLaunchUrl(url),
+            )
           : YouTubePreviewWidget(
-        key: ValueKey(url),
-        url: url,
-        launchUrlCallback: widget.onLaunchUrl,
-        showControls: false,
-        height: youtubeHeight,
-        onWebViewCreated: (_) {},
-      );
+              key: ValueKey(url),
+              url: url,
+              launchUrlCallback: widget.onLaunchUrl,
+              showControls: false,
+              height: youtubeHeight,
+              onWebViewCreated: (_) {},
+            );
     }
 
     if (type == _MediaType.maps) {
@@ -628,7 +633,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       ),
       onSelected: (selected) {
         if (!selected) return;
-        final int targetIndex = widget.mediaItems.indexWhere((it) => it.id == item.id);
+        final int targetIndex =
+            widget.mediaItems.indexWhere((it) => it.id == item.id);
         if (targetIndex >= 0) {
           // Animate the carousel to the selected item
           _pageController.animateToPage(
@@ -652,22 +658,27 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
 
   Widget _buildCarouselDots() {
     final total = widget.mediaItems.length;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(total, (index) {
-        final bool isActive = index == _currentIndex;
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeInOut,
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          width: isActive ? 10 : 8,
-          height: isActive ? 10 : 8,
-          decoration: BoxDecoration(
-            color: isActive ? Theme.of(context).primaryColor : Colors.grey.shade400,
-            shape: BoxShape.circle,
-          ),
-        );
-      }),
+    final primaryColor = Theme.of(context).primaryColor;
+    return RepaintBoundary(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(total, (index) {
+          final bool isActive = index == _currentIndex;
+          return RepaintBoundary(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              width: isActive ? 10 : 8,
+              height: isActive ? 10 : 8,
+              decoration: BoxDecoration(
+                color: isActive ? primaryColor : Colors.grey.shade400,
+                shape: BoxShape.circle,
+              ),
+            ),
+          );
+        }),
+      ),
     );
   }
 
@@ -676,19 +687,20 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final formattedDate = _formatFullTimestamp(createdAt);
 
     // For public experiences, show "Shared by community" instead of saved date
-    final String dateLabel = widget.isPublicExperience ? 'Shared by community' : 'Saved';
-    final String dateValue = widget.isPublicExperience ? 'Community experience' : formattedDate;
+    final String dateLabel =
+        widget.isPublicExperience ? 'Shared by community' : 'Saved';
+    final String dateValue =
+        widget.isPublicExperience ? 'Community experience' : formattedDate;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Details',
-          style: theme.textTheme.titleSmall
-              ?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: theme.primaryColor,
-              ),
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: theme.primaryColor,
+          ),
         ),
         const SizedBox(height: 8),
         Container(
@@ -702,7 +714,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
             children: [
               if (widget.showSavedDate) ...[
                 _buildMetadataRow(
-                  icon: widget.isPublicExperience ? Icons.people : Icons.schedule,
+                  icon:
+                      widget.isPublicExperience ? Icons.people : Icons.schedule,
                   label: dateLabel,
                   value: dateValue,
                   iconColor: Colors.white,
@@ -821,8 +834,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
 
   Widget _buildActionButtons(BuildContext context, SharedMediaItem mediaItem) {
     final url = mediaItem.path;
-    final isLaunchable =
-        url.toLowerCase().startsWith('http://') || url.toLowerCase().startsWith('https://');
+    final isLaunchable = url.toLowerCase().startsWith('http://') ||
+        url.toLowerCase().startsWith('https://');
 
     // Choose icon and tooltip based on content type, mirroring ExperiencePageScreen
     final type = _classifyUrl(url);
@@ -1016,4 +1029,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   // Removed unused _labelForType helper
 }
 
-enum _MediaType { tiktok, instagram, facebook, youtube, yelp, maps, image, generic }
+enum _MediaType {
+  tiktok,
+  instagram,
+  facebook,
+  youtube,
+  yelp,
+  maps,
+  image,
+  generic
+}

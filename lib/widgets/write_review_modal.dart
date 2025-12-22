@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/services.dart';
 
 /// A modal dialog for writing or editing a review
 class WriteReviewModal extends StatefulWidget {
@@ -362,7 +361,7 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'Photos (${_totalImageCount}/$_maxImages)',
+              'Photos ($_totalImageCount/$_maxImages)',
               style: TextStyle(
                 color: Colors.grey[700],
                 fontSize: 14,

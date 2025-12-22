@@ -125,7 +125,7 @@ class _CategorySharePreviewScreenState
 
   Future<void> _handleOpenInApp(BuildContext context) async {
     final Uri deepLink =
-        Uri.parse('https://plendy.app/shared-category/' + widget.token);
+        Uri.parse('https://plendy.app/shared-category/${widget.token}');
 
     // On web, we need to handle Universal Links differently to avoid opening both app and browser
     if (kIsWeb) {
@@ -169,7 +169,7 @@ class _CategorySharePreviewScreenState
     }
 
     // DNS warm-up to avoid UnknownHostException on cold start
-    Future<void> _waitForDns(String host) async {
+    Future<void> waitForDns(String host) async {
       const List<int> delays = [100, 200, 300, 500, 800, 1200, 1800];
       for (final d in delays) {
         try {
@@ -185,7 +185,7 @@ class _CategorySharePreviewScreenState
     }
 
     if (!kIsWeb) {
-      await _waitForDns('firestore.googleapis.com');
+      await waitForDns('firestore.googleapis.com');
     }
     final runQueryUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents:runQuery');
@@ -204,7 +204,7 @@ class _CategorySharePreviewScreenState
         'X-Firebase-AppCheck': appCheckToken,
     };
     // Helper: basic retry with backoff for GET/POST
-    Future<http.Response?> _retryHttp(
+    Future<http.Response?> retryHttp(
       Future<http.Response> Function() send,
     ) async {
       const List<int> delays = [200, 400, 800, 1200, 1800, 2500, 3500];
@@ -241,11 +241,11 @@ class _CategorySharePreviewScreenState
         'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/category_shares/$token');
     try {
       http.Response? byIdResp =
-          await _retryHttp(() => http.get(byIdUrl, headers: headers));
+          await retryHttp(() => http.get(byIdUrl, headers: headers));
       // If not found immediately, wait briefly and try byId one more time to avoid propagation races
       if (byIdResp != null && byIdResp.statusCode == 404 && !kIsWeb) {
         await Future.delayed(const Duration(milliseconds: 600));
-        byIdResp = await _retryHttp(() => http.get(byIdUrl, headers: headers));
+        byIdResp = await retryHttp(() => http.get(byIdUrl, headers: headers));
       }
       if (byIdResp != null && byIdResp.statusCode == 200) {
         final body = json.decode(byIdResp.body) as Map<String, dynamic>;
@@ -295,7 +295,7 @@ class _CategorySharePreviewScreenState
     // Retry the query a few times to be resilient to transient DNS/connectivity issues
     http.Response? resp;
     try {
-      resp = await _retryHttp(() =>
+      resp = await retryHttp(() =>
           http.post(runQueryUrl, body: json.encode(payload), headers: headers));
     } catch (e) {
       throw Exception('Network error while looking up share');
@@ -313,7 +313,7 @@ class _CategorySharePreviewScreenState
       // Cold-start race or transient propagation; retry a couple more times with backoff
       for (final delay in [700, 1200]) {
         await Future.delayed(Duration(milliseconds: delay));
-        final retry = await _retryHttp(() => http.post(runQueryUrl,
+        final retry = await retryHttp(() => http.post(runQueryUrl,
             body: json.encode(payload), headers: headers));
         if (retry != null && retry.statusCode == 200) {
           results = json.decode(retry.body) as List;
@@ -332,28 +332,30 @@ class _CategorySharePreviewScreenState
   Map<String, dynamic> _mapRestDoc(Map<String, dynamic> docJson) {
     final fields = (docJson['fields'] ?? {}) as Map<String, dynamic>;
 
-    dynamic _val(Map<String, dynamic>? v) {
+    dynamic val(Map<String, dynamic>? v) {
       if (v == null) return null;
       if (v.containsKey('stringValue')) return v['stringValue'];
-      if (v.containsKey('integerValue'))
+      if (v.containsKey('integerValue')) {
         return int.tryParse(v['integerValue'] as String);
-      if (v.containsKey('doubleValue'))
+      }
+      if (v.containsKey('doubleValue')) {
         return (v['doubleValue'] as num).toDouble();
+      }
       if (v.containsKey('booleanValue')) return v['booleanValue'] as bool;
       if (v.containsKey('mapValue')) {
         final m =
             (v['mapValue']['fields'] as Map<String, dynamic>?) ?? const {};
-        return m.map((k, vv) => MapEntry(k, _val(vv as Map<String, dynamic>?)));
+        return m.map((k, vv) => MapEntry(k, val(vv as Map<String, dynamic>?)));
       }
       if (v.containsKey('arrayValue')) {
         final list = (v['arrayValue']['values'] as List?) ?? const [];
-        return list.map((e) => _val(e as Map<String, dynamic>?)).toList();
+        return list.map((e) => val(e as Map<String, dynamic>?)).toList();
       }
       return null;
     }
 
     Map<String, dynamic> decoded =
-        fields.map((k, v) => MapEntry(k, _val(v as Map<String, dynamic>?)));
+        fields.map((k, v) => MapEntry(k, val(v as Map<String, dynamic>?)));
     return decoded;
   }
 
@@ -474,9 +476,8 @@ class _CategoryPreviewPayload {
     required this.experiencesFuture,
     required this.fromUserId,
     required this.accessMode,
-    this.isMulti = false,
-    this.items,
-  });
+  })  : isMulti = false,
+        items = null;
 
   _CategoryPreviewPayload.multi({
     required List<_MultiCategoryItem> items,
@@ -626,7 +627,7 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
         Provider.of<CategorySaveProgressNotifier>(context, listen: false);
     final CategoryShareService service = CategoryShareService();
     final ExperienceService experienceService = ExperienceService();
-    final String targetUserId = currentUserId!;
+    final String targetUserId = currentUserId;
     final String categoryId = widget.categoryId;
     final String fromUserId = widget.fromUserId;
     final String accessMode = widget.accessMode;
@@ -883,7 +884,7 @@ class _MultiCategoryPreviewListState extends State<_MultiCategoryPreviewList> {
         Provider.of<CategorySaveProgressNotifier>(context, listen: false);
     final CategoryShareService service = CategoryShareService();
     final ExperienceService experienceService = ExperienceService();
-    final String targetUserId = currentUserId!;
+    final String targetUserId = currentUserId;
     final String fromUserId = widget.payload.fromUserId;
     final String accessMode = widget.payload.accessMode;
 
