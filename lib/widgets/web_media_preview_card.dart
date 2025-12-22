@@ -11,11 +11,11 @@ class WebMediaPreviewCard extends StatelessWidget {
   final VoidCallback? onOpenPressed;
 
   const WebMediaPreviewCard({
-    Key? key,
+    super.key,
     required this.url,
     this.experienceName,
     this.onOpenPressed,
-  }) : super(key: key);
+  });
 
   Future<void> _openInPlendy() async {
     // Use the regular Plendy URL - on mobile it will trigger app links/universal links

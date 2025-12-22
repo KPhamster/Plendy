@@ -3,10 +3,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../config/colors.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
@@ -530,12 +530,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   _currentEvent.title.isEmpty ? 'Untitled Event' : _currentEvent.title,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: foregroundColor,
+                    fontFamily: 'Noto Serif',
                   ),
                 )
               : TextField(
             controller: _titleController,
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: foregroundColor,
+              fontFamily: 'Noto Serif',
             ),
             decoration: InputDecoration(
               hintText: 'Untitled Event',
@@ -628,45 +630,53 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 // Hero / Cover Image
                 _buildCoverImageSection(),
 
-                // Schedule Section
-                _buildScheduleSection(durationText),
+                Container(
+                  color: AppColors.backgroundColor,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Schedule Section
+                      _buildScheduleSection(durationText),
 
-                const Divider(height: 1),
+                      const Divider(height: 1),
 
-                // Itinerary Section
-                _buildItinerarySection(),
+                      // Itinerary Section
+                      _buildItinerarySection(),
 
-                const Divider(height: 1),
+                      const Divider(height: 1),
 
-                // People Section
-                _buildPeopleSection(),
+                      // People Section
+                      _buildPeopleSection(),
 
-                const Divider(height: 1),
+                      const Divider(height: 1),
 
-                // Visibility & Sharing
-                _buildVisibilitySection(),
+                      // Visibility & Sharing
+                      _buildVisibilitySection(),
 
-                const Divider(height: 1),
+                      const Divider(height: 1),
 
-                // Capacity & RSVPs
-                if (showCapacitySection) _buildCapacitySection(),
+                      // Capacity & RSVPs
+                      if (showCapacitySection) _buildCapacitySection(),
 
-                if (showCapacitySection) const Divider(height: 1),
+                      if (showCapacitySection) const Divider(height: 1),
 
-                // Notifications
-                _buildNotificationsSection(),
+                      // Notifications
+                      _buildNotificationsSection(),
 
-                const Divider(height: 1),
+                      const Divider(height: 1),
 
-                // Description
-                _buildDescriptionSection(),
+                      // Description
+                      _buildDescriptionSection(),
 
-                const Divider(height: 1),
+                      const Divider(height: 1),
 
-                // Comments
-                _buildCommentsSection(),
+                      // Comments
+                      _buildCommentsSection(),
 
-                const SizedBox(height: 80),
+                      const SizedBox(height: 80),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -2294,6 +2304,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
       style: OutlinedButton.styleFrom(
         foregroundColor: Colors.black,
         disabledForegroundColor: Colors.black,
+        backgroundColor: Colors.white,
+        disabledBackgroundColor: Colors.white,
+        shape: const StadiumBorder(),
+        side: BorderSide(color: Colors.grey.shade400),
       ),
       onPressed: _isReadOnly ? null : () async {
         Widget wrapPicker(Widget? child) =>
@@ -2368,10 +2382,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     return Theme(
       data: theme.copyWith(
-        dialogBackgroundColor: Colors.white,
         colorScheme: theme.colorScheme.copyWith(
           surface: Colors.white,
-          background: Colors.white,
           onSurface: Colors.black,
           primary: theme.colorScheme.primary,
           onPrimary: Colors.white,
@@ -2392,33 +2404,33 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ),
         timePickerTheme: theme.timePickerTheme.copyWith(
           backgroundColor: Colors.white,
-          hourMinuteColor: MaterialStateColor.resolveWith((states) {
-            if (states.contains(MaterialState.selected)) {
+          hourMinuteColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
               return theme.colorScheme.primary; // Selected: primary color
             }
             return lighterPrimary; // Unselected: lighter primary color
           }),
-          hourMinuteTextColor: MaterialStateColor.resolveWith((states) {
-            if (states.contains(MaterialState.selected)) {
+          hourMinuteTextColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
               return Colors.white; // Selected: white text
             }
             return Colors.black87; // Unselected: dark text
           }),
           dialHandColor: theme.colorScheme.primary,
-          dayPeriodColor: MaterialStateColor.resolveWith((states) {
-            if (states.contains(MaterialState.selected)) {
+          dayPeriodColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
               return theme.colorScheme.primary; // Selected: primary color
             }
             return lighterPrimary; // Unselected: lighter primary color (same as hour/minute)
           }),
-          dayPeriodTextColor: MaterialStateColor.resolveWith((states) {
-            if (states.contains(MaterialState.selected)) {
+          dayPeriodTextColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
               return Colors.white; // Selected: white text
             }
             return Colors
                 .black87; // Unselected: dark text (same as hour/minute)
           }),
-        ),
+        ), dialogTheme: DialogThemeData(backgroundColor: Colors.white),
       ),
       child: child ?? const SizedBox.shrink(),
     );
@@ -2961,7 +2973,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               Card(
                 key: ValueKey(entry.experienceId),
                 margin: const EdgeInsets.only(bottom: 12),
-                color: Colors.grey.shade100,
+                color: Colors.white,
                 child: Column(
                   children: [
                     ListTile(
@@ -3196,7 +3208,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             Card(
               key: ValueKey(entry.experienceId),
               margin: const EdgeInsets.only(bottom: 12),
-              color: Colors.grey.shade100,
+              color: Colors.white,
               child: ExpansionTile(
                 shape: const RoundedRectangleBorder(
                   side: BorderSide(color: Colors.transparent, width: 0),
@@ -4911,7 +4923,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Widget _buildNotificationsSection() {
-    String _notificationLabel(
+    String notificationLabel(
       EventNotificationType type,
       Duration? customDuration,
     ) {
@@ -4949,7 +4961,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               const SizedBox(width: 12),
               if (_isReadOnly)
                 Text(
-                  _notificationLabel(
+                  notificationLabel(
                     _currentEvent.notificationPreference.type,
                     _currentEvent.notificationPreference.customDuration,
                   ),
@@ -4964,10 +4976,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
           if (!_isReadOnly) ...[
             const SizedBox(height: 16),
             DropdownButtonFormField<EventNotificationType>(
-              value: _currentEvent.notificationPreference.type,
+              initialValue: _currentEvent.notificationPreference.type,
               decoration: const InputDecoration(
                 labelText: 'Remind me',
                 border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
               ),
               items: const [
                 DropdownMenuItem(
@@ -5062,6 +5076,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
             decoration: const InputDecoration(
               hintText: 'Describe the vibe, schedule details, dress code, etc.',
               border: OutlineInputBorder(),
+              filled: true,
+              fillColor: Colors.white,
             ),
             minLines: 4,
             maxLines: null,
@@ -5299,6 +5315,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
             decoration: InputDecoration(
               hintText: hintText,
               border: const OutlineInputBorder(),
+              filled: true,
+              fillColor: Colors.white,
               isDense: true,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -5367,8 +5385,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final parts = <String>[];
     if (days > 0) parts.add('$days ${days == 1 ? 'day' : 'days'}');
     if (hours > 0) parts.add('$hours ${hours == 1 ? 'hour' : 'hours'}');
-    if (minutes > 0)
+    if (minutes > 0) {
       parts.add('$minutes ${minutes == 1 ? 'minute' : 'minutes'}');
+    }
 
     return parts.isEmpty ? '0 minutes' : parts.join(', ');
   }

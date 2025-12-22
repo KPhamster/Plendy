@@ -518,7 +518,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     if (updated > 0) {
       segments.add('$updated updated');
     }
-    return segments.join(', ') + '.';
+    return '${segments.join(', ')}.';
   }
 
   void _showSnackBar(String message) {

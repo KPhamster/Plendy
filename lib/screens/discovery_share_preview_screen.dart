@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -620,17 +619,17 @@ class _DiscoverySharePreviewScreenState
     switch (type) {
       case _MediaType.instagram:
         platformName = 'Instagram';
-        platformIcon = FontAwesomeIcons.instagram as IconData;
+        platformIcon = FontAwesomeIcons.instagram;
         platformColor = const Color(0xFFE4405F);
         break;
       case _MediaType.tiktok:
         platformName = 'TikTok';
-        platformIcon = FontAwesomeIcons.tiktok as IconData;
+        platformIcon = FontAwesomeIcons.tiktok;
         platformColor = Colors.black;
         break;
       case _MediaType.facebook:
         platformName = 'Facebook';
-        platformIcon = FontAwesomeIcons.facebookF as IconData;
+        platformIcon = FontAwesomeIcons.facebookF;
         platformColor = const Color(0xFF1877F2);
         break;
       default:

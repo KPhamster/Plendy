@@ -22,6 +22,7 @@ import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder
 import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
+import 'package:plendy/config/colors.dart';
 // --- END ADDED ---
 
 // Define necessary callbacks
@@ -568,17 +569,26 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               isDense: true,
                               contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 8),
+                              filled: true,
+                              fillColor: AppColors.backgroundColorDark,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey.shade300),
+                                borderSide: const BorderSide(
+                                  color: AppColors.backgroundColorDark,
+                                ),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey.shade300),
+                                borderSide: const BorderSide(
+                                  color: AppColors.backgroundColorDark,
+                                ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.blue),
+                                borderSide: const BorderSide(
+                                  color: AppColors.backgroundColorDark,
+                                  width: 2,
+                                ),
                               ),
                             ),
                             onChanged: (value) {
@@ -875,17 +885,26 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               isDense: true,
                               contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 8),
+                              filled: true,
+                              fillColor: AppColors.backgroundColorDark,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey.shade300),
+                                borderSide: const BorderSide(
+                                  color: AppColors.backgroundColorDark,
+                                ),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey.shade300),
+                                borderSide: const BorderSide(
+                                  color: AppColors.backgroundColorDark,
+                                ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.blue),
+                                borderSide: const BorderSide(
+                                  color: AppColors.backgroundColorDark,
+                                  width: 2,
+                                ),
                               ),
                             ),
                             onChanged: (value) {
@@ -1091,29 +1110,29 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       child: Container(
         margin: EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: widget.cardData.backgroundColor,
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withOpacity(0.04),
               spreadRadius: 2,
               blurRadius: 8,
               offset: Offset(0, 4),
             ),
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withOpacity(0.02),
               spreadRadius: 1,
               blurRadius: 4,
               offset: Offset(0, -2),
             ),
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withOpacity(0.02),
               spreadRadius: 1,
               blurRadius: 4,
               offset: Offset(-2, 0),
             ),
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withOpacity(0.02),
               spreadRadius: 1,
               blurRadius: 4,
               offset: Offset(2, 0),
@@ -1145,7 +1164,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 .isExpanded // Read directly from cardData
                             ? Icons.keyboard_arrow_up
                             : Icons.keyboard_arrow_down,
-                        color: Colors.blue,
+                        color: Colors.black,
                       ),
                       SizedBox(width: 8),
                       Expanded(
@@ -1243,10 +1262,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 border: Border.all(
                                     color:
                                         isEnabled // Use isEnabled from builder
-                                            ? Colors.grey
-                                            : Colors.grey.shade300),
+                                            ? AppColors.backgroundColorDark
+                                            : AppColors.backgroundColorDark),
                                 borderRadius: BorderRadius.circular(4),
-                                color: Colors.transparent,
+                                color: Colors.white,
                               ),
                               padding: EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 12),
@@ -1329,7 +1348,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                             value; // Update model directly
                                         // No widget.onUpdate() needed here for this toggle's visual state
                                       },
-                                      activeColor: Colors.blue,
+                                      activeThumbColor:
+                                          const Color(0xFF2F6F6D),
                                       materialTapTargetSize:
                                           MaterialTapTargetSize.shrinkWrap,
                                     ),
@@ -1351,6 +1371,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           labelText: 'Experience Title',
                           hintText: 'Enter title',
                           border: OutlineInputBorder(),
+                          enabledBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
                           prefixIcon: Icon(Icons.title),
                           suffixIcon: titleController.text.isNotEmpty
                               ? IconButton(
@@ -1420,7 +1453,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               child: Icon(
                                 Icons.map_outlined,
                                 size: 22,
-                                color: Colors.green[700],
+                                color: const Color(0xFF6D8B74),
                               ),
                             ),
                           ),
@@ -1460,12 +1493,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 12,
                                   vertical: 15), // Adjust padding for height
+                              backgroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(
                                     8.0), // Match field style
                               ),
                               side: BorderSide(
-                                  color: Colors.grey), // Match field border
+                                  color: AppColors
+                                      .backgroundColorDark), // Match field border
                               alignment:
                                   Alignment.centerLeft, // Align content left
                             ),
@@ -1531,8 +1566,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   width: double.infinity,
                                   padding: const EdgeInsets.all(12.0),
                                   decoration: BoxDecoration(
-                                    border: Border.all(color: Colors.grey),
+                                    border: Border.all(
+                                        color: AppColors.backgroundColorDark),
                                     borderRadius: BorderRadius.circular(8.0),
+                                    color: Colors.white,
                                   ),
                                   child: Wrap(
                                     spacing: 6.0,
@@ -1607,9 +1644,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             style: OutlinedButton.styleFrom(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 15),
+                              backgroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8.0)),
-                              side: BorderSide(color: Colors.grey),
+                              side: BorderSide(
+                                  color: AppColors.backgroundColorDark),
                               alignment: Alignment.centerLeft,
                             ),
                             child: Row(
@@ -1681,8 +1720,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   width: double.infinity,
                                   padding: const EdgeInsets.all(12.0),
                                   decoration: BoxDecoration(
-                                    border: Border.all(color: Colors.grey),
+                                    border: Border.all(
+                                        color: AppColors.backgroundColorDark),
                                     borderRadius: BorderRadius.circular(8.0),
+                                    color: Colors.white,
                                   ),
                                   child: Wrap(
                                     spacing: 6.0,
@@ -1755,6 +1796,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           labelText: 'Official Website (optional)',
                           hintText: 'https://...',
                           border: OutlineInputBorder(),
+                          enabledBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
                           prefixIcon: Icon(Icons.language),
                           // --- MODIFIED: Add Paste button to suffix ---
                           suffixIconConstraints: BoxConstraints.tightFor(
@@ -1787,8 +1841,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
                                   padding: const EdgeInsets.all(4.0),
-                                  child: Icon(Icons.content_paste,
-                                      size: 22, color: Colors.blue[700]),
+                                  child: const Icon(Icons.content_paste,
+                                      size: 22, color: Color(0xFF1F2A44)),
                                 ),
                               ),
 
@@ -1832,7 +1886,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                                   .text.isNotEmpty &&
                                               _isValidUrl(
                                                   websiteController.text.trim())
-                                          ? Colors.blue[700]
+                                          ? AppColors.teal
                                           : Colors.grey),
                                 ),
                               ),
@@ -1864,6 +1918,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           labelText: 'Notes (optional)',
                           hintText: 'Enter any additional notes...',
                           border: OutlineInputBorder(),
+                          enabledBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: AppColors.backgroundColorDark,
+                            ),
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: AppColors.backgroundColorDark,
+                              width: 2,
+                            ),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
                           prefixIcon: Icon(Icons.notes),
                           alignLabelWithHint:
                               true, // Align label top-left for multi-line
@@ -2002,17 +2069,26 @@ class _OtherCategoriesSelectionDialogState
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.backgroundColorDark,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.blue),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {
@@ -2231,17 +2307,26 @@ class _OtherColorCategoriesSelectionDialogState
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
+                      filled: true,
+                      fillColor: AppColors.backgroundColorDark,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.blue),
+                        borderSide: const BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) {

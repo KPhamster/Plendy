@@ -51,6 +51,7 @@ import 'providers/discovery_share_coordinator.dart';
 import 'screens/discovery_share_preview_screen.dart';
 import 'screens/data_deletion_screen.dart';
 import 'screens/email_verification_screen.dart';
+import 'screens/splash_screen.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -410,7 +411,7 @@ Future<void> _configureLocalNotifications() async {
                    type == 'event_role_change') {
           final eventId = data['eventId'] as String?;
           if (eventId != null) {
-            print('Event notification tapped (${type}) - eventId: $eventId');
+            print('Event notification tapped ($type) - eventId: $eventId');
             await _openEventFromNotification(eventId);
             return;
           }
@@ -746,7 +747,7 @@ void main() async {
         } else if (type == 'event_reminder' || type == 'event_invite' ||
                    type == 'event_role_change') {
           final eventId = message.data['eventId'] as String?;
-          print("FCM: Event notification (${type}) - eventId: $eventId");
+          print("FCM: Event notification ($type) - eventId: $eventId");
           if (eventId != null) {
             await _openEventFromNotification(eventId);
           }
@@ -799,16 +800,13 @@ Future<void> _initializeAppCheck() async {
         androidProvider: androidProvider,
         appleProvider: appleProvider,
       );
-      print('App Check activated (native providers: ' +
-          (kReleaseMode ? 'release' : 'debug') +
-          ')');
+      print('App Check activated (native providers: ${kReleaseMode ? 'release' : 'debug'})');
     }
     await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
     // Force initial token request so reCAPTCHA key leaves "Incomplete" and headers appear
     try {
       final token = await FirebaseAppCheck.instance.getToken(true);
-      print('App Check initial token fetched: ' +
-          (token != null && token.isNotEmpty ? 'ok' : 'empty'));
+      print('App Check initial token fetched: ${token != null && token.isNotEmpty ? 'ok' : 'empty'}');
     } catch (e) {
       print('App Check initial token fetch error: $e');
     }
@@ -911,6 +909,7 @@ class _MyAppState extends State<MyApp> {
   static const int _maxNavigatorPushRetries = 12;
   bool _coverImagePreloaded = false; // Track if cover image is preloaded
   Future<void>? _coverPreloadFuture; // Track the preload operation
+  bool _splashCompleted = false; // Track if splash screen animation has completed
 
   void _pushRouteWhenReady(WidgetBuilder builder,
       {RouteSettings? settings, int attempt = 0}) {
@@ -963,11 +962,11 @@ class _MyAppState extends State<MyApp> {
     if (core.isEmpty) {
       return uri;
     }
-    final String candidate = 'https://' + core;
+    final String candidate = 'https://$core';
     try {
       return Uri.parse(candidate);
     } catch (e) {
-      print('DeepLink: Failed to coerce intent URI: ' + e.toString());
+      print('DeepLink: Failed to coerce intent URI: $e');
       return uri;
     }
   }
@@ -977,13 +976,10 @@ class _MyAppState extends State<MyApp> {
     if (linkParam != null && linkParam.isNotEmpty) {
       try {
         final Uri nested = Uri.parse(linkParam);
-        print('DeepLink: Unwrapped link parameter -> ' + nested.toString());
+        print('DeepLink: Unwrapped link parameter -> $nested');
         return nested;
       } catch (e) {
-        print('DeepLink: Failed to parse link parameter "' +
-            linkParam +
-            '": ' +
-            e.toString());
+        print('DeepLink: Failed to parse link parameter "$linkParam": $e');
       }
     }
 
@@ -991,13 +987,10 @@ class _MyAppState extends State<MyApp> {
     if (deepLinkId != null && deepLinkId.isNotEmpty) {
       try {
         final Uri nested = Uri.parse(deepLinkId);
-        print('DeepLink: Unwrapped deep_link_id -> ' + nested.toString());
+        print('DeepLink: Unwrapped deep_link_id -> $nested');
         return nested;
       } catch (e) {
-        print('DeepLink: Failed to parse deep_link_id "' +
-            deepLinkId +
-            '": ' +
-            e.toString());
+        print('DeepLink: Failed to parse deep_link_id "$deepLinkId": $e');
       }
     }
 
@@ -1010,13 +1003,12 @@ class _MyAppState extends State<MyApp> {
           final dynamic target = parsed['target_url'];
           if (target is String && target.isNotEmpty) {
             final Uri nested = Uri.parse(target);
-            print('DeepLink: Unwrapped al_applink_data target_url -> ' +
-                nested.toString());
+            print('DeepLink: Unwrapped al_applink_data target_url -> $nested');
             return nested;
           }
         }
       } catch (e) {
-        print('DeepLink: Failed to parse al_applink_data: ' + e.toString());
+        print('DeepLink: Failed to parse al_applink_data: $e');
       }
     }
 
@@ -1025,28 +1017,22 @@ class _MyAppState extends State<MyApp> {
       if (fragment.startsWith('http')) {
         try {
           final Uri nested = Uri.parse(fragment);
-          print('DeepLink: Unwrapped fragment URL -> ' + nested.toString());
+          print('DeepLink: Unwrapped fragment URL -> $nested');
           return nested;
         } catch (e) {
-          print('DeepLink: Failed to parse fragment URI "' +
-              fragment +
-              '": ' +
-              e.toString());
+          print('DeepLink: Failed to parse fragment URI "$fragment": $e');
         }
       } else if (uri.host.isNotEmpty) {
         final String prefix =
-            (uri.scheme.isEmpty ? 'https' : uri.scheme) + '://' + uri.host;
+            '${uri.scheme.isEmpty ? 'https' : uri.scheme}://${uri.host}';
         final String candidate =
-            fragment.startsWith('/') ? fragment : '/' + fragment;
+            fragment.startsWith('/') ? fragment : '/$fragment';
         try {
           final Uri nested = Uri.parse(prefix + candidate);
-          print('DeepLink: Composed fragment URL -> ' + nested.toString());
+          print('DeepLink: Composed fragment URL -> $nested');
           return nested;
         } catch (e) {
-          print('DeepLink: Failed to compose fragment URI "' +
-              fragment +
-              '": ' +
-              e.toString());
+          print('DeepLink: Failed to compose fragment URI "$fragment": $e');
         }
       }
     }
@@ -1365,12 +1351,12 @@ class _MyAppState extends State<MyApp> {
 
   void _handleIncomingUri(Uri uri) {
     final Uri normalizedUri = _normalizeDeepLinkUri(uri);
-    print('DeepLink: Processing URI: ' + uri.toString());
+    print('DeepLink: Processing URI: $uri');
     if (normalizedUri != uri) {
-      print('DeepLink: Normalized URI: ' + normalizedUri.toString());
+      print('DeepLink: Normalized URI: $normalizedUri');
     }
     final List<String> segments = normalizedUri.pathSegments;
-    print('DeepLink: Path segments: ' + segments.toString());
+    print('DeepLink: Path segments: $segments');
 
     if (segments.isEmpty) {
       return;
@@ -1381,20 +1367,14 @@ class _MyAppState extends State<MyApp> {
     if (firstSegment == 'shared') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Experience share - rawToken: ' +
-          rawToken.toString() +
-          ', cleanToken: ' +
-          token.toString());
+      print('DeepLink: Experience share - rawToken: $rawToken, cleanToken: $token');
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
-          print('DeepLink: Sanitized share token from ' +
-              rawToken +
-              ' to ' +
-              token);
+          print('DeepLink: Sanitized share token from $rawToken to $token');
         }
         _pushRouteWhenReady(
           (_) => SharePreviewScreen(token: token),
-          settings: RouteSettings(name: '/shared/' + token),
+          settings: RouteSettings(name: '/shared/$token'),
         );
       } else {
         print('DeepLink: Experience share token missing or empty.');
@@ -1402,10 +1382,7 @@ class _MyAppState extends State<MyApp> {
     } else if (firstSegment == 'discovery-share') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Discovery share - rawToken: ' +
-          rawToken.toString() +
-          ', cleanToken: ' +
-          token.toString());
+      print('DeepLink: Discovery share - rawToken: $rawToken, cleanToken: $token');
       if (token != null && token.isNotEmpty) {
         final BuildContext? ctx = navigatorKey.currentContext;
         if (ctx != null) {
@@ -1419,7 +1396,7 @@ class _MyAppState extends State<MyApp> {
         if (kIsWeb) {
           _pushRouteWhenReady(
             (_) => DiscoverySharePreviewScreen(token: token),
-            settings: RouteSettings(name: '/discovery-share/' + token),
+            settings: RouteSettings(name: '/discovery-share/$token'),
           );
         } else {
           navigatorKey.currentState?.popUntil((route) => route.isFirst);
@@ -1430,20 +1407,14 @@ class _MyAppState extends State<MyApp> {
     } else if (firstSegment == 'shared-category') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Category share - rawToken: ' +
-          rawToken.toString() +
-          ', cleanToken: ' +
-          token.toString());
+      print('DeepLink: Category share - rawToken: $rawToken, cleanToken: $token');
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
-          print('DeepLink: Sanitized category share token from ' +
-              rawToken +
-              ' to ' +
-              token);
+          print('DeepLink: Sanitized category share token from $rawToken to $token');
         }
         _pushRouteWhenReady(
           (_) => CategorySharePreviewScreen(token: token),
-          settings: RouteSettings(name: '/shared-category/' + token),
+          settings: RouteSettings(name: '/shared-category/$token'),
         );
       } else {
         print('DeepLink: Category share token missing or empty.');
@@ -1451,16 +1422,10 @@ class _MyAppState extends State<MyApp> {
     } else if (firstSegment == 'event') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Event share - rawToken: ' +
-          rawToken.toString() +
-          ', cleanToken: ' +
-          token.toString());
+      print('DeepLink: Event share - rawToken: $rawToken, cleanToken: $token');
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
-          print('DeepLink: Sanitized event share token from ' +
-              rawToken +
-              ' to ' +
-              token);
+          print('DeepLink: Sanitized event share token from $rawToken to $token');
         }
         
         // Store the token to show the event as root widget for unauthenticated users
@@ -1523,7 +1488,7 @@ class _MyAppState extends State<MyApp> {
       }
     } else if (firstSegment == 'profile') {
       final String? userId = segments.length > 1 ? segments[1] : null;
-      print('DeepLink: Profile - userId: ' + userId.toString());
+      print('DeepLink: Profile - userId: $userId');
       if (userId != null && userId.isNotEmpty) {
         _pushRouteWhenReady(
           (_) => PublicProfileScreen(userId: userId),
@@ -1538,7 +1503,7 @@ class _MyAppState extends State<MyApp> {
         _showDataDeletion = true;
       });
     } else {
-      print('DeepLink: No handler for path segments: ' + segments.toString());
+      print('DeepLink: No handler for path segments: $segments');
     }
   }
 
@@ -1644,7 +1609,7 @@ class _MyAppState extends State<MyApp> {
         secondary: Colors.white, // Lighter red for secondary elements
       ),
     );
-    final TextStyle? appBarTitleStyle = GoogleFonts.notoSerif(
+    final TextStyle appBarTitleStyle = GoogleFonts.notoSerif(
       textStyle: baseTheme.textTheme.titleLarge,
       fontSize: 24.0,
       fontWeight: FontWeight.w700,
@@ -1666,9 +1631,7 @@ class _MyAppState extends State<MyApp> {
       ),
       builder: (context, child) {
         // Start preloading Discovery cover images as soon as MaterialApp builds
-        if (_coverPreloadFuture == null) {
-          _coverPreloadFuture = _preloadDiscoveryCoverImages(context);
-        }
+        _coverPreloadFuture ??= _preloadDiscoveryCoverImages(context);
         return child ?? const SizedBox.shrink();
       },
       home: _buildHomeWidget(authService, launchedFromShare),
@@ -1684,9 +1647,33 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
+  void _handleSplashCompleted() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _splashCompleted = true;
+    });
+  }
+
   Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
     print(
         "MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
+
+    // Show splash screen until animation completes (skip for deep links and special cases)
+    final shouldSkipSplash = _showDataDeletion ||
+        _initialEventShareToken != null ||
+        _initialDiscoveryShareToken != null ||
+        _initialExperienceShareToken != null ||
+        _initialProfileUserId != null ||
+        launchedFromShare;
+
+    if (!_splashCompleted && !shouldSkipSplash) {
+      print("MAIN BUILD DEBUG: Showing SplashScreen (splashCompleted=$_splashCompleted)");
+      return SplashScreen(
+        onAnimationComplete: _handleSplashCompleted,
+      );
+    }
 
     // NEW: Prioritize data deletion page (public, no auth required)
     if (_showDataDeletion) {
@@ -1817,17 +1804,26 @@ class _MyAppState extends State<MyApp> {
     return StreamBuilder<User?>(
       stream: authService.authStateChanges,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        print("AUTH FLOW: connectionState=${snapshot.connectionState}, hasData=${snapshot.hasData}, hasError=${snapshot.hasError}");
+        
+        // Use currentUser if stream hasn't emitted yet (avoid waiting state)
+        final User? effectiveUser = snapshot.hasData ? snapshot.data : authService.currentUser;
+        final bool isWaitingWithNoUser = snapshot.connectionState == ConnectionState.waiting && effectiveUser == null;
+        
+        print("AUTH FLOW: effectiveUser=${effectiveUser?.uid}, isWaitingWithNoUser=$isWaitingWithNoUser");
+        
+        if (isWaitingWithNoUser) {
+          print("AUTH FLOW: Showing loading indicator (waiting for auth state, no current user)");
           return const Center(child: CircularProgressIndicator());
         }
 
         // Initialize/cleanup NotificationStateService based on auth state
         final notificationService =
             Provider.of<NotificationStateService>(context, listen: false);
-        if (snapshot.hasData && snapshot.data?.uid != null) {
+        if (effectiveUser != null) {
           // User is logged in - initialize notification service
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            notificationService.initializeForUser(snapshot.data!.uid);
+            notificationService.initializeForUser(effectiveUser.uid);
           });
         } else {
           // User is logged out - clean up notification service
@@ -1838,10 +1834,10 @@ class _MyAppState extends State<MyApp> {
 
         // Print debug info
         print(
-            'Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
+            'Auth state changed: ${effectiveUser != null ? 'Logged in' : 'Logged out'}');
 
         // --- ADDED: Reset share data on logout ---
-        if (!snapshot.hasData && _sharedFiles != null) {
+        if (effectiveUser == null && _sharedFiles != null) {
           // If user logs out while share data is present, clear it
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
@@ -1854,7 +1850,7 @@ class _MyAppState extends State<MyApp> {
           });
         }
 
-        if (!snapshot.hasData) {
+        if (effectiveUser == null) {
           if (_forceOnboarding) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted && _forceOnboarding) {
@@ -1867,18 +1863,22 @@ class _MyAppState extends State<MyApp> {
           return const AuthScreen();
         }
 
-        final user = snapshot.data!;
+        final user = effectiveUser;
+        print("AUTH FLOW: User logged in, uid=${user.uid}");
         return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection('users')
               .doc(user.uid)
               .snapshots(),
           builder: (context, userSnapshot) {
+            print("USER DOC: connectionState=${userSnapshot.connectionState}, hasData=${userSnapshot.hasData}, hasError=${userSnapshot.hasError}");
             if (userSnapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              print("USER DOC: Waiting for user doc");
+              return const _DelayedLoadingIndicator();
             }
 
             if (userSnapshot.hasError) {
+              print("USER DOC: Error loading user doc: ${userSnapshot.error}");
               return const Center(child: Text('Unable to load profile.'));
             }
 
@@ -1926,12 +1926,15 @@ class _MyAppState extends State<MyApp> {
             }
 
             final shouldShowOnboarding = requiresOnboarding || _forceOnboarding;
+            print("USER DOC: requiresOnboarding=$requiresOnboarding, forceOnboarding=$_forceOnboarding, shouldShowOnboarding=$shouldShowOnboarding");
 
             if (shouldShowOnboarding) {
+              print("USER DOC: Showing OnboardingScreen");
               return OnboardingScreen(
                 onFinishedFlow: _handleOnboardingFinished,
               );
             }
+            print("USER DOC: Showing MainScreen");
             return const MainScreen();
           },
         );
@@ -2003,5 +2006,50 @@ class AppLifecycleObserver extends WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused && onPaused != null) {
       onPaused!();
     }
+  }
+}
+
+class _DelayedLoadingIndicator extends StatefulWidget {
+  const _DelayedLoadingIndicator({this.delay = const Duration(seconds: 5)});
+
+  final Duration delay;
+
+  @override
+  State<_DelayedLoadingIndicator> createState() =>
+      _DelayedLoadingIndicatorState();
+}
+
+class _DelayedLoadingIndicatorState extends State<_DelayedLoadingIndicator> {
+  bool _showSpinner = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(widget.delay, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _showSpinner = true;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final background = Theme.of(context).scaffoldBackgroundColor;
+    return ColoredBox(
+      color: background,
+      child: _showSpinner
+          ? const Center(child: CircularProgressIndicator())
+          : const SizedBox.shrink(),
+    );
   }
 }

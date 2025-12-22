@@ -112,23 +112,23 @@ class _EventExperienceSelectorScreenState
   late List<Experience> _filteredExperiences;
 
   bool _isLoading = false;
-  
+
   // Search functionality
   final TextEditingController _searchController = TextEditingController();
   bool _clearSearchOnNextBuild = false;
-  
+
   // Scroll controller for auto-scrolling to experiences
   final ScrollController _experiencesScrollController = ScrollController();
-  
+
   // Flash state for highlighting selected experience
   String? _flashingExperienceId;
   Timer? _flashTimer;
-  
+
   // Track the order in which experiences were selected
   final List<String> _selectionOrder = [];
 
   Event? _draftEvent;
-  
+
   // Services
   final _authService = AuthService();
   final _experienceService = ExperienceService();
@@ -148,7 +148,7 @@ class _EventExperienceSelectorScreenState
     // This ensures existing experiences maintain their order and new selections are appended
     if (widget.initialEvent != null) {
       for (final entry in widget.initialEvent!.experiences) {
-        if (entry.experienceId.isNotEmpty && 
+        if (entry.experienceId.isNotEmpty &&
             _selectedExperienceIds.contains(entry.experienceId)) {
           _selectionOrder.add(entry.experienceId);
         }
@@ -617,15 +617,16 @@ class _EventExperienceSelectorScreenState
     if (pattern.isEmpty) {
       return [];
     }
-    
+
     // Search through all experiences (not just filtered)
     List<Experience> suggestions = _sortedExperiences
         .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
         .toList();
 
     // Sort suggestions alphabetically
-    suggestions.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    
+    suggestions
+        .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
     return suggestions;
   }
 
@@ -649,8 +650,9 @@ class _EventExperienceSelectorScreenState
     if (!mounted) return;
 
     // Find the experience in the filtered list
-    final experienceIndex = _filteredExperiences.indexWhere((exp) => exp.id == experience.id);
-    
+    final experienceIndex =
+        _filteredExperiences.indexWhere((exp) => exp.id == experience.id);
+
     if (experienceIndex == -1) {
       // Experience not in filtered list - could be filtered out
       ScaffoldMessenger.of(context).showSnackBar(
@@ -670,7 +672,7 @@ class _EventExperienceSelectorScreenState
 
     // Wait a frame for the list to rebuild
     await Future.delayed(const Duration(milliseconds: 50));
-    
+
     // Scroll to the top of the list
     if (_experiencesScrollController.hasClients) {
       await _experiencesScrollController.animateTo(
@@ -688,7 +690,7 @@ class _EventExperienceSelectorScreenState
 
       // Cancel any existing flash timer
       _flashTimer?.cancel();
-      
+
       // Clear flash after a brief moment
       _flashTimer = Timer(const Duration(milliseconds: 1500), () {
         if (mounted) {
@@ -787,7 +789,6 @@ class _EventExperienceSelectorScreenState
       ],
     );
   }
-
 
   Widget _buildExperienceSortMenuButton() {
     return PopupMenuButton<ExperienceSortType>(
@@ -902,15 +903,15 @@ class _EventExperienceSelectorScreenState
                 children: [
                   // Search Bar
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12.0, vertical: 4.0),
                     child: Theme(
                       data: Theme.of(context).copyWith(
                         cardColor: Colors.white,
                         canvasColor: Colors.white,
                         colorScheme: Theme.of(context).colorScheme.copyWith(
-                          surface: Colors.white,
-                          background: Colors.white,
-                        ),
+                              surface: Colors.white,
+                            ),
                       ),
                       child: TypeAheadField<Experience>(
                         builder: (context, controller, focusNode) {
@@ -1275,8 +1276,7 @@ class _EventExperienceSelectorScreenState
     final category = _sortedCategories.firstWhereOrNull(
       (cat) => cat.id == experience.categoryId,
     );
-    final categoryIcon =
-        category?.icon ?? experience.categoryIconDenorm ?? '?';
+    final categoryIcon = category?.icon ?? experience.categoryIconDenorm ?? '?';
 
     final colorCategoryForBox = _sortedColorCategories.firstWhereOrNull(
       (cc) => cc.id == experience.colorCategoryId,
@@ -1296,15 +1296,15 @@ class _EventExperienceSelectorScreenState
         )
         .whereType<UserCategory>()
         .toList();
-    final List<ColorCategory> otherColorCategories = experience
-        .otherColorCategoryIds
-        .map(
-          (colorCategoryId) => _sortedColorCategories.firstWhereOrNull(
-            (cc) => cc.id == colorCategoryId,
-          ),
-        )
-        .whereType<ColorCategory>()
-        .toList();
+    final List<ColorCategory> otherColorCategories =
+        experience.otherColorCategoryIds
+            .map(
+              (colorCategoryId) => _sortedColorCategories.firstWhereOrNull(
+                (cc) => cc.id == colorCategoryId,
+              ),
+            )
+            .whereType<ColorCategory>()
+            .toList();
 
     final String? address = experience.location.address;
     final bool hasAddress = address != null && address.isNotEmpty;
@@ -1426,74 +1426,76 @@ class _EventExperienceSelectorScreenState
     final bool isSelected = _selectedExperienceIds.contains(experience.id);
     final bool isFlashing = _flashingExperienceId == experience.id;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      color: isFlashing 
-          ? Theme.of(context).primaryColor.withOpacity(0.2)
-          : Colors.transparent,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
-        leading: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Checkbox(
-            value: isSelected,
-            onChanged: (bool? value) {
-              setState(() {
-                if (value ?? false) {
-                  _selectedExperienceIds.add(experience.id);
-                  // Track selection order
-                  if (!_selectionOrder.contains(experience.id)) {
-                    _selectionOrder.add(experience.id);
-                  }
-                } else {
-                  _selectedExperienceIds.remove(experience.id);
-                  // Don't remove from order - preserve check order
+    return RepaintBoundary(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        color: isFlashing
+            ? Theme.of(context).primaryColor.withOpacity(0.2)
+            : Colors.transparent,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
+          leading: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: isSelected,
+                onChanged: (bool? value) {
+                  setState(() {
+                    if (value ?? false) {
+                      _selectedExperienceIds.add(experience.id);
+                      // Track selection order
+                      if (!_selectionOrder.contains(experience.id)) {
+                        _selectionOrder.add(experience.id);
+                      }
+                    } else {
+                      _selectedExperienceIds.remove(experience.id);
+                      // Don't remove from order - preserve check order
+                    }
+                  });
+                },
+              ),
+              const SizedBox(width: 4),
+              Container(
+                width: 56,
+                height: 56,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: leadingBoxColor,
+                  borderRadius: BorderRadius.circular(8.0),
+                ),
+                child: Text(
+                  categoryIcon,
+                  style: const TextStyle(fontSize: 28),
+                ),
+              ),
+            ],
+          ),
+          title: Text(
+            experience.name,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+          subtitle: subtitleChildren.isEmpty
+              ? null
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: subtitleChildren,
+                ),
+          onTap: () {
+            setState(() {
+              if (_selectedExperienceIds.contains(experience.id)) {
+                _selectedExperienceIds.remove(experience.id);
+                // Don't remove from order - preserve check order
+              } else {
+                _selectedExperienceIds.add(experience.id);
+                // Track selection order
+                if (!_selectionOrder.contains(experience.id)) {
+                  _selectionOrder.add(experience.id);
                 }
-              });
-            },
-            ),
-            const SizedBox(width: 4),
-            Container(
-              width: 56,
-              height: 56,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: leadingBoxColor,
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-              child: Text(
-                categoryIcon,
-                style: const TextStyle(fontSize: 28),
-              ),
-            ),
-          ],
+              }
+            });
+          },
         ),
-        title: Text(
-          experience.name,
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
-        ),
-        subtitle: subtitleChildren.isEmpty
-            ? null
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: subtitleChildren,
-              ),
-      onTap: () {
-        setState(() {
-          if (_selectedExperienceIds.contains(experience.id)) {
-            _selectedExperienceIds.remove(experience.id);
-            // Don't remove from order - preserve check order
-          } else {
-            _selectedExperienceIds.add(experience.id);
-            // Track selection order
-            if (!_selectionOrder.contains(experience.id)) {
-              _selectionOrder.add(experience.id);
-            }
-          }
-        });
-      },
       ),
     );
   }
@@ -1542,8 +1544,8 @@ class _EventExperienceSelectorScreenState
       List<EventExperienceEntry> experienceEntries) {
     if (experienceEntries.isEmpty) return null;
     final firstExpId = experienceEntries.first.experienceId;
-    final firstExp = widget.experiences
-        .firstWhereOrNull((exp) => exp.id == firstExpId);
+    final firstExp =
+        widget.experiences.firstWhereOrNull((exp) => exp.id == firstExpId);
 
     if (firstExp == null) return null;
 
@@ -1623,7 +1625,7 @@ class _EventExperienceSelectorScreenState
 
       setState(() {
         _selectedExperienceIds = updatedExperienceIds;
-        
+
         // Update selection order to match the event's itinerary order
         _selectionOrder.clear();
         for (final entry in result.experiences) {
@@ -1631,7 +1633,7 @@ class _EventExperienceSelectorScreenState
             _selectionOrder.add(entry.experienceId);
           }
         }
-        
+
         // Store the draft event
         _draftEvent = result;
       });

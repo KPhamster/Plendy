@@ -28,6 +28,7 @@ import 'auth_screen.dart';
 import 'experience_page_screen.dart';
 import 'main_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/colors.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -1704,14 +1705,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     return WillPopScope(
       onWillPop: _handleBackNavigation,
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () => _handleBackNavigation(),
           ),
           title: viewingOwnProfile ? const Text('Public Profile') : null,
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.backgroundColor,
           foregroundColor: Colors.black,
           elevation: 0,
           actions: [
@@ -2392,7 +2393,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         borderRadius: BorderRadius.circular(8.0),
       ),
       child: MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.center,
@@ -2754,7 +2755,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: const BoxDecoration(color: Colors.white),
+      decoration: const BoxDecoration(color: AppColors.backgroundColor),
       child: Text(
         '$count ${count == 1 ? 'Experience' : 'Experiences'}',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(

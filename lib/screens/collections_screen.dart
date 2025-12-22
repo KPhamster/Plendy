@@ -28,7 +28,6 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
-import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/yelp_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
@@ -41,8 +40,8 @@ import '../config/colors.dart'; // ADDED: Import for AppColors
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
-import 'package:flutter/gestures.dart'; // ADDED Import for PointerScrollEvent
-import 'package:flutter/rendering.dart'; // ADDED Import for Scrollable
+// ADDED Import for PointerScrollEvent
+// ADDED Import for Scrollable
 import '../services/google_maps_service.dart';
 import '../services/category_share_service.dart';
 import '../services/sharing_service.dart';
@@ -182,7 +181,7 @@ class CollectionsScreen extends StatefulWidget {
 }
 
 class CollectionsScreenState extends State<CollectionsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _authService = AuthService();
   final _experienceService = ExperienceService();
   final _eventService = EventService();
@@ -220,6 +219,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
   bool _isSelectingCategories = false;
   bool _isSelectingExperiences = false;
   final Set<String> _selectedExperienceIds = <String>{};
+  static const Duration _experienceSelectionAnimationDuration =
+      Duration(milliseconds: 420);
+  static const Duration _experienceCountSlideDuration =
+      Duration(milliseconds: 220);
+  static const Offset _experienceCountSlideOffset = Offset(0, 0.16);
+  late final AnimationController _experienceSelectionController;
+  late final Animation<double> _experienceSelectionRowAnimation;
+  late final Animation<double> _experienceSelectionCloseAnimation;
+  late final Animation<double> _experienceSelectionEventAnimation;
+  late final Animation<double> _experienceSelectionShareAnimation;
+  late final Animation<double> _experienceSelectionDeleteAnimation;
 
   // Cache resolved shared media to avoid refetching when previewing content
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
@@ -246,6 +256,51 @@ class CollectionsScreenState extends State<CollectionsScreen>
     if (_isLoading != previousLoading) {
       _notifyLoadingChange();
     }
+  }
+
+  void _enterExperienceSelectionMode({String? selectId}) {
+    if (_isSelectingExperiences) {
+      if (selectId != null &&
+          !_selectedExperienceIds.contains(selectId)) {
+        setState(() {
+          _selectedExperienceIds.add(selectId);
+        });
+      }
+      return;
+    }
+    setState(() {
+      _isSelectingExperiences = true;
+      _selectedExperienceIds.clear();
+      if (selectId != null) {
+        _selectedExperienceIds.add(selectId);
+      }
+    });
+    _experienceSelectionController.forward(from: 0);
+  }
+
+  void _exitExperienceSelectionMode() {
+    if (!_isSelectingExperiences) return;
+    setState(() {
+      _isSelectingExperiences = false;
+      _selectedExperienceIds.clear();
+    });
+    _experienceSelectionController.reverse();
+  }
+
+  Widget _buildExperienceSelectionAction({
+    required Animation<double> animation,
+    required Widget child,
+  }) {
+    return FadeTransition(
+      opacity: animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(-0.18, 0),
+          end: Offset.zero,
+        ).animate(animation),
+        child: child,
+      ),
+    );
   }
 
   bool _isSharedCategory(UserCategory category) =>
@@ -438,8 +493,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
   // NEW: Generic expansion maps for dynamic multi-level grouping
   final Map<String, bool> _locationExpansionExperiences = {};
   final Map<String, bool> _locationExpansionContent = {};
-  bool _groupByCityExperiences = false;
-  bool _groupByCityContent = false;
+  final bool _groupByCityExperiences = false;
+  final bool _groupByCityContent = false;
   List<String> _manualCategoryOrder = [];
   List<String> _manualColorCategoryOrder = [];
   bool _useManualCategoryOrder = false;
@@ -757,11 +812,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
   // --- ADDED: Country grouping state and expansion maps ---
   final Map<String, bool> _countryExpansionExperiences = {};
   final Map<String, bool> _countryExpansionContent = {};
-  bool _groupByCountryExperiences = false;
-  bool _groupByCountryContent = false;
+  final bool _groupByCountryExperiences = false;
+  final bool _groupByCountryContent = false;
   // --- ADDED: No-location expansion flags ---
   bool _noLocationExperiencesExpanded = true;
-  bool _noLocationContentExpanded = true;
+  final bool _noLocationContentExpanded = true;
   // --- NEW: Unified grouping flags and state expansion maps ---
   bool _groupByLocationExperiences = false;
   bool _groupByLocationContent = false;
@@ -946,6 +1001,32 @@ class CollectionsScreenState extends State<CollectionsScreen>
         TabController(length: 3, vsync: this, initialIndex: initialTabIndex);
     _currentTabIndex = initialTabIndex;
     _lastTabIndex = initialTabIndex;
+    _experienceSelectionController = AnimationController(
+      vsync: this,
+      duration: _experienceSelectionAnimationDuration,
+      reverseDuration: _experienceSelectionAnimationDuration,
+    );
+    _experienceSelectionRowAnimation = CurvedAnimation(
+      parent: _experienceSelectionController,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    _experienceSelectionCloseAnimation = CurvedAnimation(
+      parent: _experienceSelectionController,
+      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+    );
+    _experienceSelectionEventAnimation = CurvedAnimation(
+      parent: _experienceSelectionController,
+      curve: const Interval(0.1, 0.5, curve: Curves.easeOut),
+    );
+    _experienceSelectionShareAnimation = CurvedAnimation(
+      parent: _experienceSelectionController,
+      curve: const Interval(0.2, 0.6, curve: Curves.easeOut),
+    );
+    _experienceSelectionDeleteAnimation = CurvedAnimation(
+      parent: _experienceSelectionController,
+      curve: const Interval(0.3, 0.7, curve: Curves.easeOut),
+    );
     _tabController.addListener(() {
       if (!mounted) return;
       if (_tabController.indexIsChanging) {
@@ -1196,7 +1277,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       BuildContext context, CategorySaveTask task) {
     final ThemeData theme = Theme.of(context);
     final ColorScheme scheme = theme.colorScheme;
-    final Color background = scheme.surfaceVariant.withOpacity(0.6);
+    final Color background = scheme.surfaceContainerHighest.withOpacity(0.6);
     final double? progress = task.progress;
     final int totalExperiences = task.totalUnits > 0 ? task.totalUnits - 1 : 0;
     final int rawCompletedExperiences =
@@ -1231,7 +1312,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Saving ' + task.categoryName + ' Category',
+                  'Saving ${task.categoryName} Category',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -1252,7 +1333,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             value: progress,
             minHeight: 4,
             color: scheme.primary,
-            backgroundColor: scheme.surfaceVariant.withOpacity(0.3),
+            backgroundColor: scheme.surfaceContainerHighest.withOpacity(0.3),
           ),
         ],
       ),
@@ -1276,6 +1357,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     _categorySaveNotifier = null;
     _experiencesScrollController.removeListener(_onExperiencesScroll);
     _experiencesScrollController.dispose();
+    _experienceSelectionController.dispose();
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -1414,7 +1496,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           } else if (_experienceSortType == ExperienceSortType.mostRecent) {
             leaf.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
           }
-          for (final e in leaf) flat.add({'item': e, 'key': prefixKey});
+          for (final e in leaf) {
+            flat.add({'item': e, 'key': prefixKey});
+          }
           return;
         }
         // Group by the resolved present level
@@ -1477,7 +1561,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             // Missing level for these items: drop deeper to next present level/leaf
             buildLevel(prefixKey, _nextLevel(useLevel), buckets[k]!);
           } else {
-            final key = '$prefixKey|$useLevel:${k}';
+            final key = '$prefixKey|$useLevel:$k';
             flat.add({'header': disp, 'level': useLevel, 'key': key});
             _locationExpansionExperiences.putIfAbsent(key, () => false);
             if (!(_locationExpansionExperiences[key] ?? false)) continue;
@@ -1502,7 +1586,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
         } else if (_experienceSortType == ExperienceSortType.mostRecent) {
           items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         }
-        for (final e in items) flat.add({'item': e, 'key': key});
+        for (final e in items) {
+          flat.add({'item': e, 'key': key});
+        }
       }
     }
     return flat;
@@ -1542,8 +1628,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
       // Otherwise, place this group under all location paths for its associated experiences
       for (final exp in group.associatedExperiences) {
         final c = n(exp.location.country);
-        if (c.isEmpty)
+        if (c.isEmpty) {
           continue; // without country, treat as noloc but we already handled
+        }
         String l1 = n(exp.location.state);
         final l2 = n(exp.location.administrativeAreaLevel2);
         final l3 = n(exp.location.administrativeAreaLevel3);
@@ -1751,7 +1838,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           if (disp.isEmpty) {
             buildLevel(prefixKey, _nextLevel(useLevel), buckets[k]!);
           } else {
-            final key = '$prefixKey|$useLevel:${k}';
+            final key = '$prefixKey|$useLevel:$k';
             flat.add({'header': disp, 'level': useLevel, 'key': key});
             _locationExpansionContent.putIfAbsent(key, () => false);
             if (!(_locationExpansionContent[key] ?? false)) continue;
@@ -3003,11 +3090,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final bool isShared = permission != null;
     final bool isOwnerShared = _ownedSharedCategoryIds.contains(category.id);
     final String? ownerName = isShared
-        ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+        ? (_shareOwnerNames[permission.ownerUserId] ?? 'Someone')
         : null;
     final String? shareLabel = isShared
         ? _buildSharedByLabel(
-            permission: permission!,
+            permission: permission,
             ownerName: ownerName ?? 'Someone',
           )
         : (isOwnerShared ? 'Shared' : null);
@@ -3159,16 +3246,16 @@ class CollectionsScreenState extends State<CollectionsScreen>
               _sharedCategoryPermissions[category.id];
           final bool isShared = permission != null;
           final bool canEditCategory =
-              !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+              !isShared || permission.accessLevel == ShareAccessLevel.edit;
           final bool canManageCategory = !isShared;
           final bool isOwnerShared =
               _ownedSharedCategoryIds.contains(category.id);
           final String? ownerName = isShared
-              ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+              ? (_shareOwnerNames[permission.ownerUserId] ?? 'Someone')
               : null;
           final String? shareLabel = isShared
               ? _buildSharedByLabel(
-                  permission: permission!,
+                  permission: permission,
                   ownerName: ownerName ?? 'Someone',
                 )
               : (isOwnerShared ? 'Shared' : null);
@@ -3264,7 +3351,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   ),
                 ),
               ];
-              if (isShared && permission != null) {
+              if (isShared) {
                 items.add(
                   const PopupMenuItem<String>(
                     value: 'remove',
@@ -3650,10 +3737,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
           // Show first few comparisons for debugging
           if (listToSort.indexOf(a) < 5 || listToSort.indexOf(b) < 5) {
             final aPath = a.mediaItem.path.length > 30
-                ? a.mediaItem.path.substring(0, 30) + "..."
+                ? "${a.mediaItem.path.substring(0, 30)}..."
                 : a.mediaItem.path;
             final bPath = b.mediaItem.path.length > 30
-                ? b.mediaItem.path.substring(0, 30) + "..."
+                ? "${b.mediaItem.path.substring(0, 30)}..."
                 : b.mediaItem.path;
           }
           return comparison;
@@ -3725,7 +3812,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (!applyToFiltered) {
         unawaited(_saveContentSort(sortType));
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error sorting content: $e')),
@@ -4088,7 +4175,6 @@ class CollectionsScreenState extends State<CollectionsScreen>
                           canvasColor: Colors.white,
                           colorScheme: Theme.of(context).colorScheme.copyWith(
                                 surface: Colors.white,
-                                background: Colors.white,
                               ),
                         ),
                         child: TypeAheadField<Experience>(
@@ -4544,146 +4630,161 @@ class CollectionsScreenState extends State<CollectionsScreen>
                           color: const Color(0xFFF8F5F2),
                           child: Column(
                             children: [
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                    left: 7.0, right: 7.0, top: 8.0, bottom: 2.0),
-                                child: Row(
-                                  children: [
-                                    Builder(builder: (context) {
-                                      final int totalCount =
-                                          _filteredExperiences.length;
-                                      final int selectedCount =
-                                          _selectedExperienceIds.length;
-                                      final bool selecting =
-                                          _isSelectingExperiences;
-                                      final bool allSelected = selecting &&
-                                          totalCount > 0 &&
-                                          selectedCount == totalCount;
-                                      final bool someSelected = selecting &&
-                                          selectedCount > 0 &&
-                                          !allSelected;
-
-                                      if (!selecting) {
-                                        return Row(
-                                          mainAxisSize: MainAxisSize.min,
+                              ClipRect(
+                                child: SizeTransition(
+                                  sizeFactor: _experienceSelectionRowAnimation,
+                                  axisAlignment: -1,
+                                  child: FadeTransition(
+                                    opacity: _experienceSelectionRowAnimation,
+                                    child: IgnorePointer(
+                                      ignoring: !_isSelectingExperiences,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                            left: 7.0,
+                                            right: 7.0,
+                                            top: 8.0,
+                                            bottom: 2.0),
+                                        child: Row(
                                           children: [
-                                            IconButton(
-                                              tooltip: 'Select experiences',
-                                              icon: const Icon(
-                                                  Icons.check_box_outlined),
-                                              onPressed: () {
-                                                _triggerTapHaptic();
-                                                setState(() {
-                                                  _isSelectingExperiences =
-                                                      true;
-                                                  _selectedExperienceIds
-                                                      .clear();
-                                                });
-                                              },
-                                            ),
-                                          ],
-                                        );
-                                      }
+                                            Builder(builder: (context) {
+                                              final int totalCount =
+                                                  _filteredExperiences.length;
+                                              final int selectedCount =
+                                                  _selectedExperienceIds.length;
+                                              final bool allSelected =
+                                                  totalCount > 0 &&
+                                                      selectedCount ==
+                                                          totalCount;
+                                              final bool someSelected =
+                                                  selectedCount > 0 &&
+                                                      !allSelected;
 
-                                      return Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Checkbox(
-                                            value: allSelected
-                                                ? true
-                                                : (someSelected ? null : false),
-                                            tristate: true,
-                                            onChanged: totalCount == 0
-                                                ? null
-                                                : (bool? value) {
-                                                    setState(() {
-                                                      final bool selectAllNow =
-                                                          someSelected
-                                                              ? true
-                                                              : (allSelected
-                                                                  ? false
-                                                                  : (value ??
-                                                                      true));
-                                                      if (selectAllNow) {
-                                                        _selectedExperienceIds
-                                                          ..clear()
-                                                          ..addAll(
-                                                              _filteredExperiences
-                                                                  .map((e) =>
-                                                                      e.id));
-                                                      } else {
-                                                        _selectedExperienceIds
-                                                            .clear();
-                                                      }
-                                                    });
-                                                  },
-                                          ),
-                                          const SizedBox(width: 6),
-                                          IconButton(
-                                            tooltip: 'Cancel selection',
-                                            icon: const Icon(Icons.close),
-                                            onPressed: () {
-                                              _triggerTapHaptic();
-                                              setState(() {
-                                                _isSelectingExperiences = false;
-                                                _selectedExperienceIds.clear();
-                                              });
-                                            },
-                                          ),
-                                          const SizedBox(width: 6),
-                                          IconButton(
-                                            tooltip:
-                                                'Create event with selected',
-                                            icon: Icon(
-                                                Icons.event_outlined,
-                                                color: selectedCount == 0
-                                                    ? Colors.grey
-                                                    : Colors.deepPurple),
-                                            onPressed: selectedCount == 0
-                                                ? null
-                                                : () {
-                                                    _triggerTapHaptic();
-                                                    unawaited(
-                                                        _handleCreateEventWithSelectedExperiences());
-                                                  },
-                                          ),
-                                          const SizedBox(width: 6),
-                                          IconButton(
-                                            tooltip:
-                                                'Share selected experiences',
-                                            icon: Icon(
-                                                Icons.share_outlined,
-                                                color: selectedCount == 0
-                                                    ? Colors.grey
-                                                    : Colors.blue),
-                                            onPressed: selectedCount == 0
-                                                ? null
-                                                : () {
-                                                    _triggerTapHaptic();
-                                                    unawaited(
-                                                        _handleShareSelectedExperiences());
-                                                  },
-                                          ),
-                                          const SizedBox(width: 6),
-                                          IconButton(
-                                            tooltip:
-                                                'Delete selected experiences',
-                                            icon: const Icon(
-                                                Icons.delete_outline),
-                                            color: Colors.red,
-                                            onPressed: selectedCount == 0
-                                                ? null
-                                                : () {
-                                                    _triggerTapHaptic();
-                                                    unawaited(
-                                                        _handleBulkDeleteSelectedExperiences());
-                                                  },
-                                          ),
-                                        ],
-                                      );
-                                    }),
-                                    const Expanded(child: SizedBox()),
-                                  ],
+                                              return Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Checkbox(
+                                                    value: allSelected
+                                                        ? true
+                                                        : (someSelected
+                                                            ? null
+                                                            : false),
+                                                    tristate: true,
+                                                    onChanged: totalCount == 0
+                                                        ? null
+                                                        : (bool? value) {
+                                                            setState(() {
+                                                              final bool
+                                                                  selectAllNow =
+                                                                  someSelected
+                                                                      ? true
+                                                                      : (allSelected
+                                                                          ? false
+                                                                          : (value ??
+                                                                              true));
+                                                              if (selectAllNow) {
+                                                                _selectedExperienceIds
+                                                                  ..clear()
+                                                                  ..addAll(
+                                                                      _filteredExperiences
+                                                                          .map((e) =>
+                                                                              e.id));
+                                                              } else {
+                                                                _selectedExperienceIds
+                                                                    .clear();
+                                                              }
+                                                            });
+                                                          },
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  _buildExperienceSelectionAction(
+                                                    animation:
+                                                        _experienceSelectionCloseAnimation,
+                                                    child: IconButton(
+                                                      tooltip:
+                                                          'Cancel selection',
+                                                      icon: const Icon(
+                                                          Icons.close),
+                                                      onPressed: () {
+                                                        _triggerTapHaptic();
+                                                        _exitExperienceSelectionMode();
+                                                      },
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  _buildExperienceSelectionAction(
+                                                    animation:
+                                                        _experienceSelectionEventAnimation,
+                                                    child: IconButton(
+                                                      tooltip:
+                                                          'Create event with selected',
+                                                      icon: Icon(
+                                                          Icons.event_outlined,
+                                                          color: selectedCount ==
+                                                                  0
+                                                              ? Colors.grey
+                                                              : Colors.deepPurple),
+                                                      onPressed: selectedCount ==
+                                                              0
+                                                          ? null
+                                                          : () {
+                                                              _triggerTapHaptic();
+                                                              unawaited(
+                                                                  _handleCreateEventWithSelectedExperiences());
+                                                            },
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  _buildExperienceSelectionAction(
+                                                    animation:
+                                                        _experienceSelectionShareAnimation,
+                                                    child: IconButton(
+                                                      tooltip:
+                                                          'Share selected experiences',
+                                                      icon: Icon(
+                                                          Icons.share_outlined,
+                                                          color: selectedCount ==
+                                                                  0
+                                                              ? Colors.grey
+                                                              : Colors.blue),
+                                                      onPressed: selectedCount ==
+                                                              0
+                                                          ? null
+                                                          : () {
+                                                              _triggerTapHaptic();
+                                                              unawaited(
+                                                                  _handleShareSelectedExperiences());
+                                                            },
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  _buildExperienceSelectionAction(
+                                                    animation:
+                                                        _experienceSelectionDeleteAnimation,
+                                                    child: IconButton(
+                                                      tooltip:
+                                                          'Delete selected experiences',
+                                                      icon: const Icon(
+                                                          Icons.delete_outline),
+                                                      color: Colors.red,
+                                                      onPressed: selectedCount ==
+                                                              0
+                                                          ? null
+                                                          : () {
+                                                              _triggerTapHaptic();
+                                                              unawaited(
+                                                                  _handleBulkDeleteSelectedExperiences());
+                                                            },
+                                                    ),
+                                                  ),
+                                                ],
+                                              );
+                                            }),
+                                            const Expanded(child: SizedBox()),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
                               Expanded(
@@ -4937,13 +5038,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final bool isOwnerShared =
         _ownedSharedExperienceIds.contains(experience.id);
     final String? ownerName = isShared
-        ? (_shareOwnerNames[sharePermission!.ownerUserId] ?? 'Someone')
+        ? (_shareOwnerNames[sharePermission.ownerUserId] ?? 'Someone')
         : null;
     final ShareAccessLevel effectiveAccessLevel =
         _effectiveAccessLevelForExperience(experience);
     final String? shareLabel = isShared
         ? _buildSharedByLabel(
-            permission: sharePermission!,
+            permission: sharePermission,
             ownerName: ownerName ?? 'Someone',
             overrideAccessLevel: effectiveAccessLevel,
           )
@@ -4981,7 +5082,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         borderRadius: BorderRadius.circular(28.0), // Make it circular
       ),
       child: MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.center,
@@ -5264,12 +5365,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       },
       onLongPress: () {
         if (!_isSelectingExperiences) {
-          setState(() {
-            _isSelectingExperiences = true;
-            _selectedExperienceIds
-              ..clear()
-              ..add(experience.id);
-          });
+          _enterExperienceSelectionMode(selectId: experience.id);
         }
       },
       ),
@@ -5578,12 +5674,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         },
         onLongPress: () {
           if (!_isSelectingExperiences) {
-            setState(() {
-              _isSelectingExperiences = true;
-              _selectedExperienceIds
-                ..clear()
-                ..add(experience.id);
-            });
+            _enterExperienceSelectionMode(selectId: experience.id);
           }
         },
         child: Column(
@@ -5656,19 +5747,56 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
     // Build count header widget
-    Widget countHeader = Container(
-      width: double.infinity,
-      padding: const EdgeInsets.only(top: 2, bottom: 12, left: 16, right: 16),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF8F5F2),
-      ),
+    final String countLabel =
+        '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}';
+    final Widget countText = AnimatedSlide(
+      offset: _isSelectingExperiences
+          ? _experienceCountSlideOffset
+          : Offset.zero,
+      duration: _experienceCountSlideDuration,
+      curve: Curves.easeInOut,
       child: Text(
-        '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}',
+        countLabel,
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w400,
               color: Colors.grey,
             ),
         textAlign: TextAlign.center,
+      ),
+    );
+    final Widget countHeader = Container(
+      width: double.infinity,
+      padding: const EdgeInsets.only(top: 2, bottom: 12, left: 16, right: 16),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8F5F2),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: IgnorePointer(
+              ignoring: _isSelectingExperiences,
+              child: AnimatedOpacity(
+                opacity: _isSelectingExperiences ? 0.0 : 1.0,
+                duration: _experienceCountSlideDuration,
+                curve: Curves.easeInOut,
+                child: IconButton(
+                  tooltip: 'Select experiences',
+                  icon: const Icon(Icons.check_box_outlined),
+                  onPressed: () {
+                    _triggerTapHaptic();
+                    _enterExperienceSelectionMode();
+                  },
+                ),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.center,
+            child: countText,
+          ),
+        ],
       ),
     );
 
@@ -6076,11 +6204,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       _sharedCategoryPermissions[category.id];
                   final bool isShared = permission != null;
                   final String? ownerName = isShared
-                      ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+                      ? (_shareOwnerNames[permission.ownerUserId] ?? 'Someone')
                       : null;
                   final String? shareLabel = isShared
                       ? _buildSharedByLabel(
-                          permission: permission!,
+                          permission: permission,
                           ownerName: ownerName ?? 'Someone',
                         )
                       : null;
@@ -6127,7 +6255,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     _sharedCategoryPermissions[category.id];
                 final bool isShared = permission != null;
                 final bool canEditCategory = !isShared ||
-                    permission!.accessLevel == ShareAccessLevel.edit;
+                    permission.accessLevel == ShareAccessLevel.edit;
                 final bool canManageCategory = !isShared;
                 return PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
@@ -6291,7 +6419,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               );
             }
             final Map<String, Object> entry =
-                flat[index - 1] as Map<String, Object>;
+                flat[index - 1];
             if (entry.containsKey('header')) {
               final display = entry['header'] as String;
               final level = entry['level'] as String;
@@ -6542,10 +6670,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     );
 
     // Exit selection mode
-    setState(() {
-      _isSelectingExperiences = false;
-      _selectedExperienceIds.clear();
-    });
+    _exitExperienceSelectionMode();
 
     if (!mounted) return;
 
@@ -6843,10 +6968,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     }
 
     if (mounted) {
-      setState(() {
-        _selectedExperienceIds.clear();
-        _isSelectingExperiences = false;
-      });
+      _exitExperienceSelectionMode();
 
       final List<String> messageParts = [];
       if (deletedOwnedCount > 0) {
@@ -7878,11 +8000,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       _sharedCategoryPermissions[category.id];
                   final bool isShared = permission != null;
                   final String? ownerName = isShared
-                      ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+                      ? (_shareOwnerNames[permission.ownerUserId] ?? 'Someone')
                       : null;
                   final String? shareLabel = isShared
                       ? _buildSharedByLabel(
-                          permission: permission!,
+                          permission: permission,
                           ownerName: ownerName ?? 'Someone',
                         )
                       : null;
@@ -7933,7 +8055,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     _sharedCategoryPermissions[category.id];
                 final bool isShared = permission != null;
                 final bool canEditCategory = !isShared ||
-                    permission!.accessLevel == ShareAccessLevel.edit;
+                    permission.accessLevel == ShareAccessLevel.edit;
                 final bool canManageCategory = !isShared;
                 return PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
@@ -8071,7 +8193,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                           _sharedCategoryPermissions[category.id];
                       final bool isShared = permission != null;
                       final String? ownerName = isShared
-                          ? (_shareOwnerNames[permission!.ownerUserId] ??
+                          ? (_shareOwnerNames[permission.ownerUserId] ??
                               'Someone')
                           : null;
                       final String? shareLabel = isShared
@@ -8141,7 +8263,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                           _sharedCategoryPermissions[colorCategory.id];
                       final bool isShared = permission != null;
                       final String? ownerName = isShared
-                          ? (_shareOwnerNames[permission!.ownerUserId] ??
+                          ? (_shareOwnerNames[permission.ownerUserId] ??
                               'Someone')
                           : null;
                       final String? shareLabel = isShared
@@ -8601,7 +8723,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         lowerPath.contains('g.co/kgs/') ||
         lowerPath.contains('share.google/');
 
-    Widget _buildActionAvatar({
+    Widget buildActionAvatar({
       required Widget icon,
       required String tooltip,
       required VoidCallback onTap,
@@ -8622,7 +8744,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     Widget? actionButton;
     if (isInstagramUrl) {
-      actionButton = _buildActionAvatar(
+      actionButton = buildActionAvatar(
         icon: const FaIcon(
           FontAwesomeIcons.instagram,
           color: Colors.white,
@@ -8633,7 +8755,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         backgroundColor: const Color(0xFFE4405F),
       );
     } else if (isTikTokUrl) {
-      actionButton = _buildActionAvatar(
+      actionButton = buildActionAvatar(
         icon: const FaIcon(
           FontAwesomeIcons.tiktok,
           color: Colors.white,
@@ -8644,7 +8766,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         backgroundColor: Colors.black,
       );
     } else if (isYelpUrl) {
-      actionButton = _buildActionAvatar(
+      actionButton = buildActionAvatar(
         icon: const FaIcon(
           FontAwesomeIcons.yelp,
           color: Colors.white,
@@ -8655,7 +8777,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         backgroundColor: const Color(0xFFD32323),
       );
     } else if (isMapsUrl) {
-      actionButton = _buildActionAvatar(
+      actionButton = buildActionAvatar(
         icon: const FaIcon(
           FontAwesomeIcons.google,
           color: Colors.white,
@@ -8666,7 +8788,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         backgroundColor: const Color(0xFF4285F4),
       );
     } else if (isNetworkUrl) {
-      actionButton = _buildActionAvatar(
+      actionButton = buildActionAvatar(
         icon: const Icon(
           Icons.open_in_new,
           color: Colors.white,
@@ -9008,7 +9130,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     ],
                   ),
                 ),
-                if (isExpanded && mediaWidget != null) mediaWidget!,
+                if (isExpanded && mediaWidget != null) mediaWidget,
               ],
             ),
           ),
@@ -9973,7 +10095,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
   }
 
   // --- Share Bottom Sheets for Category and Color Category ---
-  void _showShareCategoryBottomSheet(UserCategory _category) {
+  void _showShareCategoryBottomSheet(UserCategory category) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -9982,12 +10104,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
       ),
       builder: (ctx) {
         return _ShareBottomSheetContent(
-            title: 'Share Category', userCategory: _category);
+            title: 'Share Category', userCategory: category);
       },
     );
   }
 
-  void _showShareColorCategoryBottomSheet(ColorCategory _colorCategory) {
+  void _showShareColorCategoryBottomSheet(ColorCategory colorCategory) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -9996,7 +10118,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       ),
       builder: (ctx) {
         return _ShareBottomSheetContent(
-            title: 'Share Color Category', colorCategory: _colorCategory);
+            title: 'Share Color Category', colorCategory: colorCategory);
       },
     );
   }
@@ -10195,7 +10317,7 @@ class _ShareBottomSheetContent extends StatefulWidget {
 
 class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   String _shareMode = 'view_access'; // 'view_access' | 'edit_access'
-  bool _giveEditAccess = false;
+  final bool _giveEditAccess = false;
   final SharingService _sharingService = SharingService();
   final ExperienceService _experienceService = ExperienceService();
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
@@ -10222,7 +10344,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         limit: 500,
       );
     } catch (e) {
-      _log('Failed to load owner experiences for cascading: ' + e.toString());
+      _log('Failed to load owner experiences for cascading: $e');
       return [];
     }
 
@@ -10244,7 +10366,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   }
 
   void _log(String message) {
-    debugPrint('[ShareSheet] ' + widget.title + ': ' + message);
+    debugPrint('[ShareSheet] ${widget.title}: $message');
   }
 
   String? _resolveOwnerUserId() {
@@ -10255,7 +10377,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   Future<String> _fetchOwnerName(String ownerId) async {
     final profile = await _experienceService.getUserProfileById(ownerId);
     final ownerName = profile?.displayName ?? profile?.username ?? 'Someone';
-    _log('Resolved owner ' + ownerId + ' to name "' + ownerName + '"');
+    _log('Resolved owner $ownerId to name "$ownerName"');
     return ownerName;
   }
 
@@ -10279,12 +10401,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       final profile = await _experienceService.getUserProfileById(entry.key);
       final displayName =
           profile?.displayName ?? profile?.username ?? 'Someone';
-      _log('Participant ' +
-          entry.key +
-          ' resolved to "' +
-          displayName +
-          '" with access ' +
-          entry.value.accessLevel.toString());
+      _log('Participant ${entry.key} resolved to "$displayName" with access ${entry.value.accessLevel}');
       participants.add(_ShareParticipantInfo(
         userId: entry.key,
         displayName: displayName,
@@ -10310,12 +10427,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         widget.userCategory?.id ?? widget.colorCategory?.id ?? '';
     final String? initialOwnerId = _resolveOwnerUserId();
     final String? currentUserId = _firebaseAuth.currentUser?.uid;
-    _log('Loading share access for categoryId=' +
-        categoryId +
-        ' ownerId=' +
-        (initialOwnerId ?? 'null') +
-        ' currentUserId=' +
-        (currentUserId ?? 'null'));
+    _log('Loading share access for categoryId=$categoryId ownerId=${initialOwnerId ?? 'null'} currentUserId=${currentUserId ?? 'null'}');
 
     if (categoryId.isEmpty) {
       _log('No categoryId available, skipping share access load');
@@ -10334,9 +10446,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
     try {
       List<SharePermission> permissions =
           await _sharingService.getPermissionsForItem(categoryId);
-      _log('Primary permission query returned ' +
-          permissions.length.toString() +
-          ' record(s)');
+      _log('Primary permission query returned ${permissions.length} record(s)');
 
       if (permissions.isEmpty &&
           initialOwnerId != null &&
@@ -10348,10 +10458,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 perm.itemId == categoryId &&
                 perm.itemType == ShareableItemType.category)
             .toList();
-        _log('Owner fallback query returned ' +
-            permissions.length.toString() +
-            ' record(s) for item ' +
-            categoryId);
+        _log('Owner fallback query returned ${permissions.length} record(s) for item $categoryId');
       }
 
       if (permissions.isEmpty) {
@@ -10391,11 +10498,11 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         _shareDetailsError = null;
       });
     } catch (e, stackTrace) {
-      _log('Failed to load share access: ' + e.toString());
+      _log('Failed to load share access: $e');
       debugPrint(stackTrace.toString());
 
       if (initialOwnerId != null && initialOwnerId == currentUserId) {
-        final fallbackOwnerId = initialOwnerId!;
+        final fallbackOwnerId = initialOwnerId;
         _log('Attempting owner fallback after permission failure...');
         try {
           final ownedPermissions =
@@ -10405,9 +10512,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   perm.itemId == categoryId &&
                   perm.itemType == ShareableItemType.category)
               .toList();
-          _log('Owner fallback query returned ' +
-              ownerPermissions.length.toString() +
-              ' record(s)');
+          _log('Owner fallback query returned ${ownerPermissions.length} record(s)');
           if (ownerPermissions.isNotEmpty) {
             final ownerName = await _fetchOwnerName(fallbackOwnerId);
             final details = await _composeShareDetails(
@@ -10428,7 +10533,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
             return;
           }
         } catch (fallbackError, fallbackStackTrace) {
-          _log('Owner fallback failed: ' + fallbackError.toString());
+          _log('Owner fallback failed: $fallbackError');
           debugPrint(fallbackStackTrace.toString());
         }
       }
@@ -10439,7 +10544,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         try {
           ownerName = await _fetchOwnerName(ownerId);
         } catch (err) {
-          _log('Fallback owner name lookup failed: ' + err.toString());
+          _log('Fallback owner name lookup failed: $err');
         }
       }
       if (!mounted) return;
@@ -10509,7 +10614,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: Colors.white,
-          title: Text('Manage access for ' + participant.displayName),
+          title: Text('Manage access for ${participant.displayName}'),
           content:
               const Text('Change what this person can do in this category.'),
           actions: [
@@ -10547,7 +10652,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
 
     try {
       final String permissionDocId =
-          ownerUserId + '_category_' + categoryId + '_' + participant.userId;
+          '${ownerUserId}_category_${categoryId}_${participant.userId}';
 
       if (choice == 'remove') {
         await _sharingService.removeShare(permissionDocId);
@@ -10614,11 +10719,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
             }
 
             if (!keepEdit) {
-              final String expPermissionId = ownerUserId +
-                  '_experience_' +
-                  exp.id +
-                  '_' +
-                  participant.userId;
+              final String expPermissionId = '${ownerUserId}_experience_${exp.id}_${participant.userId}';
               experienceUpdates.add(_sharingService
                   .updatePermissionAccessLevel(
                 permissionId: expPermissionId,
@@ -10640,11 +10741,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
 
           final List<Future<void>> experienceEdits = [];
           for (final exp in experiences) {
-            final String expPermissionId = ownerUserId +
-                '_experience_' +
-                exp.id +
-                '_' +
-                participant.userId;
+            final String expPermissionId = '${ownerUserId}_experience_${exp.id}_${participant.userId}';
 
             // Try to update to edit; if doc is missing, create it
             experienceEdits.add(_sharingService
@@ -10688,7 +10785,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         _isLoadingShareDetails = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update access: ' + e.toString())),
+        SnackBar(content: Text('Failed to update access: $e')),
       );
     }
   }
@@ -11060,7 +11157,7 @@ class _BulkShareBottomSheetContentState
           children: [
             Row(
               children: [
-                Text('Share ${count} ${count == 1 ? 'category' : 'categories'}',
+                Text('Share $count ${count == 1 ? 'category' : 'categories'}',
                     style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.w600)),
                 const Spacer(),
@@ -11189,7 +11286,7 @@ class _BulkShareBottomSheetContentState
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                               content: Text(
-                                  'Failed to create link: ' + e.toString())),
+                                  'Failed to create link: $e')),
                         );
                       } finally {
                         if (mounted) setState(() => _creating = false);

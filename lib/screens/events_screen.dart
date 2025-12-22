@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -31,7 +30,7 @@ class _EventsScreenState extends State<EventsScreen>
   // Calendar state
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
-  CalendarFormat _calendarFormat = CalendarFormat.month;
+  final CalendarFormat _calendarFormat = CalendarFormat.month;
 
   // View mode: 'day', 'week', 'month', 'schedule'
   String _viewMode = 'schedule';
@@ -47,7 +46,7 @@ class _EventsScreenState extends State<EventsScreen>
   final Map<String, UserCategory> _sharedOwnerCategories = {};
   
   // Experiences cache: maps experienceId to Experience
-  Map<String, Experience> _experiencesCache = {};
+  final Map<String, Experience> _experiencesCache = {};
 
   late TabController _tabController;
   late PageController _weekPageController;
@@ -580,7 +579,7 @@ class _EventsScreenState extends State<EventsScreen>
       ),
       child: TabBar(
         controller: _tabController,
-        overlayColor: const MaterialStatePropertyAll(Colors.transparent),
+        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
         splashFactory: NoSplash.splashFactory,
         indicatorColor: theme.colorScheme.primary,
         indicatorWeight: 3,
@@ -955,7 +954,7 @@ class _EventsScreenState extends State<EventsScreen>
   }
 
   Widget _buildTimeLabelsColumn(ThemeData theme, bool isDark) {
-    return Container(
+    return SizedBox(
       width: 50,
       child: Column(
         children: List.generate(24, (hour) {

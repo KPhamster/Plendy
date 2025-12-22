@@ -111,7 +111,7 @@ class DiscoveryCoverService {
           _preloadedUrls.add(url);
           preloaded++;
 
-          debugPrint('DiscoveryCoverService: Background preloaded ${preloaded}/$count images');
+          debugPrint('DiscoveryCoverService: Background preloaded $preloaded/$count images');
         } catch (e) {
           debugPrint('DiscoveryCoverService: Failed to preload background image: $e');
         }

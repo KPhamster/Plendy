@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:plendy/config/colors.dart';
 import 'package:plendy/screens/main_screen.dart';
 import 'package:plendy/screens/my_people_screen.dart';
 import 'package:plendy/widgets/tutorial_map_screen_modal.dart';
@@ -52,9 +53,9 @@ class TutorialsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         title: const Text('Tutorials'),
       ),

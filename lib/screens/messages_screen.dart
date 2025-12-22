@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../config/colors.dart';
 import '../models/message_thread.dart';
 import '../models/message_thread_participant.dart';
 import '../services/auth_service.dart';
@@ -67,9 +68,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         title: const Text('Messages'),
       ),
@@ -233,7 +234,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     final prefix = thread.lastMessageSenderId == currentUserId
         ? 'You: '
         : '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'}: ';
-    return '${prefix}$message';
+    return '$prefix$message';
   }
 
   String? _formatTimestamp(BuildContext context, DateTime? timestamp) {

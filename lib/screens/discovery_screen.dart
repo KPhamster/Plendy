@@ -580,6 +580,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   List<Reference> _coverBackgroundRefs = [];
   String? _coverBackgroundUrl;
   bool _isCoverImageLoaded = false;
+  bool _isCoverPageVisible = false;
   _CoverQuote? _currentCoverQuote;
 
   @override
@@ -592,6 +593,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     _currentCoverQuote = _pickRandomCoverQuote();
     _prepareCoverBackgrounds();
     _initializeFeed();
+    _scheduleCoverPageFadeIn();
     final String? initialToken = widget.initialShareToken;
     if (initialToken != null && initialToken.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -600,10 +602,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
   }
 
+  void _scheduleCoverPageFadeIn() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _hasStartedDiscovering || _isCoverPageVisible) {
+        return;
+      }
+      setState(() {
+        _isCoverPageVisible = true;
+      });
+    });
+  }
+
   void _setHasStartedDiscovering(bool value) {
     if (mounted) {
       setState(() {
         _hasStartedDiscovering = value;
+        _isCoverPageVisible = false;
         if (!value) {
           _currentCoverQuote = _pickRandomCoverQuote();
           _isCoverImageLoaded = false; // Reset cover image loaded state when returning to cover
@@ -611,6 +625,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           _selectNewPreloadedCoverImage();
         }
       });
+    }
+    if (!value) {
+      _scheduleCoverPageFadeIn();
     }
   }
 
@@ -1292,7 +1309,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     // Show cover page immediately if user hasn't started discovering yet
     // (loading happens in background)
     if (!_hasStartedDiscovering) {
-      return _buildCoverPage();
+      return AnimatedOpacity(
+        opacity: _isCoverPageVisible ? 1 : 0,
+        duration: _coverFadeDuration,
+        curve: Curves.easeOutCubic,
+        child: IgnorePointer(
+          ignoring: !_isCoverPageVisible,
+          child: _buildCoverPage(),
+        ),
+      );
     }
 
     // Only show loading/error states if user has started discovering

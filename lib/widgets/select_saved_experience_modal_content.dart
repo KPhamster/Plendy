@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../models/user_category.dart';
+import '../config/colors.dart';
 
 class SelectSavedExperienceModalContent extends StatefulWidget {
   final ScrollController? scrollController; // Optional: for DraggableScrollableSheet
@@ -156,6 +157,21 @@ class _SelectSavedExperienceModalContentState
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(25.0),
               ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(25.0),
+                borderSide: const BorderSide(
+                  color: AppColors.backgroundColorDark,
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(25.0),
+                borderSide: const BorderSide(
+                  color: AppColors.backgroundColorDark,
+                  width: 2,
+                ),
+              ),
+              filled: true,
+              fillColor: AppColors.backgroundColorDark,
               suffixIcon: _searchController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear),

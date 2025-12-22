@@ -309,7 +309,7 @@ class ExperienceService {
     try {
       final currentUserId = _currentUserId;
       final expectedPermissionId =
-          '${ownerUserId}_category_${categoryId}_${currentUserId}';
+          '${ownerUserId}_category_${categoryId}_$currentUserId';
       print(
           'getUserCategoryByOwner: Fetching users/$ownerUserId/categories/$categoryId');
       print(

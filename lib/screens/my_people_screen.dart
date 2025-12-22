@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async'; // For StreamSubscription
+import '../config/colors.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart'; // Assuming UserService will provide these counts
 import '../services/notification_state_service.dart'; // Import NotificationStateService
@@ -323,9 +324,9 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     final String? currentUserId = _authService?.currentUser?.uid;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.backgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.backgroundColor,
         foregroundColor: Colors.black,
         title: const Text('My People'),
         leading: IconButton(
@@ -344,7 +345,18 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
               decoration: InputDecoration(
                 labelText: 'Search users...',
                 prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
+                filled: true,
+                fillColor: AppColors.backgroundColorDark,
                 border: OutlineInputBorder(
+                  borderSide: const BorderSide(color: AppColors.backgroundColorDark),
+                  borderRadius: BorderRadius.circular(25.0),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: AppColors.backgroundColorDark),
+                  borderRadius: BorderRadius.circular(25.0),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: AppColors.backgroundColorDark),
                   borderRadius: BorderRadius.circular(25.0),
                 ),
                 suffixIcon: _searchQuery.isNotEmpty

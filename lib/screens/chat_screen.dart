@@ -15,6 +15,7 @@ import '../models/user_category.dart';
 import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/message_service.dart';
+import '../config/colors.dart';
 import '../widgets/cached_profile_avatar.dart';
 import '../widgets/event_editor_modal.dart';
 import '../widgets/shared_media_preview_modal.dart';
@@ -263,9 +264,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final thread = threadSnapshot.data ?? widget.thread;
         final title = _buildTitle(thread);
         return Scaffold(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.backgroundColorDark,
           appBar: AppBar(
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.backgroundColorDark,
             foregroundColor: Colors.black,
             leading: BackButton(onPressed: _handleBackPressed),
             title: AnimatedSwitcher(
@@ -454,7 +455,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // Regular text message bubble
     final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
     final bubbleColor =
-        isMine ? Theme.of(context).primaryColor : Colors.grey.shade200;
+        isMine ? Theme.of(context).primaryColor : Colors.grey.shade400;
     final textColor = isMine ? Colors.white : Colors.black87;
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
@@ -615,7 +616,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     height: 120,
                     width: double.infinity,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.backgroundColor,
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(12),
                       ),
@@ -928,7 +929,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Container(
                             height: 120,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: AppColors.backgroundColor,
                               borderRadius: const BorderRadius.vertical(
                                 top: Radius.circular(12),
                               ),
@@ -1193,7 +1194,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     height: 100,
                     width: double.infinity,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.backgroundColor,
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(12),
                       ),
@@ -1207,7 +1208,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             width: 56,
                             height: 56,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: AppColors.backgroundColor,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             alignment: Alignment.center,
@@ -1470,7 +1471,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Container(
                     height: 80,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.backgroundColor,
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(12),
                       ),
@@ -1788,7 +1789,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     height: 100,
                     width: double.infinity,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.backgroundColor,
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(12),
                       ),
@@ -1802,7 +1803,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             width: 56,
                             height: 56,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: AppColors.backgroundColor,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             alignment: Alignment.center,
@@ -2111,7 +2112,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     height: 80,
                     width: double.infinity,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.backgroundColor,
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(12),
                       ),
@@ -2475,7 +2476,7 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.backgroundColor,
           border: Border(top: BorderSide(color: Colors.grey.shade300)),
         ),
         child: Row(
@@ -2855,8 +2856,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (url.contains('tiktok.com')) return FontAwesomeIcons.tiktok;
     if (url.contains('instagram.com')) return FontAwesomeIcons.instagram;
     if (url.contains('facebook.com')) return FontAwesomeIcons.facebook;
-    if (url.contains('youtube.com') || url.contains('youtu.be'))
+    if (url.contains('youtube.com') || url.contains('youtu.be')) {
       return FontAwesomeIcons.youtube;
+    }
     return Icons.link;
   }
 
@@ -2864,19 +2866,23 @@ class _ChatScreenState extends State<ChatScreen> {
     if (url.contains('tiktok.com')) return 'TikTok';
     if (url.contains('instagram.com')) return 'Instagram';
     if (url.contains('facebook.com')) return 'Facebook';
-    if (url.contains('youtube.com') || url.contains('youtu.be'))
+    if (url.contains('youtube.com') || url.contains('youtu.be')) {
       return 'YouTube';
+    }
     return 'Browser';
   }
 
   Color _getMediaIconColor(String url) {
     if (url.contains('tiktok.com')) return const Color(0xFF000000); // Black
-    if (url.contains('instagram.com'))
+    if (url.contains('instagram.com')) {
       return const Color(0xFFE4405F); // Instagram gradient (using primary pink)
-    if (url.contains('facebook.com'))
+    }
+    if (url.contains('facebook.com')) {
       return const Color(0xFF1877F2); // Facebook blue
-    if (url.contains('youtube.com') || url.contains('youtu.be'))
+    }
+    if (url.contains('youtube.com') || url.contains('youtu.be')) {
       return const Color(0xFFFF0000); // YouTube red
+    }
     return Colors.grey.shade600; // Generic link color
   }
 
