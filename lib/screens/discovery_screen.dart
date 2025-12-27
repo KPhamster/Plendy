@@ -38,7 +38,6 @@ import '../widgets/web_media_preview_card.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
 import '../services/discovery_cover_service.dart';
-import '../services/instagram_settings_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class DiscoveryScreen extends StatefulWidget {
@@ -2447,16 +2446,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
   }
 
-  Future<bool> _isInstagramDefaultMode(_DiscoveryFeedItem item) async {
-    if (_classifyUrl(item.mediaUrl) != _MediaType.instagram) {
-      return false;
-    }
-    // For Instagram previews, check if it's NOT in Web View mode (i.e., it's in default mode)
-    final settingsService = InstagramSettingsService.instance;
-    final isWebViewMode = await settingsService.isWebViewMode();
-    return !isWebViewMode; // If not Web View mode, then it's default mode
-  }
-
   String _normalizeUrlForComparison(String? url) {
     if (url == null) return '';
     final trimmed = url.trim();
@@ -2773,7 +2762,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 ),
         );
       case _MediaType.instagram:
-        final screenWidth = MediaQuery.of(context).size.width;
         final instagramWidget = kIsWeb
             ? Padding(
                 padding: const EdgeInsets.only(top: 50),
@@ -2795,39 +2783,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 topPadding: 50,
               );
 
-        return SizedBox.expand(
-          child: FutureBuilder<bool>(
-            future: _isInstagramDefaultMode(_DiscoveryFeedItem(experience: item.experience, mediaUrl: url)),
-            builder: (context, snapshot) {
-              final isDefaultMode = snapshot.data ?? false;
-              if (kIsWeb || !isDefaultMode) {
-                // Web or non-default mode: use normal sizing
-                return instagramWidget;
-              }
-
-              // Default mode on mobile: make it wider than screen and centered
-              return Container(
-                width: screenWidth,
-                height: mediaSize.height,
-                child: Stack(
-                  children: [
-                    Positioned(
-                      left: -screenWidth * 0.20, // Offset to center the wider content (20% for 40% wider total)
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          width: screenWidth * 1.40, // 40% wider than screen (140% total)
-                          height: mediaSize.height,
-                          child: instagramWidget,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        );
+        return SizedBox.expand(child: instagramWidget);
       case _MediaType.facebook:
         return SizedBox.expand(
           child: kIsWeb

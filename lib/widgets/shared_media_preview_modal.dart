@@ -20,7 +20,6 @@ import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../screens/receive_share/widgets/yelp_preview_widget.dart';
 import '../services/google_maps_service.dart';
 import '../services/experience_share_service.dart';
-import '../services/instagram_settings_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../screens/experience_page_screen.dart';
 import 'web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
@@ -477,21 +476,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.instagram) {
-      // Check if we're in Default mode (oEmbed) for dynamic height calculation
-      final isDefaultMode = !InstagramSettingsService.instance.isWebViewModeSync();
-      
-      // Calculate height based on mode and expansion state
-      final double instagramHeight;
-      if (heightOverride != null) {
-        instagramHeight = heightOverride;
-      } else if (isDefaultMode) {
-        // Default mode: 640 collapsed, no expansion (fixed height)
-        instagramHeight = 670.0;
-      } else {
-        // WebView mode: original height
-        instagramHeight = 640.0;
-      }
-      
+      final double instagramHeight = heightOverride ?? 640.0;
+
       final instagramWidget = kIsWeb
           ? WebMediaPreviewCard(
               url: url,
@@ -507,39 +493,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
               onPageFinished: (_) {},
             );
 
-      return kIsWeb
-          ? instagramWidget
-          : FutureBuilder<bool>(
-              future: _isInstagramDefaultMode(url),
-              builder: (context, snapshot) {
-                final isDefaultMode = snapshot.data ?? false;
-                if (!isDefaultMode) {
-                  return instagramWidget;
-                }
-
-                // Default mode: make it wider than screen and centered
-                final screenWidth = MediaQuery.of(context).size.width;
-                return Container(
-                  width: screenWidth,
-                  height: instagramHeight,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        left: -screenWidth * 0.20, // Offset to center the wider content (20% for modal view)
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: screenWidth * 1.30, // 30% wider than screen (130% total)
-                            height: instagramHeight,
-                            child: instagramWidget,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            );
+      return instagramWidget;
     }
 
     if (type == _MediaType.facebook) {
@@ -893,12 +847,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     double iconSize = 28;
     String tooltip = 'Open link';
 
-    // Check if we should show expand button (hide for Instagram in Default mode)
     bool showExpandButton = true;
-    if (type == _MediaType.instagram) {
-      final isDefaultMode = !InstagramSettingsService.instance.isWebViewModeSync();
-      showExpandButton = !isDefaultMode; // Hide expand button for Instagram in Default mode
-    }
 
     switch (type) {
       case _MediaType.tiktok:
@@ -1086,15 +1035,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
 
   // Removed unused _labelForType helper
 
-  Future<bool> _isInstagramDefaultMode(String url) async {
-    if (!_classifyUrl(url).toString().contains('instagram')) {
-      return false;
-    }
-    // For Instagram previews, check if it's NOT in Web View mode (i.e., it's in default mode)
-    final settingsService = InstagramSettingsService.instance;
-    final isWebViewMode = await settingsService.isWebViewMode();
-    return !isWebViewMode; // If not Web View mode, then it's default mode
-  }
 }
 
 enum _MediaType {
