@@ -39,6 +39,7 @@ import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 // ADDED: Import AuthService (adjust path if necessary)
 import '../services/auth_service.dart';
+import '../services/instagram_settings_service.dart';
 // ADDED: Import the new edit modal (we will create this file next)
 import '../widgets/edit_experience_modal.dart';
 import '../widgets/cached_profile_avatar.dart';
@@ -2507,8 +2508,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       url,
                       () => GlobalKey<instagram_widget.InstagramWebViewState>(),
                     );
-                    final double instagramHeight =
-                        previewHeightOverride ?? 640.0;
+                    // Use 530 for Instagram in Default mode, 640 for WebView mode
+                    final bool isDefaultMode = !InstagramSettingsService.instance.isWebViewModeSync();
+                    final double instagramHeight = previewHeightOverride ??
+                        (isDefaultMode ? 510.0 : 640.0);
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
                             url: url,
@@ -2987,17 +2990,19 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                                   : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
-                            IconButton(
-                              icon: Icon(isPreviewHeightExpanded
-                                  ? Icons.fullscreen_exit
-                                  : Icons.fullscreen),
-                              iconSize: 24,
-                              color: Colors.blue,
-                              tooltip: isPreviewHeightExpanded
-                                  ? 'Collapse preview'
-                                  : 'Expand preview',
-                              onPressed: () => _toggleMediaPreviewHeight(url),
-                            ),
+                            // Only show expand button for non-Instagram content or Instagram in WebView mode
+                            if (!isInstagramUrl || InstagramSettingsService.instance.isWebViewModeSync())
+                              IconButton(
+                                icon: Icon(isPreviewHeightExpanded
+                                    ? Icons.fullscreen_exit
+                                    : Icons.fullscreen),
+                                iconSize: 24,
+                                color: Colors.blue,
+                                tooltip: isPreviewHeightExpanded
+                                    ? 'Collapse preview'
+                                    : 'Expand preview',
+                                onPressed: () => _toggleMediaPreviewHeight(url),
+                              ),
                             if (!widget.readOnlyPreview && !isPublicView)
                               IconButton(
                                 icon: const Icon(Icons.delete_outline),

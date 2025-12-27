@@ -49,6 +49,7 @@ import '../services/auth_service.dart';
 import '../services/gemini_service.dart';
 import '../services/foreground_scan_service.dart';
 import 'package:collection/collection.dart';
+import '../services/instagram_settings_service.dart';
 import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
 import '../models/experience_card_data.dart';
@@ -8231,6 +8232,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   bool _isExpanded = false;
   bool _isDisposed = false;
   inapp.InAppWebViewController? _controller;
+  double? _measuredContentHeight; // Dynamically measured content height
 
   @override
   void dispose() {
@@ -8272,6 +8274,14 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
     // No state updates here, just a pass-through
   }
 
+  // Callback when content height is measured
+  void _handleContentHeightChanged(double height) {
+    if (!mounted || _isDisposed) return;
+    _safeSetState(() {
+      _measuredContentHeight = height;
+    });
+  }
+
   // Safe callback for URL launching
   Future<void> _handleUrlLaunch(String url) async {
     if (!mounted || _isDisposed) return;
@@ -8282,61 +8292,81 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    final double height = _isExpanded ? 2800.0 : 910.0;
+    // Check if we're in Default mode (oEmbed) or WebView mode
+    // Uses sync check - defaults to Default mode if settings not yet loaded
+    final isDefaultMode = !InstagramSettingsService.instance.isWebViewModeSync();
+    
+    // Different heights for Default mode (oEmbed) vs WebView mode
+    final double height;
+    if (isDefaultMode) {
+      // Default mode: 550 collapsed, dynamic height when expanded (use measured height or fallback)
+      if (_isExpanded) {
+        // Use measured content height if available, otherwise use a reasonable fallback
+        height = _measuredContentHeight ?? 2000.0;
+      } else {
+        height = 550.0;
+      }
+    } else {
+      // WebView mode: original heights
+      height = _isExpanded ? 2800.0 : 910.0;
+    }
+    
+    // Use a consistent key to prevent widget recreation across rebuilds
+    final widgetKey = ValueKey('instagram_preview_${widget.url}');
 
+    // Let InstagramWebView handle all settings and mode switching internally
+    // This avoids duplicate settings loading and race conditions
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         instagram_widget.InstagramWebView(
+          key: widgetKey,
           url: widget.url,
           height: height,
           launchUrlCallback: _handleUrlLaunch,
           onWebViewCreated: _handleWebViewCreated,
           onPageFinished: _handlePageFinished,
+          onContentHeightChanged: _handleContentHeightChanged,
         ),
-        Container(
-          height: 8,
-          color: AppColors.backgroundColor,
-        ),
-        Container(
-          color: AppColors.backgroundColor,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const SizedBox(width: 48),
-              IconButton(
-                icon: const Icon(FontAwesomeIcons.instagram),
-                color: const Color(0xFFE1306C),
-                iconSize: 32,
-                tooltip: 'Open in Instagram',
-                constraints: const BoxConstraints(),
-                padding: EdgeInsets.zero,
-                onPressed: () => _handleUrlLaunch(widget.url),
-              ),
-              IconButton(
-                icon: Icon(
-                    _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-                iconSize: 24,
-                color: AppColors.teal,
-                tooltip: _isExpanded ? 'Collapse' : 'Expand',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                onPressed: () {
-                  _safeSetState(() {
-                    _isExpanded = !_isExpanded;
-                    widget.onExpansionChanged?.call(
-                        _isExpanded, widget.url); // CALL CALLBACK with URL
-                  });
-                },
-              ),
-            ],
-          ),
-        ),
-        Container(
-          height: 8,
-          color: AppColors.backgroundColor,
-        ),
+        Container(height: 8, color: AppColors.backgroundColor),
+        _buildBottomControls(),
+        Container(height: 8, color: AppColors.backgroundColor),
       ],
+    );
+  }
+
+  Widget _buildBottomControls() {
+    return Container(
+      color: AppColors.backgroundColor,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const SizedBox(width: 48),
+          IconButton(
+            icon: const Icon(FontAwesomeIcons.instagram),
+            color: const Color(0xFFE1306C),
+            iconSize: 32,
+            tooltip: 'Open in Instagram',
+            constraints: const BoxConstraints(),
+            padding: EdgeInsets.zero,
+            onPressed: () => _handleUrlLaunch(widget.url),
+          ),
+          IconButton(
+            icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+            iconSize: 24,
+            color: AppColors.teal,
+            tooltip: _isExpanded ? 'Collapse' : 'Expand',
+            constraints: const BoxConstraints(),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            onPressed: () {
+              _safeSetState(() {
+                _isExpanded = !_isExpanded;
+                widget.onExpansionChanged?.call(_isExpanded, widget.url);
+              });
+            },
+          ),
+        ],
+      ),
     );
   }
 }
