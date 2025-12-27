@@ -42,6 +42,8 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
+import '../services/instagram_oembed_service.dart';
+import '../services/facebook_oembed_service.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'main_screen.dart';
 import '../models/public_experience.dart';
@@ -49,7 +51,6 @@ import '../services/auth_service.dart';
 import '../services/gemini_service.dart';
 import '../services/foreground_scan_service.dart';
 import 'package:collection/collection.dart';
-import '../services/instagram_settings_service.dart';
 import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
 import '../models/experience_card_data.dart';
@@ -2196,6 +2197,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Track Facebook URLs that have already been processed for auto-extraction
   final Set<String> _facebookUrlsProcessed = {};
 
+  // Track Instagram URLs that have already been processed for oEmbed extraction
+  final Set<String> _instagramUrlsProcessed = {};
+
+  // ============================================================================
+  // SOCIAL MEDIA CONTENT EXTRACTION (Instagram/Facebook oEmbed)
+  // ============================================================================
+  // These variables store extracted content from Instagram/Facebook posts
+  // when shared to Plendy. Use these values in other methods as needed.
+  
+  /// The full caption text extracted from Instagram/Facebook post
+  String? _extractedCaption;
+  
+  /// List of hashtags found in the caption (without # prefix)
+  List<String> _extractedHashtags = [];
+  
+  /// List of mentions found in the caption (without @ prefix)
+  List<String> _extractedMentions = [];
+  
+  /// The source URL that the content was extracted from
+  String? _extractedFromUrl;
+  
+  /// The platform the content was extracted from ('Instagram' or 'Facebook')
+  String? _extractedFromPlatform;
+
   // Add debounce timer for location updates
   Timer? _locationUpdateDebounce;
 
@@ -3189,6 +3214,193 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+    }
+  }
+
+  // ============================================================================
+  // INSTAGRAM/FACEBOOK OEMBED CONTENT EXTRACTION
+  // ============================================================================
+  
+  /// Extract caption, hashtags, and mentions from an Instagram URL using Meta oEmbed API
+  /// 
+  /// This method fetches the post content and parses it into usable components.
+  /// The extracted data is stored in:
+  /// - [_extractedCaption]: Full caption text
+  /// - [_extractedHashtags]: List of hashtags (without #)
+  /// - [_extractedMentions]: List of mentions (without @)
+  /// - [_extractedFromUrl]: Source URL
+  /// - [_extractedFromPlatform]: 'Instagram' or 'Facebook'
+  Future<void> _extractInstagramContent(String url) async {
+    // Skip if already processed this URL
+    if (_instagramUrlsProcessed.contains(url)) {
+      print('📸 INSTAGRAM OEMBED: Already processed $url');
+      return;
+    }
+
+    print('📸 INSTAGRAM OEMBED: Extracting content from $url');
+    
+    try {
+      final oembedService = InstagramOEmbedService();
+      
+      if (!oembedService.isConfigured) {
+        print('⚠️ INSTAGRAM OEMBED: Service not configured (missing Facebook App credentials)');
+        return;
+      }
+      
+      // Mark as processed to prevent duplicate extractions
+      _instagramUrlsProcessed.add(url);
+      
+      // Fetch caption from oEmbed API
+      final caption = await oembedService.getCaptionFromUrl(url);
+      
+      if (caption != null && caption.isNotEmpty) {
+        print('✅ INSTAGRAM OEMBED: Got caption (${caption.length} chars)');
+        
+        // Parse and store the extracted content
+        _storeExtractedContent(
+          caption: caption,
+          sourceUrl: url,
+          platform: 'Instagram',
+        );
+        
+        print('📸 INSTAGRAM OEMBED: Extracted ${_extractedHashtags.length} hashtags, ${_extractedMentions.length} mentions');
+        print('📸 INSTAGRAM OEMBED: Hashtags: $_extractedHashtags');
+        print('📸 INSTAGRAM OEMBED: Mentions: $_extractedMentions');
+      } else {
+        print('⚠️ INSTAGRAM OEMBED: No caption found in post');
+      }
+    } catch (e) {
+      print('❌ INSTAGRAM OEMBED ERROR: $e');
+    }
+  }
+  
+  /// Extract caption, hashtags, and mentions from a Facebook URL using Meta oEmbed API
+  /// 
+  /// This method fetches the post content and parses it into usable components.
+  Future<void> _extractFacebookContent(String url) async {
+    // Skip if already processed this URL for content extraction
+    // Note: _facebookUrlsProcessed is used for location extraction, 
+    // we use a separate check here for content extraction
+    if (_extractedFromUrl == url && _extractedFromPlatform == 'Facebook') {
+      print('📘 FACEBOOK OEMBED: Already extracted content from $url');
+      return;
+    }
+
+    print('📘 FACEBOOK OEMBED: Extracting content from $url');
+    
+    try {
+      final oembedService = FacebookOEmbedService();
+      
+      if (!oembedService.isConfigured) {
+        print('⚠️ FACEBOOK OEMBED: Service not configured (missing Facebook App credentials)');
+        return;
+      }
+      
+      // Fetch oEmbed data
+      final oembedData = await oembedService.getOEmbedData(url);
+      
+      if (oembedData != null && oembedData['html'] != null) {
+        // Extract text from the HTML response
+        final html = oembedData['html'] as String;
+        final caption = oembedService.extractTextFromHtml(html);
+        
+        if (caption != null && caption.isNotEmpty) {
+          print('✅ FACEBOOK OEMBED: Got caption (${caption.length} chars)');
+          
+          // Parse and store the extracted content
+          _storeExtractedContent(
+            caption: caption,
+            sourceUrl: url,
+            platform: 'Facebook',
+          );
+          
+          print('📘 FACEBOOK OEMBED: Extracted ${_extractedHashtags.length} hashtags, ${_extractedMentions.length} mentions');
+        } else {
+          print('⚠️ FACEBOOK OEMBED: No text found in post HTML');
+        }
+      } else {
+        print('⚠️ FACEBOOK OEMBED: No oEmbed data returned');
+      }
+    } catch (e) {
+      print('❌ FACEBOOK OEMBED ERROR: $e');
+    }
+  }
+  
+  /// Store extracted content and parse hashtags/mentions from caption
+  void _storeExtractedContent({
+    required String caption,
+    required String sourceUrl,
+    required String platform,
+  }) {
+    setState(() {
+      _extractedCaption = caption;
+      _extractedFromUrl = sourceUrl;
+      _extractedFromPlatform = platform;
+      _extractedHashtags = _parseHashtags(caption);
+      _extractedMentions = _parseMentions(caption);
+    });
+  }
+  
+  /// Parse hashtags from text (returns list without # prefix)
+  /// 
+  /// Example: "#pizza #nyc #foodie" → ["pizza", "nyc", "foodie"]
+  List<String> _parseHashtags(String text) {
+    final hashtagRegex = RegExp(r'#(\w+)', unicode: true);
+    final matches = hashtagRegex.allMatches(text);
+    return matches
+        .map((match) => match.group(1)!)
+        .where((tag) => tag.isNotEmpty)
+        .toList();
+  }
+  
+  /// Parse mentions from text (returns list without @ prefix)
+  /// 
+  /// Example: "@foodblogger @chef_joe" → ["foodblogger", "chef_joe"]
+  List<String> _parseMentions(String text) {
+    final mentionRegex = RegExp(r'@([\w.]+)', unicode: true);
+    final matches = mentionRegex.allMatches(text);
+    return matches
+        .map((match) => match.group(1)!)
+        .where((mention) => mention.isNotEmpty)
+        .toList();
+  }
+  
+  /// Clear extracted social media content
+  /// Call this when processing new shared content
+  void _clearExtractedSocialContent() {
+    setState(() {
+      _extractedCaption = null;
+      _extractedHashtags = [];
+      _extractedMentions = [];
+      _extractedFromUrl = null;
+      _extractedFromPlatform = null;
+    });
+  }
+  
+  /// Get the extracted content as a structured map
+  /// Useful for passing to other methods or services
+  Map<String, dynamic> getExtractedSocialContent() {
+    return {
+      'caption': _extractedCaption,
+      'hashtags': _extractedHashtags,
+      'mentions': _extractedMentions,
+      'sourceUrl': _extractedFromUrl,
+      'platform': _extractedFromPlatform,
+      'hasContent': _extractedCaption != null && _extractedCaption!.isNotEmpty,
+    };
+  }
+  
+  /// Check if we have extracted social content available
+  bool get hasExtractedSocialContent => 
+      _extractedCaption != null && _extractedCaption!.isNotEmpty;
+  
+  /// Auto-extract content when Instagram/Facebook URL is detected
+  /// Called from _processSharedContent when social media URLs are found
+  Future<void> _autoExtractSocialMediaContent(String url) async {
+    if (_isInstagramUrl(url)) {
+      await _extractInstagramContent(url);
+    } else if (_isFacebookUrl(url)) {
+      await _extractFacebookContent(url);
     }
   }
 
@@ -4197,6 +4409,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _autoScannedUrls.clear();
     _facebookUrlsProcessed.clear();
     _tiktokCaptionsProcessed.clear();
+    _instagramUrlsProcessed.clear();
+    _clearExtractedSocialContent(); // Clear any previously extracted social media content
     _processSharedContent(files);
     _syncSharedUrlControllerFromContent();
   }
@@ -4220,6 +4434,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         String text = file.path;
         foundUrl = _extractFirstUrl(text);
         if (foundUrl != null) {
+          // Auto-extract content from Instagram/Facebook posts using oEmbed API
+          // This extracts caption, hashtags, and mentions for use in other methods
+          if (_isInstagramUrl(foundUrl) || _isFacebookUrl(foundUrl)) {
+            _autoExtractSocialMediaContent(foundUrl);
+          }
+          
           if (_isSpecialUrl(foundUrl)) {
             // SPECIAL CASE: If this is a Yelp URL and we already have cards, treat it as an update
             String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
@@ -8232,7 +8452,6 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   bool _isExpanded = false;
   bool _isDisposed = false;
   inapp.InAppWebViewController? _controller;
-  double? _measuredContentHeight; // Dynamically measured content height
 
   @override
   void dispose() {
@@ -8274,14 +8493,6 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
     // No state updates here, just a pass-through
   }
 
-  // Callback when content height is measured
-  void _handleContentHeightChanged(double height) {
-    if (!mounted || _isDisposed) return;
-    _safeSetState(() {
-      _measuredContentHeight = height;
-    });
-  }
-
   // Safe callback for URL launching
   Future<void> _handleUrlLaunch(String url) async {
     if (!mounted || _isDisposed) return;
@@ -8292,24 +8503,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    // Check if we're in Default mode (oEmbed) or WebView mode
-    // Uses sync check - defaults to Default mode if settings not yet loaded
-    final isDefaultMode = !InstagramSettingsService.instance.isWebViewModeSync();
-    
-    // Different heights for Default mode (oEmbed) vs WebView mode
-    final double height;
-    if (isDefaultMode) {
-      // Default mode: 550 collapsed, dynamic height when expanded (use measured height or fallback)
-      if (_isExpanded) {
-        // Use measured content height if available, otherwise use a reasonable fallback
-        height = _measuredContentHeight ?? 2000.0;
-      } else {
-        height = 550.0;
-      }
-    } else {
-      // WebView mode: original heights
-      height = _isExpanded ? 2800.0 : 910.0;
-    }
+    final double height = _isExpanded ? 2800.0 : 910.0;
     
     // Use a consistent key to prevent widget recreation across rebuilds
     final widgetKey = ValueKey('instagram_preview_${widget.url}');
@@ -8326,7 +8520,6 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           launchUrlCallback: _handleUrlLaunch,
           onWebViewCreated: _handleWebViewCreated,
           onPageFinished: _handlePageFinished,
-          onContentHeightChanged: _handleContentHeightChanged,
         ),
         Container(height: 8, color: AppColors.backgroundColor),
         _buildBottomControls(),
