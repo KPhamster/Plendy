@@ -38,6 +38,7 @@ import '../widgets/web_media_preview_card.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
 import '../services/discovery_cover_service.dart';
+import '../services/instagram_settings_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class DiscoveryScreen extends StatefulWidget {
@@ -1784,6 +1785,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
 
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -1836,60 +1838,63 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _handleExperienceTap(experience),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            children: [
-              Text(
-                experience.name,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: [
+                Text(
+                  experience.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              FutureBuilder<List<Experience>>(
-                future: _getLinkedExperiencesForMedia(item.mediaUrl),
-                builder: (context, snapshot) {
-                  final experiences = snapshot.data;
-                  if (experiences == null || experiences.length <= 1) {
-                    return const SizedBox.shrink();
-                  }
-                  return TextButton(
-                    onPressed: () => _showLinkedExperiencesDialog(item),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      backgroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      minimumSize: const Size(0, 0),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text(
-                      'and more',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-          if (subtitle.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4.0),
-              child: Text(
-                subtitle,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
+                FutureBuilder<List<Experience>>(
+                  future: _getLinkedExperiencesForMedia(item.mediaUrl),
+                  builder: (context, snapshot) {
+                    final experiences = snapshot.data;
+                    if (experiences == null || experiences.length <= 1) {
+                      return const SizedBox.shrink();
+                    }
+                    return TextButton(
+                      onPressed: () => _showLinkedExperiencesDialog(item),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.black,
+                        backgroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text(
+                        'and more',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    );
+                  },
                 ),
-              ),
+              ],
             ),
-        ],
+            if (subtitle.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -2442,6 +2447,16 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
   }
 
+  Future<bool> _isInstagramDefaultMode(_DiscoveryFeedItem item) async {
+    if (_classifyUrl(item.mediaUrl) != _MediaType.instagram) {
+      return false;
+    }
+    // For Instagram previews, check if it's NOT in Web View mode (i.e., it's in default mode)
+    final settingsService = InstagramSettingsService.instance;
+    final isWebViewMode = await settingsService.isWebViewMode();
+    return !isWebViewMode; // If not Web View mode, then it's default mode
+  }
+
   String _normalizeUrlForComparison(String? url) {
     if (url == null) return '';
     final trimmed = url.trim();
@@ -2758,23 +2773,60 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 ),
         );
       case _MediaType.instagram:
-        return SizedBox.expand(
-          child: kIsWeb
-              ? Center(
+        final screenWidth = MediaQuery.of(context).size.width;
+        final instagramWidget = kIsWeb
+            ? Padding(
+                padding: const EdgeInsets.only(top: 50),
+                child: Center(
                   child: WebMediaPreviewCard(
                     url: url,
                     experienceName: item.experience.name,
                     onOpenPressed: () => _launchUrl(url),
                   ),
-                )
-              : instagram_widget.InstagramWebView(
-                  key: ValueKey('instagram_$url'),
-                  url: url,
-                  height: mediaSize.height,
-                  launchUrlCallback: _launchUrl,
-                  onWebViewCreated: (_) {},
-                  onPageFinished: (_) {},
                 ),
+              )
+            : instagram_widget.InstagramWebView(
+                key: ValueKey('instagram_$url'),
+                url: url,
+                height: mediaSize.height,
+                launchUrlCallback: _launchUrl,
+                onWebViewCreated: (_) {},
+                onPageFinished: (_) {},
+                topPadding: 50,
+              );
+
+        return SizedBox.expand(
+          child: FutureBuilder<bool>(
+            future: _isInstagramDefaultMode(_DiscoveryFeedItem(experience: item.experience, mediaUrl: url)),
+            builder: (context, snapshot) {
+              final isDefaultMode = snapshot.data ?? false;
+              if (kIsWeb || !isDefaultMode) {
+                // Web or non-default mode: use normal sizing
+                return instagramWidget;
+              }
+
+              // Default mode on mobile: make it wider than screen and centered
+              return Container(
+                width: screenWidth,
+                height: mediaSize.height,
+                child: Stack(
+                  children: [
+                    Positioned(
+                      left: -screenWidth * 0.20, // Offset to center the wider content (20% for 40% wider total)
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: screenWidth * 1.40, // 40% wider than screen (140% total)
+                          height: mediaSize.height,
+                          child: instagramWidget,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         );
       case _MediaType.facebook:
         return SizedBox.expand(

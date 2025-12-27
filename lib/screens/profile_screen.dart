@@ -15,6 +15,7 @@ import 'tutorials_screen.dart';
 import 'reviews_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../config/colors.dart';
+import 'settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -352,6 +353,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               onTap: () {
                                 HapticFeedback.heavyImpact();
                                 _showReportDialog();
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.settings),
+                              title: const Text('Settings'),
+                              onTap: () {
+                                HapticFeedback.heavyImpact();
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const SettingsScreen(),
+                                  ),
+                                );
                               },
                             ),
                           ],
