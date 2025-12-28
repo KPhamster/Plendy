@@ -14,6 +14,7 @@ import '../screens/chat_screen.dart';
 import '../services/message_service.dart';
 import '../services/user_service.dart';
 import 'cached_profile_avatar.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 /// Shows a snackbar with "Shared with friends!" message and a "View message" action
 /// that navigates to the message thread when tapped.
@@ -202,12 +203,12 @@ class _ShareExperienceBottomSheetContentState
             ListTile(
               leading: const Icon(Icons.send_outlined),
               title: const Text('Share to Plendy friends'),
-              onTap: () async {
+              onTap: withHeavyTap(() async {
                 await _persistChoice();
                 if (!mounted) return;
                 Navigator.of(context).pop();
                 await widget.onDirectShare();
-              },
+              }),
             ),
             ListTile(
               leading: _creating
@@ -219,7 +220,7 @@ class _ShareExperienceBottomSheetContentState
                   : const Icon(Icons.link_outlined),
               title:
                   Text(_creating ? 'Creating link...' : 'Get shareable link'),
-              onTap: _creating
+              onTap: withHeavyTap(_creating
                   ? null
                   : () async {
                       setState(() => _creating = true);
@@ -235,7 +236,7 @@ class _ShareExperienceBottomSheetContentState
                           setState(() => _creating = false);
                         }
                       }
-                    },
+                    }),
             ),
           ],
         ),
@@ -945,9 +946,9 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: InkWell(
-        onTap: _isViewingExistingChats
+        onTap: withHeavyTap(_isViewingExistingChats
             ? _switchToFriendsView
-            : _switchToExistingChatsView,
+            : _switchToExistingChatsView),
         borderRadius: BorderRadius.circular(8),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1106,7 +1107,7 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
             isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
             color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
           ),
-          onTap: () => _toggleThreadSelection(thread.id),
+          onTap: withHeavyTap(() => _toggleThreadSelection(thread.id)),
         );
       },
     );
@@ -1247,7 +1248,7 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
                   color:
                       isSelected ? Theme.of(context).primaryColor : Colors.grey,
                 ),
-          onTap: isDisabled ? null : () => _toggleSelection(profile),
+          onTap: withHeavyTap(isDisabled ? null : () => _toggleSelection(profile)),
         );
       },
     );

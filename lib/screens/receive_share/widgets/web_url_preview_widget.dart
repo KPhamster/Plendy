@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:typed_data';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class WebUrlPreviewWidget extends StatefulWidget {
   final String url;
@@ -384,7 +385,7 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
               const SizedBox(width: 8),
               Expanded(
                 child: InkWell(
-                  onTap: () => widget.launchUrlCallback(widget.url),
+                  onTap: withHeavyTap(() => widget.launchUrlCallback(widget.url)),
                   child: Text(
                     widget.url,
                     style: TextStyle(

@@ -12,6 +12,7 @@ import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/email_validation_service.dart';
 import 'public_profile_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Custom formatter to trim trailing whitespace
 class _TrimTrailingWhitespaceFormatter extends TextInputFormatter {
@@ -663,7 +664,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: Column(
                 children: [
                   GestureDetector(
-                    onTap: _pickImage,
+                    onTap: withHeavyTap(_pickImage),
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -13,6 +12,7 @@ import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
 import '../config/colors.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 /// Google Calendar-style events screen with Material 3 Expressive design
 class EventsScreen extends StatefulWidget {
@@ -68,7 +68,6 @@ class _EventsScreenState extends State<EventsScreen>
     _tabController = TabController(length: 4, vsync: this, initialIndex: 3);
     _tabController.addListener(() {
       if (_tabController.index != _currentTabIndex) {
-        HapticFeedback.heavyImpact();
         _currentTabIndex = _tabController.index;
         setState(() {
           switch (_tabController.index) {
@@ -515,10 +514,9 @@ class _EventsScreenState extends State<EventsScreen>
           // Month/Year display
           Expanded(
             child: GestureDetector(
-              onTap: () {
-                HapticFeedback.heavyImpact();
+              onTap: withHeavyTap(() {
                 _showMonthPicker(context);
-              },
+              }),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -545,7 +543,6 @@ class _EventsScreenState extends State<EventsScreen>
           // Today button
           TextButton.icon(
             onPressed: () {
-              HapticFeedback.heavyImpact();
               _goToToday();
             },
             icon: const Icon(Icons.today_outlined),
@@ -1033,10 +1030,9 @@ class _EventsScreenState extends State<EventsScreen>
       right: 2,
       height: height,
       child: GestureDetector(
-        onTap: () {
-          HapticFeedback.heavyImpact();
+        onTap: withHeavyTap(() {
           _openEventDetails(event);
-        },
+        }),
         child: Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
@@ -1362,10 +1358,9 @@ class _EventsScreenState extends State<EventsScreen>
     final borderColor = _getEventColor(event);
 
     return GestureDetector(
-      onTap: () {
-        HapticFeedback.heavyImpact();
+      onTap: withHeavyTap(() {
         _openEventDetails(event);
-      },
+      }),
       child: Container(
         key: key,
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -2017,10 +2012,9 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      onTap: () {
-        HapticFeedback.heavyImpact();
+      onTap: withHeavyTap(() {
         widget.onEventSelected(result.event);
-      },
+      }),
       trailing: const Icon(Icons.arrow_forward, size: 18),
     );
   }
@@ -2201,14 +2195,13 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
                                          yearForPage == DateTime.now().year;
 
                   return InkWell(
-                    onTap: () {
-                      HapticFeedback.heavyImpact();
+                    onTap: withHeavyTap(() {
                       setState(() {
                         _selectedMonth = month;
                         _selectedYear = yearForPage;
                       });
                       widget.onDateSelected(DateTime(yearForPage, month, 1));
-                    },
+                    }),
                     borderRadius: BorderRadius.circular(12),
                     child: Container(
                       decoration: BoxDecoration(
@@ -2264,13 +2257,12 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
         final isCurrentYear = year == currentYear;
 
         return InkWell(
-          onTap: () {
-            HapticFeedback.heavyImpact();
+          onTap: withHeavyTap(() {
             setState(() {
               _selectedYear = year;
               _isSelectingYear = false;
             });
-          },
+          }),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
             color: isSelected

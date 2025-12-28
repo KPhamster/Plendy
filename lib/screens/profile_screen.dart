@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/notification_state_service.dart';
@@ -16,6 +15,7 @@ import 'reviews_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../config/colors.dart';
 import 'settings_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -136,7 +136,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              HapticFeedback.heavyImpact();
               _openEditProfile();
             },
             style: TextButton.styleFrom(
@@ -148,7 +147,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: () {
-              HapticFeedback.heavyImpact();
               _openEditProfile();
             },
           ),
@@ -165,10 +163,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     Center(
                       child: GestureDetector(
-                        onTap: () {
-                          HapticFeedback.heavyImpact();
+                        onTap: withHeavyTap(() {
                           _openEditProfile();
-                        },
+                        }),
                         behavior: HitTestBehavior.translucent,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -274,15 +271,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                          notificationService.hasUnseenFollowRequests,
                               ),
                               title: const Text('My People'),
-                              onTap: () {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
                                       builder: (context) =>
                                           const MyPeopleScreen()),
                                 );
-                              },
+                              }),
                             ),
                             ListTile(
                               leading: IconNotificationDot(
@@ -290,8 +286,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 showDot: notificationService.hasUnreadMessages,
                               ),
                               title: const Text('Messages'),
-                              onTap: () {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -299,14 +294,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         const MessagesScreen(),
                                   ),
                                 );
-                              },
+                              }),
                             ),
                             ListTile(
                               leading: const Icon(FontAwesomeIcons.instagram),
                               title:
                                   const Text('Sign in for improved experience'),
-                              onTap: () async {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() async {
                                 final result = await Navigator.push<bool>(
                                   context,
                                   MaterialPageRoute(
@@ -317,13 +311,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 if (result == true) {
                                   await widget.onRequestDiscoveryRefresh?.call();
                                 }
-                              },
+                              }),
                             ),
                             ListTile(
                               leading: const Icon(Icons.menu_book_outlined),
                               title: const Text('Tutorials'),
-                              onTap: () {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -331,13 +324,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         const TutorialsScreen(),
                                   ),
                                 );
-                              },
+                              }),
                             ),
                             ListTile(
                               leading: const Icon(Icons.thumb_up_outlined),
                               title: const Text('Reviews'),
-                              onTap: () {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -345,21 +337,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         const ReviewsScreen(),
                                   ),
                                 );
-                              },
+                              }),
                             ),
                             ListTile(
                               leading: const Icon(Icons.email_outlined),
                               title: const Text('Report'),
-                              onTap: () {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() {
                                 _showReportDialog();
-                              },
+                              }),
                             ),
                             ListTile(
                               leading: const Icon(Icons.settings),
                               title: const Text('Settings'),
-                              onTap: () {
-                                HapticFeedback.heavyImpact();
+                              onTap: withHeavyTap(() {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -367,7 +357,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         const SettingsScreen(),
                                   ),
                                 );
-                              },
+                              }),
                             ),
                           ],
                         );

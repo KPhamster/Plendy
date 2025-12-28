@@ -4,6 +4,7 @@ import '../models/user_profile.dart';
 import '../services/user_service.dart';
 import '../services/auth_service.dart';
 import 'cached_profile_avatar.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class UserSearchDelegate extends SearchDelegate<UserProfile?> {
   final UserService userService;
@@ -142,12 +143,12 @@ class UserSearchDelegate extends SearchDelegate<UserProfile?> {
                         },
                         child: Text(isCurrentlyFollowing ? 'Unfollow' : 'Follow'),
                       ),
-              onTap: () {
+              onTap: withHeavyTap(() {
                 if (isResults) {
                  // close(context, userProfile); // Option: return selected user
                 }
                 // TODO: Navigate to user's profile screen
-              },
+              }),
             );
           },
         );

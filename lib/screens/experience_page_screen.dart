@@ -73,6 +73,7 @@ import '../widgets/write_review_modal.dart';
 import 'package:intl/intl.dart';
 import '../widgets/event_editor_modal.dart';
 import '../config/colors.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -1089,7 +1090,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       GestureDetector(
-                        onTap: _isUpdatingRating ? null : () => _handleThumbRating(true),
+                        onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(true)),
                         child: Container(
                           width: 32,
                           height: 32,
@@ -1134,7 +1135,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       GestureDetector(
-                        onTap: _isUpdatingRating ? null : () => _handleThumbRating(false),
+                        onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(false)),
                         child: Container(
                           width: 32,
                           height: 32,
@@ -1827,7 +1828,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // Make the address row tappable
           if (!hideLocationDetails) ...[
             GestureDetector(
-              onTap: () => _launchMapLocation(_currentExperience.location),
+              onTap: withHeavyTap(() => _launchMapLocation(_currentExperience.location)),
               child: _buildDetailRow(
                 context,
                 Icons.location_on_outlined,
@@ -2710,7 +2711,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           children: [
                             GestureDetector(
                               behavior: HitTestBehavior.opaque,
-                              onTap: () => _toggleMediaPreview(url),
+                              onTap: withHeavyTap(() => _toggleMediaPreview(url)),
                               child: Container(
                                 color: Theme.of(context).primaryColor,
                                 padding: const EdgeInsets.symmetric(
@@ -2799,7 +2800,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                         bottom: 4.0,
                                         left: 4.0), // Indent slightly
                                     child: InkWell(
-                                      onTap: () async {
+                                      onTap: withHeavyTap(() async {
                                         print(
                                             'Tapped on other experience ${exp.name} from exp page tab');
                                         // final category = // OLD
@@ -2841,7 +2842,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                           // Or maybe the whole page?
                                           // _refreshExperienceData();
                                         }
-                                      },
+                                      }),
                                       child: Row(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
@@ -3045,7 +3046,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         GestureDetector(
-                          onTap: _isUpdatingRating ? null : () => _handleThumbRating(true),
+                          onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(true)),
                         child: Container(
                           width: 48,
                           height: 48,
@@ -3090,7 +3091,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         GestureDetector(
-                          onTap: _isUpdatingRating ? null : () => _handleThumbRating(false),
+                          onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(false)),
                           child: Container(
                             width: 48,
                             height: 48,
@@ -3525,7 +3526,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         itemCount: imageUrls.length,
         itemBuilder: (context, index) {
           return GestureDetector(
-            onTap: () => _showFullScreenReviewImage(imageUrls, index),
+            onTap: withHeavyTap(() => _showFullScreenReviewImage(imageUrls, index)),
             child: Container(
               width: 100,
               height: 100,
@@ -3804,7 +3805,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         : icon;
 
     return InkWell(
-      onTap: onTap, // onTap will be null if disabled
+      onTap: withHeavyTap(onTap), // onTap will be null if disabled
       borderRadius: BorderRadius.circular(8.0),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
@@ -4315,7 +4316,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final formattedDate = dateFormatter.format(event.startDateTime);
 
     return GestureDetector(
-      onTap: () => _openEventEditor(event),
+      onTap: withHeavyTap(() => _openEventEditor(event)),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),

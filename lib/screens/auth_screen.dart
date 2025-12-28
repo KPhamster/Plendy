@@ -5,6 +5,7 @@ import 'package:plendy/screens/register_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Custom formatter to trim trailing whitespace
 class _TrimTrailingWhitespaceFormatter extends TextInputFormatter {
@@ -384,7 +385,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           InkWell(
-                            onTap: () async {
+                            onTap: withHeavyTap(() async {
                               try {
                                 final result =
                                     await authService.signInWithGoogle();
@@ -401,7 +402,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                   );
                                 }
                               }
-                            },
+                            }),
                             child: const Padding(
                               padding: EdgeInsets.symmetric(horizontal: 20),
                               child: Icon(FontAwesomeIcons.google,
@@ -409,7 +410,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                           ),
                           InkWell(
-                            onTap: () async {
+                            onTap: withHeavyTap(() async {
                               try {
                                 final result =
                                     await authService.signInWithApple();
@@ -426,7 +427,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                   );
                                 }
                               }
-                            },
+                            }),
                             child: const Padding(
                               padding: EdgeInsets.symmetric(horizontal: 20),
                               child: Icon(FontAwesomeIcons.apple,
@@ -443,14 +444,14 @@ class _AuthScreenState extends State<AuthScreen> {
                               style: TextStyle(
                                   color: Colors.black87, fontSize: 15)),
                           GestureDetector(
-                            onTap: () {
+                            onTap: withHeavyTap(() {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (context) =>
                                         const RegisterScreen()),
                               );
-                            },
+                            }),
                             child: const Text(
                               'Sign Up Now',
                               style: TextStyle(

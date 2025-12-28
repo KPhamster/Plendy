@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class PrivacyTooltipIcon extends StatelessWidget {
   final String message;
@@ -12,7 +13,7 @@ class PrivacyTooltipIcon extends StatelessWidget {
       waitDuration: const Duration(milliseconds: 300),
       child: InkWell(
         customBorder: const CircleBorder(),
-        onTap: () {
+        onTap: withHeavyTap(() {
           showDialog(
             context: context,
             builder: (context) {
@@ -29,7 +30,7 @@ class PrivacyTooltipIcon extends StatelessWidget {
               );
             },
           );
-        },
+        }),
         child: const Padding(
           padding: EdgeInsets.all(4.0),
           child: Icon(

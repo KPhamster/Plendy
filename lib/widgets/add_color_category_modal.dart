@@ -4,6 +4,7 @@ import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class AddColorCategoryModal extends StatefulWidget {
   final ColorCategory? categoryToEdit;
@@ -230,7 +231,7 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
               ),
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => _pickColor(context),
+                onTap: withHeavyTap(() => _pickColor(context)),
                 child: Container(
                   height: 50,
                   decoration: BoxDecoration(

@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class AddExperienceModal extends StatefulWidget {
   final List<UserCategory> userCategories;
@@ -411,10 +412,10 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                                   trailing: isSelected
                                       ? const Icon(Icons.check, color: Colors.blue)
                                       : null,
-                                  onTap: () {
+                                  onTap: withHeavyTap(() {
                                     FocusScope.of(dialogContext).unfocus();
                                     Navigator.pop(dialogContext, category.id);
-                                  },
+                                  }),
                                   visualDensity: VisualDensity.compact,
                                 );
                               },
@@ -891,10 +892,10 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                                   trailing: isSelected
                                       ? const Icon(Icons.check, color: Colors.blue)
                                       : null,
-                                  onTap: () {
+                                  onTap: withHeavyTap(() {
                                     FocusScope.of(dialogContext).unfocus();
                                     Navigator.pop(dialogContext, category.id);
-                                  },
+                                  }),
                                   visualDensity: VisualDensity.compact,
                                 );
                               },
@@ -1275,9 +1276,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
               // Location selection
               GestureDetector(
-                onTap: (_cardData.locationEnabled.value)
+                onTap: withHeavyTap((_cardData.locationEnabled.value)
                     ? _showLocationPicker
-                    : null,
+                    : null),
                 child: Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -1392,7 +1393,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                   ),
                   const SizedBox(width: 6),
                   InkWell(
-                    onTap: _launchYelpUrl,
+                    onTap: withHeavyTap(_launchYelpUrl),
                     borderRadius: BorderRadius.circular(16),
                     child: Padding(
                       padding: const EdgeInsets.all(4.0),
@@ -1405,7 +1406,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                   ),
                   const SizedBox(width: 6),
                   InkWell(
-                    onTap: _launchMapLocation,
+                    onTap: withHeavyTap(_launchMapLocation),
                     borderRadius: BorderRadius.circular(16),
                     child: Padding(
                       padding: const EdgeInsets.all(4.0),
@@ -1694,9 +1695,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                       children: <Widget>[
                         if (_cardData.websiteController.text.isNotEmpty)
                           InkWell(
-                            onTap: () {
+                            onTap: withHeavyTap(() {
                               _cardData.websiteController.clear();
-                            },
+                            }),
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding: const EdgeInsets.all(4.0),
@@ -1706,7 +1707,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                         if (_cardData.websiteController.text.isNotEmpty)
                           const SizedBox(width: 4),
                         InkWell(
-                          onTap: _pasteWebsiteUrlFromClipboard,
+                          onTap: withHeavyTap(_pasteWebsiteUrlFromClipboard),
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.all(4.0),
@@ -1716,12 +1717,12 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                         ),
                         const SizedBox(width: 4),
                         InkWell(
-                          onTap: _cardData.websiteController.text.isNotEmpty &&
+                          onTap: withHeavyTap(_cardData.websiteController.text.isNotEmpty &&
                                   _isValidUrl(
                                       _cardData.websiteController.text.trim())
                               ? () => _launchUrl(
                                   _cardData.websiteController.text.trim())
-                              : null,
+                              : null),
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding:

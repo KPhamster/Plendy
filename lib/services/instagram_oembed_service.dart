@@ -80,6 +80,24 @@ class InstagramOEmbedService {
           return null;
         }
         
+        // Debug: Log all fields returned by the API
+        print('📸 INSTAGRAM OEMBED RESPONSE:');
+        for (final key in data.keys) {
+          final value = data[key];
+          if (key == 'html') {
+            print('  $key: [${(value as String?)?.length ?? 0} chars]');
+          } else {
+            print('  $key: $value');
+          }
+        }
+        
+        // Check if there's a title field (some posts may have it)
+        final title = data['title'] as String?;
+        if (title != null && title.isNotEmpty) {
+          print('✅ INSTAGRAM: Got caption from title field: ${title.length} chars');
+          return title;
+        }
+        
         // The caption is embedded in the HTML response
         final html = data['html'] as String?;
         
@@ -123,15 +141,47 @@ class InstagramOEmbedService {
   /// 
   /// The oEmbed API returns HTML that contains the caption text.
   /// We need to parse it carefully to extract just the caption.
+  /// 
+  /// Supports both regular posts and Reels which have different HTML structures.
   String? _extractCaptionFromHtml(String html) {
     try {
-      // Instagram embeds include data-instgrm-caption-id attribute
-      // and the caption is typically in a specific structure
+      print('📸 INSTAGRAM PARSE: Attempting to extract caption from ${html.length} chars of HTML');
       
-      // Try to find text after "A post shared by" or similar markers
-      // The caption is usually before the author attribution
+      // Debug: Print a snippet of the HTML to understand structure
+      if (html.length > 500) {
+        print('📸 INSTAGRAM PARSE: HTML preview: ${html.substring(0, 500)}...');
+      }
       
-      // Method 1: Look for blockquote content (most reliable)
+      // Method 1: Look for <p> tags inside blockquote (common for posts with captions)
+      // Instagram embeds typically have: <blockquote>...<p>CAPTION HERE</p>...</blockquote>
+      final pTagMatch = RegExp(
+        r'<p[^>]*>([^<]+)</p>',
+        dotAll: true,
+        multiLine: true,
+      ).allMatches(html);
+      
+      if (pTagMatch.isNotEmpty) {
+        final captionParts = <String>[];
+        for (final match in pTagMatch) {
+          final content = match.group(1)?.trim() ?? '';
+          // Skip attribution lines
+          if (content.isEmpty) continue;
+          if (content.startsWith('A post shared by')) continue;
+          if (content.startsWith('A reel shared by')) continue;
+          if (content.startsWith('View this')) continue;
+          if (content.contains('(@') && content.length < 50) continue; // Skip short author mentions
+          
+          captionParts.add(content);
+        }
+        
+        if (captionParts.isNotEmpty) {
+          final caption = captionParts.join('\n').trim();
+          print('✅ INSTAGRAM PARSE: Found caption in <p> tags: ${caption.length} chars');
+          return caption;
+        }
+      }
+      
+      // Method 2: Look for blockquote content and extract text
       final blockquoteMatch = RegExp(
         r'<blockquote[^>]*>(.*?)</blockquote>',
         dotAll: true,
@@ -141,56 +191,110 @@ class InstagramOEmbedService {
       if (blockquoteMatch != null) {
         String blockquoteContent = blockquoteMatch.group(1) ?? '';
         
+        // Remove script tags first
+        blockquoteContent = blockquoteContent.replaceAll(
+          RegExp(r'<script[^>]*>.*?</script>', dotAll: true), 
+          ''
+        );
+        
         // Remove HTML tags but keep newlines
         blockquoteContent = blockquoteContent
             .replaceAll(RegExp(r'<br\s*/?>'), '\n')
-            .replaceAll(RegExp(r'<[^>]+>'), '')
+            .replaceAll(RegExp(r'<[^>]+>'), ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
             .trim();
         
         // Split by common separator phrases
-        final lines = blockquoteContent.split('\n');
+        final lines = blockquoteContent.split(RegExp(r'[\n\r]+|\s{2,}'));
         final captionLines = <String>[];
         
         for (final line in lines) {
           final trimmedLine = line.trim();
           
-          // Stop at common attribution markers
+          // Skip empty lines
           if (trimmedLine.isEmpty) continue;
+          
+          // Stop at common attribution markers
           if (trimmedLine.startsWith('A post shared by')) break;
+          if (trimmedLine.startsWith('A reel shared by')) break;
           if (trimmedLine.startsWith('View this post on')) break;
-          if (trimmedLine.contains('(@')) break; // Usually author mention
+          if (trimmedLine.startsWith('View this reel on')) break;
+          if (RegExp(r'^\(@[\w.]+\)$').hasMatch(trimmedLine)) break; // Just @username
+          
+          // Skip if it's just a short author mention
+          if (trimmedLine.contains('(@') && trimmedLine.length < 50) continue;
           
           captionLines.add(trimmedLine);
         }
         
         if (captionLines.isNotEmpty) {
-          return captionLines.join('\n').trim();
+          final caption = captionLines.join(' ').trim();
+          print('✅ INSTAGRAM PARSE: Found caption in blockquote: ${caption.length} chars');
+          return caption;
         }
       }
       
-      // Method 2: Try to extract from plain text (fallback)
+      // Method 3: Extract ALL text content and look for meaningful content
       String plainText = html
+          .replaceAll(RegExp(r'<script[^>]*>.*?</script>', dotAll: true), '')
+          .replaceAll(RegExp(r'<style[^>]*>.*?</style>', dotAll: true), '')
           .replaceAll(RegExp(r'<br\s*/?>'), '\n')
           .replaceAll(RegExp(r'<[^>]+>'), ' ')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
       
-      // Look for caption patterns
-      final captionMatch = RegExp(
-        r'^(.*?)(?:A post shared by|View this post on Instagram)',
-        dotAll: true,
-      ).firstMatch(plainText);
+      print('📸 INSTAGRAM PARSE: Plain text extracted: ${plainText.length} chars');
+      if (plainText.length > 200) {
+        print('📸 INSTAGRAM PARSE: Plain text preview: ${plainText.substring(0, 200)}...');
+      } else {
+        print('📸 INSTAGRAM PARSE: Plain text: $plainText');
+      }
       
-      if (captionMatch != null) {
-        final caption = captionMatch.group(1)?.trim();
-        if (caption != null && caption.isNotEmpty) {
-          return caption;
+      // Look for caption before attribution markers
+      final attributionPatterns = [
+        r'A post shared by',
+        r'A reel shared by', 
+        r'View this post on Instagram',
+        r'View this reel on Instagram',
+        r'on \w+ \d+, \d{4}', // Date pattern like "on Jan 15, 2024"
+      ];
+      
+      for (final pattern in attributionPatterns) {
+        final captionMatch = RegExp(
+          '^(.*?)(?:$pattern)',
+          dotAll: true,
+          caseSensitive: false,
+        ).firstMatch(plainText);
+        
+        if (captionMatch != null) {
+          final caption = captionMatch.group(1)?.trim();
+          if (caption != null && caption.length > 5) {
+            print('✅ INSTAGRAM PARSE: Found caption before "$pattern": ${caption.length} chars');
+            return caption;
+          }
         }
       }
       
+      // Method 4: If plain text is substantial, return it (minus known boilerplate)
+      if (plainText.length > 20) {
+        // Remove common Instagram embed boilerplate
+        plainText = plainText
+            .replaceAll(RegExp(r'View this post on Instagram', caseSensitive: false), '')
+            .replaceAll(RegExp(r'View this reel on Instagram', caseSensitive: false), '')
+            .replaceAll(RegExp(r'A post shared by.*$', caseSensitive: false), '')
+            .replaceAll(RegExp(r'A reel shared by.*$', caseSensitive: false), '')
+            .trim();
+        
+        if (plainText.length > 10) {
+          print('✅ INSTAGRAM PARSE: Using cleaned plain text: ${plainText.length} chars');
+          return plainText;
+        }
+      }
+      
+      print('⚠️ INSTAGRAM PARSE: No caption could be extracted');
       return null;
     } catch (e) {
-      print('⚠️ INSTAGRAM: Error extracting caption from HTML: $e');
+      print('❌ INSTAGRAM PARSE: Error extracting caption from HTML: $e');
       return null;
     }
   }

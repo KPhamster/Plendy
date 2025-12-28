@@ -13,6 +13,7 @@ import '../models/color_category.dart';
 import '../services/experience_service.dart';
 import '../widgets/write_review_modal.dart';
 import 'experience_page_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -255,9 +256,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 // Tappable experience info
                 Expanded(
                   child: InkWell(
-                    onTap: experience != null
+                    onTap: withHeavyTap(experience != null
                         ? () => _navigateToExperience(experience)
-                        : null,
+                        : null),
                     borderRadius: BorderRadius.circular(8),
                     child: Row(
                       children: [
@@ -442,7 +443,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
         itemCount: imageUrls.length,
         itemBuilder: (context, index) {
           return GestureDetector(
-            onTap: () => _showFullScreenImage(imageUrls, index),
+            onTap: withHeavyTap(() => _showFullScreenImage(imageUrls, index)),
             child: Container(
               width: 80,
               height: 80,

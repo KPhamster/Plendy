@@ -17,6 +17,7 @@ import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../screens/map_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 /// A reusable full-screen modal for selecting experiences for events.
 ///
@@ -1094,13 +1095,13 @@ class _EventExperienceSelectorScreenState
           leading: Text(category.icon, style: const TextStyle(fontSize: 24)),
           title: Text(category.name),
           subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-          onTap: () {
+          onTap: withHeavyTap(() {
             setState(() {
               _selectedCategory = category;
               _showingColorCategories = false;
               _selectedColorCategory = null;
             });
-          },
+          }),
         );
       },
     );
@@ -1134,13 +1135,13 @@ class _EventExperienceSelectorScreenState
           ),
           title: Text(category.name),
           subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-          onTap: () {
+          onTap: withHeavyTap(() {
             setState(() {
               _selectedColorCategory = category;
               _showingColorCategories = true;
               _selectedCategory = null;
             });
-          },
+          }),
         );
       },
     );
@@ -1370,7 +1371,7 @@ class _EventExperienceSelectorScreenState
                 const SizedBox(width: 12),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () => _openExperienceContentPreview(experience),
+                  onTap: withHeavyTap(() => _openExperienceContentPreview(experience)),
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -1481,7 +1482,7 @@ class _EventExperienceSelectorScreenState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: subtitleChildren,
                 ),
-          onTap: () {
+          onTap: withHeavyTap(() {
             setState(() {
               if (_selectedExperienceIds.contains(experience.id)) {
                 _selectedExperienceIds.remove(experience.id);
@@ -1494,7 +1495,7 @@ class _EventExperienceSelectorScreenState
                 }
               }
             });
-          },
+          }),
         ),
       ),
     );

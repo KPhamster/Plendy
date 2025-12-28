@@ -8,6 +8,7 @@ import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import 'experience_page_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class MediaFullscreenScreen extends StatefulWidget {
   final List<SharedMediaItem> mediaItems;
@@ -326,7 +327,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                             leading: Text(categoryIcon, style: const TextStyle(fontSize: 20)),
                             title: Text(exp.name),
                             trailing: const Icon(Icons.chevron_right),
-                            onTap: () async {
+                            onTap: withHeavyTap(() async {
                               print('Tapped on other experience ${exp.name} from fullscreen');
                               final UserCategory categoryForNavigation = 
                                   _fetchedCategories[exp.categoryId] ??
@@ -352,7 +353,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                               if (result == true && mounted) {
                                 _loadOtherExperienceData();
                               }
-                            },
+                            }),
                           );
                         }),
                       ],

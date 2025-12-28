@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/message_service.dart';
 import '../services/user_service.dart';
 import '../widgets/cached_profile_avatar.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class NewMessageThreadScreen extends StatefulWidget {
   const NewMessageThreadScreen({
@@ -360,7 +361,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
             isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
             color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
           ),
-          onTap: () => _toggleSelection(profile),
+          onTap: withHeavyTap(() => _toggleSelection(profile)),
         );
       },
     );

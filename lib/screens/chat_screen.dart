@@ -22,6 +22,7 @@ import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
 import 'public_profile_screen.dart';
 import 'share_preview_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -303,7 +304,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   : GestureDetector(
                       key: const ValueKey('displayTitle'),
                       behavior: HitTestBehavior.opaque,
-                      onTap: () => _startEditingTitle(title),
+                      onTap: withHeavyTap(() => _startEditingTitle(title)),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -524,7 +525,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: bubbleWithConstraints),
@@ -602,7 +603,7 @@ class _ChatScreenState extends State<ChatScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: () => _openPublicProfile(userId),
+              onTap: withHeavyTap(() => _openPublicProfile(userId)),
               onLongPress: () => _copyShareLinkToClipboard(
                 'https://plendy.app/profile/$userId',
                 'Profile',
@@ -740,7 +741,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: card),
@@ -862,7 +863,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           'Experience',
                         )
                     : null,
-                onTap: () async {
+                onTap: withHeavyTap(() async {
                   if (isDiscoveryPreview) {
                     // Discovery preview: show media preview modal
                     await _showMediaPreviewModal(
@@ -917,7 +918,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     await _handleViewExperience(
                         experience, snapshot, fullExperienceMediaItems);
                   }
-                },
+                }),
                 borderRadius: BorderRadius.circular(12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -925,7 +926,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (imageUrl != null && imageUrl.isNotEmpty)
                       if (isDiscoveryPreview)
                         GestureDetector(
-                          onTap: () => _openLink(Uri.parse(imageUrl)),
+                          onTap: withHeavyTap(() => _openLink(Uri.parse(imageUrl))),
                           child: Container(
                             height: 120,
                             decoration: BoxDecoration(
@@ -1082,7 +1083,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: card),
@@ -1178,7 +1179,7 @@ class _ChatScreenState extends State<ChatScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: () => _openMultiExperiencePreview(message.shareId, snapshots, message.senderId),
+              onTap: withHeavyTap(() => _openMultiExperiencePreview(message.shareId, snapshots, message.senderId)),
               onLongPress: message.shareId != null && message.shareId!.isNotEmpty
                   ? () => _copyShareLinkToClipboard(
                         'https://plendy.app/shared/${message.shareId}',
@@ -1363,7 +1364,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: card),
@@ -1456,7 +1457,7 @@ class _ChatScreenState extends State<ChatScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: () => _openCategoryPreview(message.shareId, snapshot),
+              onTap: withHeavyTap(() => _openCategoryPreview(message.shareId, snapshot)),
               onLongPress: message.shareId != null && message.shareId!.isNotEmpty
                   ? () => _copyShareLinkToClipboard(
                         'https://plendy.app/shared-category/${message.shareId}',
@@ -1628,7 +1629,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: card),
@@ -1773,7 +1774,7 @@ class _ChatScreenState extends State<ChatScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: () => _openMultiCategoryPreview(message.shareId, snapshots),
+              onTap: withHeavyTap(() => _openMultiCategoryPreview(message.shareId, snapshots)),
               onLongPress: message.shareId != null && message.shareId!.isNotEmpty
                   ? () => _copyShareLinkToClipboard(
                         'https://plendy.app/shared-category/${message.shareId}',
@@ -1958,7 +1959,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: card),
@@ -2087,7 +2088,7 @@ class _ChatScreenState extends State<ChatScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: () => _openEventPreview(message.shareId, snapshot),
+              onTap: withHeavyTap(() => _openEventPreview(message.shareId, snapshot)),
               onLongPress: () {
                 // Use shareToken from event snapshot if available
                 final String? shareToken = snapshot['shareToken'] as String?;
@@ -2282,7 +2283,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _openPublicProfile(avatarParticipant.id),
+            onTap: withHeavyTap(() => _openPublicProfile(avatarParticipant.id)),
           ),
           const SizedBox(width: 8),
           Flexible(child: card),
@@ -2570,10 +2571,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     subtitle: username != null && username != displayName
                         ? Text(username)
                         : null,
-                    onTap: () {
+                    onTap: withHeavyTap(() {
                       Navigator.of(dialogContext).pop();
                       _openPublicProfile(participant.id);
-                    },
+                    }),
                   );
                 },
               ),
@@ -2617,7 +2618,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: withHeavyTap(onTap),
       behavior: HitTestBehavior.opaque,
       child: avatar,
     );

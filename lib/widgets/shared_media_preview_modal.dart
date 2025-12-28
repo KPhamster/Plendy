@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 import 'package:share_plus/share_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -24,6 +23,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../screens/experience_page_screen.dart';
 import 'web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/share_experience_bottom_sheet.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class SharedMediaPreviewModal extends StatefulWidget {
   final Experience experience;
@@ -340,10 +340,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                               cursor: SystemMouseCursors.click,
                               child: GestureDetector(
                                 behavior: HitTestBehavior.opaque,
-                                onTap: () {
-                                  HapticFeedback.heavyImpact();
+                                onTap: withHeavyTap(() {
                                   _handleViewExperienceNavigation();
-                                },
+                                }),
                                 child: Text(
                                   experience.name,
                                   style: GoogleFonts.notoSerif(
@@ -361,7 +360,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                         tooltip: 'Close',
                         icon: const Icon(Icons.close),
                         onPressed: () {
-                          HapticFeedback.heavyImpact();
                           Navigator.of(context).pop();
                         },
                       ),
@@ -907,7 +905,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       iconSize: iconSize,
       onPressed: isLaunchable
           ? () {
-              HapticFeedback.heavyImpact();
               widget.onLaunchUrl(url);
             }
           : null,
@@ -922,7 +919,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       onPressed: _isShareInProgress
           ? null
           : () {
-              HapticFeedback.heavyImpact();
               _handleShareButtonPressed(mediaItem);
             },
     );
@@ -933,7 +929,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       color: expansionColor,
       icon: Icon(expansionIcon),
       onPressed: () {
-        HapticFeedback.heavyImpact();
         _togglePreviewExpansion();
       },
     );
@@ -944,7 +939,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       icon: Icon(Icons.arrow_forward_rounded,
           color: Theme.of(context).primaryColor),
       onPressed: () {
-        HapticFeedback.heavyImpact();
         _handleViewExperienceNavigation();
       },
     );

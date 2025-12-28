@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 /// Displays a lightweight placeholder for Yelp links.
 ///
@@ -66,7 +67,7 @@ class YelpPreviewWidget extends StatelessWidget {
       button: true,
       label: 'Tap to open Yelp link',
       child: InkWell(
-        onTap: () => _handleTap(context),
+        onTap: withHeavyTap(() => _handleTap(context)),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           width: double.infinity,

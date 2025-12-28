@@ -4,6 +4,7 @@ import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../models/user_category.dart';
 import '../config/colors.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class SelectSavedExperienceModalContent extends StatefulWidget {
   final ScrollController? scrollController; // Optional: for DraggableScrollableSheet
@@ -227,10 +228,10 @@ class _SelectSavedExperienceModalContentState
                         subtitle: Text(experience.location.getFormattedArea() ??
                             experience.location.address ??
                             'No location details'),
-                        onTap: () {
+                        onTap: withHeavyTap(() {
                           // Return the selected experience when tapped
                           Navigator.pop(context, experience);
-                        },
+                        }),
                       );
                     },
                   );

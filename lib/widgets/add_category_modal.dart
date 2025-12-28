@@ -3,6 +3,7 @@ import 'package:plendy/models/user_category.dart';
 import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class AddCategoryModal extends StatefulWidget {
   final UserCategory? categoryToEdit;
@@ -261,11 +262,11 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
                     final emoji = _emojiOptions[index];
                     final isSelected = emoji == _selectedIcon;
                     return GestureDetector(
-                      onTap: () {
+                      onTap: withHeavyTap(() {
                         setState(() {
                           _selectedIcon = emoji;
                         });
-                      },
+                      }),
                       child: Container(
                         decoration: BoxDecoration(
                           color: isSelected

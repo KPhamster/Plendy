@@ -29,6 +29,7 @@ import 'experience_page_screen.dart';
 import 'main_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/colors.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -1283,10 +1284,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   Widget _buildCountTile({
     required String label,
     required int count,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: withHeavyTap(onTap),
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -1472,7 +1473,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                         title: Text(titleText),
                         subtitle:
                             subtitleText != null ? Text(subtitleText) : null,
-                        onTap: () {
+                        onTap: withHeavyTap(() {
                           Navigator.of(dialogContext).pop();
                           Navigator.of(parentContext).push(
                             MaterialPageRoute(
@@ -1480,7 +1481,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                                   PublicProfileScreen(userId: profile.id),
                             ),
                           );
-                        },
+                        }),
                       );
                     },
                   );
@@ -1641,7 +1642,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 GestureDetector(
-                  onTap: () => _showProfilePhotoDialog(profile),
+                  onTap: withHeavyTap(() => _showProfilePhotoDialog(profile)),
                   child: _buildAvatar(profile),
                 ),
                 const SizedBox(width: 24),
@@ -1669,14 +1670,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                             child: _buildCountTile(
                               label: 'Following',
                               count: _followingCount,
-                              onTap: _openFollowingDialog,
+                              onTap: withHeavyTap(() {
+                                unawaited(_openFollowingDialog());
+                              } as VoidCallback),
                             ),
                           ),
                           Expanded(
                             child: _buildCountTile(
                               label: 'Followers',
                               count: _followersCount,
-                              onTap: _openFollowersDialog,
+                              onTap: withHeavyTap(() {
+                                unawaited(_openFollowersDialog());
+                              } as VoidCallback),
                             ),
                           ),
                         ],
@@ -1891,9 +1896,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           children: [
             // Header: Category icon box, Experience name, Address, Time
             InkWell(
-              onTap: experience != null
+              onTap: withHeavyTap(experience != null
                   ? () => _navigateToExperienceFromReview(experience)
-                  : null,
+                  : null),
               borderRadius: BorderRadius.circular(8),
               child: Row(
                 children: [
@@ -2021,7 +2026,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         itemCount: imageUrls.length,
         itemBuilder: (context, index) {
           return GestureDetector(
-            onTap: () => _showFullScreenReviewImage(imageUrls, index),
+            onTap: withHeavyTap(() => _showFullScreenReviewImage(imageUrls, index)),
             child: Container(
               width: 80,
               height: 80,
@@ -2246,7 +2251,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                           )
                         : null,
                     child: InkWell(
-                      onTap: () {
+                      onTap: withHeavyTap(() {
                         setState(() {
                           if (isSelected) {
                             _selectedCategory = null;
@@ -2254,7 +2259,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                             _selectedCategory = category;
                           }
                         });
-                      },
+                      }),
                       child: Padding(
                         padding: const EdgeInsets.all(8.0),
                         child: Column(
@@ -2325,7 +2330,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
               : null,
           selected: isSelected,
-          onTap: () {
+          onTap: withHeavyTap(() {
             setState(() {
               if (isSelected) {
                 _selectedCategory = null;
@@ -2333,7 +2338,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 _selectedCategory = category;
               }
             });
-          },
+          }),
         );
       },
     );
@@ -2505,13 +2510,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     const SizedBox(width: 12),
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTap: () async {
+                      onTap: withHeavyTap(() async {
                         // Prefetch media if not cached, then show preview
                         if (!_experienceMediaCache.containsKey(experience.id)) {
                           await _prefetchExperienceMedia(experience);
                         }
                         await _showMediaPreview(experience, displayCategory);
-                      },
+                      }),
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
@@ -2563,14 +2568,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             ),
         ],
       ),
-      onTap: () async {
+      onTap: withHeavyTap(() async {
         // Prefetch media in background for faster loading
         if (contentCount > 0 &&
             !_experienceMediaCache.containsKey(experience.id)) {
           unawaited(_prefetchExperienceMedia(experience));
         }
         await _navigateToExperience(experience, displayCategory);
-      },
+      }),
     );
   }
 
@@ -2640,7 +2645,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                           )
                         : null,
                     child: InkWell(
-                      onTap: () {
+                      onTap: withHeavyTap(() {
                         setState(() {
                           if (isSelected) {
                             _selectedColorCategory = null;
@@ -2650,7 +2655,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                             _selectedCategory = null;
                           }
                         });
-                      },
+                      }),
                       child: Padding(
                         padding: const EdgeInsets.all(8.0),
                         child: Column(
@@ -2735,7 +2740,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
               : null,
           selected: isSelected,
-          onTap: () {
+          onTap: withHeavyTap(() {
             setState(() {
               if (isSelected) {
                 _selectedColorCategory = null;
@@ -2745,7 +2750,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 _selectedCategory = null;
               }
             });
-          },
+          }),
         );
       },
     );

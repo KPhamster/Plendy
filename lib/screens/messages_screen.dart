@@ -8,6 +8,7 @@ import '../services/message_service.dart';
 import '../widgets/cached_profile_avatar.dart';
 import 'chat_screen.dart';
 import 'new_message_thread_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({super.key});
@@ -182,7 +183,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
               ),
             )
           : null,
-      onTap: () => _openChat(thread, currentUserId),
+      onTap: withHeavyTap(() => _openChat(thread, currentUserId)),
     );
   }
 

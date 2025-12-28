@@ -6,6 +6,7 @@ import '../widgets/notification_dot.dart';
 import '../widgets/cached_profile_avatar.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class UserListTab extends StatefulWidget {
   final List<String> userIds;
@@ -237,7 +238,7 @@ class _UserListTabState extends State<UserListTab> {
               title: Text(displayName),
               subtitle: showUsernameAsSubtitle ? Text(username) : null,
               trailing: _buildActionButton(userProfile),
-              onTap: () => widget.onUserTap?.call(userProfile.id),
+              onTap: withHeavyTap(() => widget.onUserTap?.call(userProfile.id)),
             );
           },
         );
