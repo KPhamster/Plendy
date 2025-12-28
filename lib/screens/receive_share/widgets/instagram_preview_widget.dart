@@ -404,6 +404,77 @@ class InstagramWebViewState extends State<InstagramWebView> {
     }
   }
 
+  /// Extract text content from the Instagram WebView
+  /// 
+  /// This is useful as a fallback when oEmbed doesn't return caption data.
+  /// For Reels especially, the caption may only be available after JavaScript renders.
+  Future<String?> extractPageContent() async {
+    if (kIsWeb) {
+      print('⚠️ INSTAGRAM PREVIEW: Content extraction not available on web');
+      return null;
+    }
+    
+    if (controller == null) {
+      print('⚠️ INSTAGRAM PREVIEW: Controller is null, cannot extract content');
+      return null;
+    }
+    
+    try {
+      print('📸 INSTAGRAM PREVIEW: Extracting page content...');
+      
+      // Try to extract text from the WebView
+      final result = await controller!.evaluateJavascript(source: '''
+        (function() {
+          // Try to get text from the entire document
+          var bodyText = document.body ? document.body.innerText : '';
+          
+          // Also try to get specific Instagram embed content
+          var blockquotes = document.querySelectorAll('blockquote');
+          var blockquoteText = '';
+          blockquotes.forEach(function(bq) {
+            blockquoteText += bq.innerText + ' ';
+          });
+          
+          // Try to get iframe content if accessible
+          var iframes = document.querySelectorAll('iframe');
+          var iframeText = '';
+          iframes.forEach(function(iframe) {
+            try {
+              if (iframe.contentDocument && iframe.contentDocument.body) {
+                iframeText += iframe.contentDocument.body.innerText + ' ';
+              }
+            } catch(e) {
+              // Cross-origin iframe, can't access
+            }
+          });
+          
+          // Combine all text sources
+          var allText = bodyText + ' ' + blockquoteText + ' ' + iframeText;
+          
+          // Clean up whitespace
+          allText = allText.replace(/\\s+/g, ' ').trim();
+          
+          return allText;
+        })();
+      ''');
+      
+      if (result != null && result.toString().isNotEmpty && result.toString() != 'null') {
+        final content = result.toString().trim();
+        print('✅ INSTAGRAM PREVIEW: Extracted content (${content.length} chars)');
+        if (content.length > 200) {
+          print('📸 INSTAGRAM PREVIEW: Content preview: ${content.substring(0, 200)}...');
+        }
+        return content;
+      } else {
+        print('⚠️ INSTAGRAM PREVIEW: No content extracted from WebView');
+        return null;
+      }
+    } catch (e) {
+      print('❌ INSTAGRAM PREVIEW: Content extraction failed: $e');
+      return null;
+    }
+  }
+
   void refresh() {
     if (_forceDirectWebView && !kIsWeb) {
       // For direct WebView, just reload

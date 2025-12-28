@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/email_validation_service.dart';
 import 'email_verification_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Custom formatter to trim trailing whitespace
 class _TrimTrailingWhitespaceFormatter extends TextInputFormatter {
@@ -523,7 +524,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       const SizedBox(height: 12),
                       Center(
                         child: InkWell(
-                          onTap: () async {
+                          onTap: withHeavyTap(() async {
                             try {
                               await authService.signInWithGoogle();
                               if (mounted) {
@@ -536,7 +537,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 );
                               }
                             }
-                          },
+                          }),
                           child: const Padding(
                             padding: EdgeInsets.symmetric(horizontal: 20),
                             child: Icon(FontAwesomeIcons.google,
@@ -552,9 +553,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               style: TextStyle(
                                   color: Colors.black87, fontSize: 15)),
                           GestureDetector(
-                            onTap: () {
+                            onTap: withHeavyTap(() {
                               Navigator.pop(context);
-                            },
+                            }),
                             child: const Text(
                               'Sign In',
                               style: TextStyle(

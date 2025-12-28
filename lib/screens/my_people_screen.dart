@@ -13,6 +13,7 @@ import '../models/user_profile.dart'; // Import UserProfile for search result ty
 // Reusing for action button logic for now
 import 'follow_requests_screen.dart'; // Import FollowRequestsScreen
 import 'public_profile_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class MyPeopleScreen extends StatefulWidget {
   const MyPeopleScreen({super.key});
@@ -410,7 +411,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                                         onPressed: () => _toggleFollowSearchResult(userProfile.id, isFollowing),
                                         child: Text(isFollowing ? 'Unfollow' : 'Follow'),
                                       ),
-                              onTap: isSelf ? null : () => _openPublicProfile(userProfile.id),
+                              onTap: withHeavyTap(isSelf ? null : () => _openPublicProfile(userProfile.id)),
                             );
                           },
                         ),

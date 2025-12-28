@@ -5,7 +5,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
@@ -39,6 +38,7 @@ import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
 import '../services/discovery_cover_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -1647,7 +1647,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                     ),
                   ),
                   onPressed: () {
-                    HapticFeedback.heavyImpact();
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (context) => const MapScreen(),
@@ -1717,7 +1716,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   const SizedBox(height: 25),
                   ElevatedButton(
                     onPressed: () {
-                      HapticFeedback.heavyImpact();
                       _setHasStartedDiscovering(true);
                     },
                     style: ElevatedButton.styleFrom(
@@ -1836,7 +1834,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => _handleExperienceTap(experience),
+      onTap: withHeavyTap(() => _handleExperienceTap(experience)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Column(
@@ -1992,12 +1990,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         '_buildActionButton requires either an IconData or a Widget.');
     final Widget iconContent =
         iconWidget ?? Icon(icon, color: Colors.white, size: 28);
-    final VoidCallback? wrappedOnPressed = onPressed == null
-        ? null
-        : () {
-            HapticFeedback.heavyImpact();
-            onPressed();
-          };
+    final VoidCallback? wrappedOnPressed = onPressed;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -2042,10 +2035,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               ListTile(
                 leading: const Icon(Icons.flag_outlined),
                 title: const Text('Report'),
-                onTap: () {
+                onTap: withHeavyTap(() {
                   Navigator.of(sheetContext).pop();
                   _showReportDialog(item);
-                },
+                }),
               ),
             ],
           ),

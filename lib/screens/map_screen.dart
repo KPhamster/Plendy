@@ -4,7 +4,6 @@ import 'dart:math' as Math; // Import for mathematical functions
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
@@ -36,6 +35,7 @@ import '../widgets/event_editor_modal.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -243,10 +243,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _ownerNameByUserId[userId] = 'Someone';
       return 'Someone';
     }
-  }
-
-  void _triggerHeavyHaptic() {
-    HapticFeedback.heavyImpact();
   }
 
   int _markerStartSize(int finalSize) {
@@ -1743,8 +1739,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         position: position,
         infoWindow: _infoWindowForPlatform(publicExp.name),
         icon: publicIcon,
-        onTap: () async {
-          _triggerHeavyHaptic();
+        onTap: withHeavyTap(() async {
+          triggerHeavyHaptic();
           FocusScope.of(context).unfocus();
           print(
               "🗺️ MAP SCREEN: Public experience marker tapped: '${publicExp.name}'");
@@ -1818,7 +1814,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             endSize: finalSize,
           ));
           _showMarkerInfoWindow(tappedMarkerId);
-        },
+        }),
       );
 
       _publicExperienceMarkers[publicExp.id] = marker;
@@ -1924,7 +1920,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           }
         });
 
-        _triggerHeavyHaptic();
+        triggerHeavyHaptic();
         // Show completion toast with count
         Fluttertoast.showToast(
           msg:
@@ -2215,7 +2211,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       const Spacer(),
                       ElevatedButton(
                         onPressed: () {
-                          _triggerHeavyHaptic();
+                          triggerHeavyHaptic();
                           scrollController.dispose();
                           Navigator.of(dialogContext).pop();
                           _enterSelectMode();
@@ -2236,7 +2232,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       IconButton(
                         icon: const Icon(Icons.close),
                         onPressed: () {
-                          _triggerHeavyHaptic();
+                          triggerHeavyHaptic();
                           scrollController.dispose();
                           Navigator.of(dialogContext).pop();
                         },
@@ -2281,8 +2277,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                       item.event!,
                                       theme,
                                       isDark,
-                                      onTap: () => _showEventCardOptions(
-                                          item.event!, dialogContext),
+                                      onTap: withHeavyTap(() => _showEventCardOptions(
+                                          item.event!, dialogContext)),
                                     ),
                             );
                           },
@@ -2302,12 +2298,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final borderColor = _getEventColor(event);
 
     return GestureDetector(
-      onTap: onTap == null
+      onTap: withHeavyTap(onTap == null
           ? null
           : () {
-              _triggerHeavyHaptic();
+              triggerHeavyHaptic();
               onTap();
-            },
+            }),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         decoration: BoxDecoration(
@@ -2496,12 +2492,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   ),
                   title: const Text('View event page'),
                   subtitle: const Text('See full event details'),
-                  onTap: () {
-                    _triggerHeavyHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     Navigator.of(sheetContext).pop();
                     Navigator.of(dialogContext).pop();
                     _openEventPage(event);
-                  },
+                  }),
                 ),
                 // View event map option
                 ListTile(
@@ -2520,12 +2516,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   title: const Text('View event map'),
                   subtitle: Text(
                       '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''} on map'),
-                  onTap: () {
-                    _triggerHeavyHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     Navigator.of(sheetContext).pop(); // Close bottom sheet
                     Navigator.of(dialogContext).pop(); // Close events dialog
                     _enterEventViewMode(event);
-                  },
+                  }),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -2885,8 +2881,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               ? '$positionNumber. ${entry.inlineName ?? 'Stop $positionNumber'}'
               : '$positionNumber. ${markerExperience?.name ?? 'Experience'}',
         ),
-        onTap: () async {
-          _triggerHeavyHaptic();
+        onTap: withHeavyTap(() async {
+          triggerHeavyHaptic();
           print("🗺️ MAP SCREEN: Event view marker $positionNumber tapped");
           FocusScope.of(context).unfocus();
 
@@ -2899,7 +2895,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             await _handleEventOnlyMarkerTap(
                 entry, validLocation, positionNumber);
           }
-        },
+        }),
       );
 
       _eventViewMarkers[markerId.value] = marker;
@@ -3361,10 +3357,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return Material(
       color: isNewItem ? Colors.green.withOpacity(0.08) : Colors.transparent,
       child: InkWell(
-        onTap: () {
-          _triggerHeavyHaptic();
+        onTap: withHeavyTap(() {
+          triggerHeavyHaptic();
           _focusEventItineraryItem(entry, experience, index);
-        },
+        }),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -3574,10 +3570,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          _triggerHeavyHaptic();
+        onTap: withHeavyTap(() {
+          triggerHeavyHaptic();
           _focusSelectModeItineraryItem(entry, experience, index);
-        },
+        }),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -3676,10 +3672,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () {
-                    _triggerHeavyHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     _removeFromSelectModeDraft(index);
-                  },
+                  }),
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     padding: const EdgeInsets.all(4),
@@ -3953,14 +3949,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             actions: [
               TextButton(
                 onPressed: () {
-                  _triggerHeavyHaptic();
+                  triggerHeavyHaptic();
                   Navigator.of(dialogContext).pop(false);
                 },
                 child: const Text('Cancel'),
               ),
               TextButton(
                 onPressed: () {
-                  _triggerHeavyHaptic();
+                  triggerHeavyHaptic();
                   Navigator.of(dialogContext).pop(true);
                 },
                 child: const Text('Exit'),
@@ -4001,14 +3997,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           actions: [
             TextButton(
               onPressed: () {
-                _triggerHeavyHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(dialogContext).pop(false);
               },
               child: const Text('Cancel'),
             ),
             TextButton(
               onPressed: () {
-                _triggerHeavyHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(dialogContext).pop(true);
               },
               child: const Text('Yes'),
@@ -4242,14 +4238,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           actions: [
             TextButton(
               onPressed: () {
-                _triggerHeavyHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(dialogContext).pop(false);
               },
               child: const Text('Cancel'),
             ),
             TextButton(
               onPressed: () {
-                _triggerHeavyHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(dialogContext).pop(true);
               },
               child: const Text('Stop'),
@@ -4837,8 +4833,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           zIndex: 2.0, // Above regular markers
           infoWindow: _infoWindowForPlatform(
               entry.inlineName ?? 'Stop $positionNumber'),
-          onTap: () async {
-            _triggerHeavyHaptic();
+          onTap: withHeavyTap(() async {
+            triggerHeavyHaptic();
             FocusScope.of(context).unfocus();
             // Show location details bottom sheet
             await _selectLocationOnMap(
@@ -4848,7 +4844,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               animateCamera: true,
               markerId: 'selected_location',
             );
-          },
+          }),
         );
 
         _selectModeEventOnlyMarkers[markerId.value] = marker;
@@ -5805,7 +5801,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                     icon: const Icon(Icons.arrow_back),
                                     tooltip: 'Back',
                                     onPressed: () {
-                                      _triggerHeavyHaptic();
+                                      triggerHeavyHaptic();
                                       updateDialogState(() {
                                         activeFolloweeId = null;
                                         activeFolloweeProfile = null;
@@ -6238,8 +6234,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                       Expanded(
                                         child: GestureDetector(
                                           behavior: HitTestBehavior.opaque,
-                                          onTap: () {
-                                            _triggerHeavyHaptic();
+                                          onTap: withHeavyTap(() {
+                                            triggerHeavyHaptic();
                                             updateDialogState(() {
                                               activeFolloweeId = profile.id;
                                               activeFolloweeProfile = profile;
@@ -6250,7 +6246,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                   milliseconds: 200),
                                               curve: Curves.easeOut,
                                             );
-                                          },
+                                          }),
                                           child: Row(
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
@@ -6304,7 +6300,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   TextButton(
                     child: const Text('Show All'),
                     onPressed: () {
-                      _triggerHeavyHaptic();
+                      triggerHeavyHaptic();
                       tempSelectedCategoryIds.clear();
                       tempSelectedColorCategoryIds.clear();
                       tempSelectedFolloweeIds.clear();
@@ -6337,7 +6333,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 TextButton(
                   child: const Text('Cancel'),
                   onPressed: () {
-                    _triggerHeavyHaptic();
+                    triggerHeavyHaptic();
                     Navigator.of(context)
                         .pop(); // Close dialog without applying
                   },
@@ -6345,7 +6341,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 TextButton(
                   child: const Text('Apply'),
                   onPressed: () {
-                    _triggerHeavyHaptic();
+                    triggerHeavyHaptic();
                     // Apply the selected filters from the temporary sets
                     setState(() {
                       _selectedCategoryIds = tempSelectedCategoryIds;
@@ -6624,8 +6620,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         infoWindow: _infoWindowForPlatform('$iconText ${experience.name}'),
         icon: categoryIconBitmap,
         // MODIFIED: Experience marker onTap shows location details panel
-        onTap: () async {
-          _triggerHeavyHaptic();
+        onTap: withHeavyTap(() async {
+          triggerHeavyHaptic();
           FocusScope.of(context).unfocus(); // Unfocus search bar
           print(
               "🗺️ MAP SCREEN: Experience marker tapped for '${experience.name}'. Showing location details panel.");
@@ -6693,7 +6689,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ));
           _showMarkerInfoWindow(tappedMarkerId);
           unawaited(_prefetchExperienceMedia(experience));
-        },
+        }),
       );
       tempMarkers[experience.id] = marker;
     }
@@ -7829,7 +7825,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () async {
-                  _triggerHeavyHaptic();
+                  triggerHeavyHaptic();
                   // If in add-to-event mode with changes, return the updated event
                   if (_isAddToEventModeActive &&
                       _addToEventDraftItinerary.isNotEmpty &&
@@ -7901,7 +7897,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               ),
               tooltip: 'Toggle calendar view',
               onPressed: () {
-                _triggerHeavyHaptic();
+                triggerHeavyHaptic();
                 _handleCalendarToggle();
               },
             ),
@@ -7915,7 +7911,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               ),
               tooltip: 'Toggle global view',
               onPressed: () {
-                _triggerHeavyHaptic();
+                triggerHeavyHaptic();
                 _handleGlobeToggle();
               },
             ),
@@ -7949,7 +7945,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
                 tooltip: 'Filter Experiences',
                 onPressed: () {
-                  _triggerHeavyHaptic();
+                  triggerHeavyHaptic();
                   print("🗺️ MAP SCREEN: Filter button pressed!");
                   setState(() {
                     _tappedLocationMarker = null;
@@ -8024,7 +8020,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                     ? IconButton(
                                         icon: Icon(Icons.clear),
                                         onPressed: () {
-                                          _triggerHeavyHaptic();
+                                          triggerHeavyHaptic();
                                           setState(() {
                                             _searchController.clear();
                                             _searchResults = [];
@@ -8042,13 +8038,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                       )
                                     : null,
                       ),
-                      onTap: () {
-                        _triggerHeavyHaptic();
+                      onTap: withHeavyTap(() {
+                        triggerHeavyHaptic();
                         // When search bar is tapped, clear any existing map-tapped location
                         // to avoid confusion if the user then selects from search results.
                         // However, don't clear if a search result was *just* selected.
                         // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
-                      },
+                      }),
                     ),
                   ),
                 ),
@@ -8104,10 +8100,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     return Material(
                       color: AppColors.backgroundColor,
                       child: InkWell(
-                        onTap: () {
-                          _triggerHeavyHaptic();
+                        onTap: withHeavyTap(() {
+                          triggerHeavyHaptic();
                           _selectSearchResult(result);
-                        },
+                        }),
                         borderRadius: BorderRadius.circular(8),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -8258,8 +8254,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       right: 16,
                       child: _wrapWebPointerInterceptor(
                         GestureDetector(
-                          onTap: () async {
-                            _triggerHeavyHaptic();
+                          onTap: withHeavyTap(() async {
+                            triggerHeavyHaptic();
                             // Fit camera to show all itinerary experiences
                             final positions = _eventViewMarkers.values
                                 .map((marker) => marker.position)
@@ -8267,7 +8263,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                             if (positions.isNotEmpty) {
                               await _fitCameraToBounds(positions);
                             }
-                          },
+                          }),
                           child: Container(
                             constraints: _isEventOverlayExpanded
                                 ? BoxConstraints(
@@ -8362,13 +8358,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                           Material(
                                             color: Colors.transparent,
                                             child: InkWell(
-                                              onTap: () {
-                                                _triggerHeavyHaptic();
+                                              onTap: withHeavyTap(() {
+                                                triggerHeavyHaptic();
                                                 setState(() {
                                                   _isEventOverlayExpanded =
                                                       !_isEventOverlayExpanded;
                                                 });
-                                              },
+                                              }),
                                               borderRadius:
                                                   BorderRadius.circular(20),
                                               child: Container(
@@ -8427,14 +8423,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                             Material(
                                               color: Colors.transparent,
                                               child: InkWell(
-                                                onTap: () {
-                                                  _triggerHeavyHaptic();
+                                                onTap: withHeavyTap(() {
+                                                  triggerHeavyHaptic();
                                                   if (_isAddToEventModeActive) {
                                                     _finishAddToEvent();
                                                   } else {
                                                     _enterAddToEventMode();
                                                   }
-                                                },
+                                                }),
                                                 borderRadius:
                                                     BorderRadius.circular(20),
                                                 child: Container(
@@ -8493,10 +8489,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                       Material(
                                         color: Colors.transparent,
                                         child: InkWell(
-                                          onTap: () {
-                                            _triggerHeavyHaptic();
+                                          onTap: withHeavyTap(() {
+                                            triggerHeavyHaptic();
                                             _confirmExitEventViewMode();
-                                          },
+                                          }),
                                           borderRadius:
                                               BorderRadius.circular(20),
                                           child: Container(
@@ -8608,13 +8604,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                         Material(
                                           color: Colors.transparent,
                                           child: InkWell(
-                                            onTap: () {
-                                              _triggerHeavyHaptic();
+                                            onTap: withHeavyTap(() {
+                                              triggerHeavyHaptic();
                                               setState(() {
                                                 _isSelectModeOverlayExpanded =
                                                     !_isSelectModeOverlayExpanded;
                                               });
-                                            },
+                                            }),
                                             borderRadius:
                                                 BorderRadius.circular(20),
                                             child: Container(
@@ -8663,10 +8659,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                         Material(
                                           color: Colors.transparent,
                                           child: InkWell(
-                                            onTap: () {
-                                              _triggerHeavyHaptic();
+                                            onTap: withHeavyTap(() {
+                                              triggerHeavyHaptic();
                                               _finishSelectModeAndOpenEditor();
-                                            },
+                                            }),
                                             borderRadius:
                                                 BorderRadius.circular(20),
                                             child: Container(
@@ -8713,10 +8709,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                     Material(
                                       color: Colors.transparent,
                                       child: InkWell(
-                                        onTap: () {
-                                          _triggerHeavyHaptic();
+                                        onTap: withHeavyTap(() {
+                                          triggerHeavyHaptic();
                                           _confirmExitSelectMode();
-                                        },
+                                        }),
                                         borderRadius: BorderRadius.circular(20),
                                         child: Container(
                                           padding: const EdgeInsets.all(8),
@@ -8827,12 +8823,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         GestureDetector(
-                                          onTap: showExperiencePrompt
+                                          onTap: withHeavyTap(showExperiencePrompt
                                               ? () {
-                                                  _triggerHeavyHaptic();
+                                                  triggerHeavyHaptic();
                                                   _handleTappedLocationNavigation();
                                                 }
-                                              : null,
+                                              : null),
                                           behavior: HitTestBehavior.translucent,
                                           child: Column(
                                             crossAxisAlignment:
@@ -8921,7 +8917,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                             width: 8),
                                                         IconButton(
                                                           onPressed: () {
-                                                            _triggerHeavyHaptic();
+                                                            triggerHeavyHaptic();
                                                             _shareSelectedExperience();
                                                           },
                                                           icon: const Icon(
@@ -8949,7 +8945,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                       ],
                                                       IconButton(
                                                         onPressed: () {
-                                                          _triggerHeavyHaptic();
+                                                          triggerHeavyHaptic();
                                                           if (_tappedLocationDetails !=
                                                               null) {
                                                             _launchMapLocation(
@@ -8979,7 +8975,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                       const SizedBox(width: 12),
                                                       IconButton(
                                                         onPressed: () {
-                                                          _triggerHeavyHaptic();
+                                                          triggerHeavyHaptic();
                                                           if (_tappedLocationDetails !=
                                                               null) {
                                                             _openDirectionsForLocation(
@@ -9008,7 +9004,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                       const SizedBox(width: 12),
                                                       IconButton(
                                                         onPressed: () {
-                                                          _triggerHeavyHaptic();
+                                                          triggerHeavyHaptic();
                                                           setState(() {
                                                             _tappedLocationMarker =
                                                                 null;
@@ -9098,10 +9094,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                               Alignment.center,
                                                           child:
                                                               GestureDetector(
-                                                            onTap: () {
-                                                              _triggerHeavyHaptic();
+                                                            onTap: withHeavyTap(() {
+                                                              triggerHeavyHaptic();
                                                               _onPlayExperienceContent();
-                                                            },
+                                                            }),
                                                             child:
                                                                 AnimatedOpacity(
                                                               duration:
@@ -9301,7 +9297,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                     return isInItinerary
                                                         ? ElevatedButton.icon(
                                                             onPressed: () {
-                                                              _triggerHeavyHaptic();
+                                                              triggerHeavyHaptic();
                                                               if (isInDraft) {
                                                                 // Remove from draft
                                                                 _removeTappedItemFromDraftItinerary();
@@ -9351,7 +9347,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                           )
                                                         : ElevatedButton.icon(
                                                             onPressed: () {
-                                                              _triggerHeavyHaptic();
+                                                              triggerHeavyHaptic();
                                                               _handleSelectForEvent();
                                                             },
                                                             icon: const Icon(
@@ -9407,7 +9403,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                       _isTappedItemInEventItinerary()
                                                           ? ElevatedButton.icon(
                                                               onPressed: () {
-                                                                _triggerHeavyHaptic();
+                                                                triggerHeavyHaptic();
                                                                 _removeTappedItemFromEvent();
                                                               },
                                                               icon: const Icon(
@@ -9441,7 +9437,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                             )
                                                           : ElevatedButton.icon(
                                                               onPressed: () {
-                                                                _triggerHeavyHaptic();
+                                                                triggerHeavyHaptic();
                                                                 _addTappedItemToEvent();
                                                               },
                                                               icon: const Icon(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 /// Screen shown to new users who need to verify their email address
 /// before proceeding to the main app.
@@ -361,7 +362,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                     style: TextStyle(color: Colors.grey[600]),
                   ),
                   GestureDetector(
-                    onTap: _signOut,
+                    onTap: withHeavyTap(_signOut),
                     child: const Text(
                       'Sign out',
                       style: TextStyle(
@@ -427,7 +428,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                           ),
                           WidgetSpan(
                             child: GestureDetector(
-                              onTap: () async {
+                              onTap: withHeavyTap(() async {
                                 final Uri emailUri = Uri(
                                   scheme: 'mailto',
                                   path: 'admin@plendy.app',
@@ -439,7 +440,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                                 if (await canLaunchUrl(emailUri)) {
                                   await launchUrl(emailUri);
                                 }
-                              },
+                              }),
                               child: Text(
                                 'admin@plendy.app',
                                 style: TextStyle(

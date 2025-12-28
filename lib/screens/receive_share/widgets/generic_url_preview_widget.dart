@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:any_link_preview/any_link_preview.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class GenericUrlPreviewWidget extends StatelessWidget {
   final String url;
@@ -45,7 +46,7 @@ class GenericUrlPreviewWidget extends StatelessWidget {
                 ],
               ),
             ),
-            onTap: () => launchUrlCallback(url),
+            onTap: withHeavyTap(() => launchUrlCallback(url)),
           ),
         ),
         Padding(

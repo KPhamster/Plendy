@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../config/colors.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:plendy/utils/haptic_feedback.dart';
 import '../models/shared_media_compat.dart';
 import 'package:share_handler/share_handler.dart';
 import '../services/sharing_service.dart';
@@ -168,9 +167,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (index == _selectedIndex) {
       return;
     }
-    if (!kIsWeb) {
-      unawaited(HapticFeedback.heavyImpact());
-    }
     setState(() {
       _selectedIndex = index;
     });
@@ -319,7 +315,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             selectedItemColor: Theme.of(context).primaryColor,
             unselectedItemColor: Colors.grey,
             backgroundColor: AppColors.backgroundColor,
-            onTap: _onItemTapped,
+            onTap: withHeavyTap(_onItemTapped),
             type: BottomNavigationBarType.fixed,
           );
         },

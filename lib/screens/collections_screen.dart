@@ -47,8 +47,7 @@ import '../services/category_share_service.dart';
 import '../services/sharing_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:flutter/services.dart'
-    show Clipboard, ClipboardData, HapticFeedback;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/privacy_toggle_button.dart';
@@ -58,6 +57,7 @@ import '../models/event.dart'; // ADDED: Import for Event
 import '../services/event_service.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -131,18 +131,6 @@ Color _parseColor(String hexColor) {
     }
   }
   return Colors.grey; // Default color on invalid format
-}
-
-void _triggerTapHaptic() {
-  if (kIsWeb) return;
-  unawaited(HapticFeedback.heavyImpact());
-}
-
-VoidCallback _withHeavyTap(VoidCallback action) {
-  return () {
-    _triggerTapHaptic();
-    action();
-  };
 }
 
 // ADDED: New helper class to hold grouped content
@@ -1041,7 +1029,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           });
           if (_lastTabIndex != _tabController.index) {
             _lastTabIndex = _tabController.index;
-            _triggerTapHaptic();
+            triggerHeavyHaptic();
           }
         }
       }
@@ -2700,7 +2688,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
@@ -2709,7 +2697,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             style: TextButton.styleFrom(
                 foregroundColor: Theme.of(context).primaryColor),
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Delete'),
@@ -2873,14 +2861,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Remove', style: TextStyle(color: Colors.red)),
@@ -3008,7 +2996,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       message: tooltip,
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: _withHeavyTap(onToggle),
+        onTap: withHeavyTap(onToggle),
         child: icon,
       ),
     );
@@ -3107,8 +3095,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       child: Stack(
         children: [
           InkWell(
-            onTap: () {
-              _triggerTapHaptic();
+            onTap: withHeavyTap(() {
+              triggerHeavyHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -3122,7 +3110,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   _selectedColorCategory = null;
                 }
               });
-            },
+            }),
             child: Padding(
               padding: const EdgeInsets.all(8.0),
               child: Column(
@@ -3313,7 +3301,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             tooltip: 'Category Options',
             color: Colors.white,
             onSelected: (String result) {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               switch (result) {
                 case 'edit':
                   _showEditSingleCategoryModal(category);
@@ -3400,8 +3388,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 popupMenu,
               ],
             ),
-            onTap: () {
-              _triggerTapHaptic();
+            onTap: withHeavyTap(() {
+              triggerHeavyHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -3415,7 +3403,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   _selectedColorCategory = null;
                 }
               });
-            },
+            }),
           );
 
           return ReorderableDelayedDragStartListener(
@@ -3955,7 +3943,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 style: GoogleFonts.notoSerif(fontWeight: FontWeight.w700),
               ),
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const MapScreen()),
@@ -3972,7 +3960,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Categories',
               color: Colors.white,
               onSelected: (CategorySortType result) {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 _applySortAndSave(result); // Saves text category order
               },
               itemBuilder: (BuildContext context) =>
@@ -3998,7 +3986,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Color Categories',
               color: Colors.white,
               onSelected: (ColorCategorySortType result) {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 _applyColorSortAndSave(result); // Saves color category order
               },
               itemBuilder: (BuildContext context) =>
@@ -4022,7 +4010,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Experiences',
               color: Colors.white,
               onSelected: (ExperienceSortType result) {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 _applyExperienceSort(result);
               },
               itemBuilder: (BuildContext context) =>
@@ -4053,11 +4041,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 ),
                 // --- Group by Location (single checkbox) ---
                 PopupMenuItem<ExperienceSortType>(
-                  onTap: () {
-                    _triggerTapHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     _setGroupByLocationExperiences(
                         !_groupByLocationExperiences);
-                  },
+                  }),
                   child: Row(
                     children: [
                       Icon(
@@ -4082,7 +4070,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               tooltip: 'Sort Content',
               color: Colors.white,
               onSelected: (ContentSortType result) {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 _applyContentSort(result); // Use the new sort function
               },
               itemBuilder: (BuildContext context) =>
@@ -4113,10 +4101,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 ),
                 // --- Group by Location (single checkbox) ---
                 PopupMenuItem<ContentSortType>(
-                  onTap: () {
-                    _triggerTapHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     _setGroupByLocationContent(!_groupByLocationContent);
-                  },
+                  }),
                   child: Row(
                     children: [
                       Icon(
@@ -4141,7 +4129,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               icon: const Icon(Icons.filter_list),
               tooltip: 'Filter Items',
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 _showFilterDialog();
               },
             ),
@@ -4218,7 +4206,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                   icon: const Icon(Icons.clear),
                                   tooltip: 'Clear Search',
                                   onPressed: () {
-                                    _triggerTapHaptic();
+                                    triggerHeavyHaptic();
                                     controller
                                         .clear(); // Clear TypeAhead's controller
                                     _searchController
@@ -4243,7 +4231,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                             );
                           },
                           onSelected: (suggestion) async {
-                            _triggerTapHaptic();
+                            triggerHeavyHaptic();
                             await _openExperience(suggestion);
                             if (mounted) {
                               setState(() {
@@ -4287,7 +4275,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       ),
                       child: TabBar(
                         controller: _tabController,
-                        onTap: (_) => _triggerTapHaptic(),
+                        onTap: withHeavyTap((_) => triggerHeavyHaptic()),
                         tabs: const [
                           Tab(text: 'Categories'),
                           Tab(text: 'Experiences'),
@@ -4405,7 +4393,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                 tooltip: 'Cancel selection',
                                                 icon: const Icon(Icons.close),
                                                 onPressed: () {
-                                                  _triggerTapHaptic();
+                                                  triggerHeavyHaptic();
                                                   setState(() {
                                                     _isSelectingCategories =
                                                         false;
@@ -4458,9 +4446,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                         color: selectedCount == 0
                                                             ? Colors.grey
                                                             : Colors.blue),
-                                                    onPressed: onSharePressed == null
-                                                        ? null
-                                                        : _withHeavyTap(onSharePressed),
+                                                    onPressed: onSharePressed,
                                                   );
                                                 },
                                               ),
@@ -4479,7 +4465,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                     color: Colors.red,
                                                     onPressed: hasSelection
                                                         ? () {
-                                                            _triggerTapHaptic();
+                                                            triggerHeavyHaptic();
                                                             if (isViewingColor) {
                                                               _handleBulkDeleteSelectedColorCategories();
                                                             } else {
@@ -4501,7 +4487,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                               icon: const Icon(
                                                   Icons.check_box_outlined),
                                               onPressed: () {
-                                                _triggerTapHaptic();
+                                                triggerHeavyHaptic();
                                                 setState(() {
                                                   _isSelectingCategories = true;
                                                 });
@@ -4549,7 +4535,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                 ),
                                                 icon: Icon(toggleIcon),
                                                 label: Text(toggleLabel),
-                                                onPressed: _withHeavyTap(onToggle),
+                                                onPressed: onToggle,
                                               ),
                                             ),
                                           );
@@ -4705,7 +4691,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                       icon: const Icon(
                                                           Icons.close),
                                                       onPressed: () {
-                                                        _triggerTapHaptic();
+                                                        triggerHeavyHaptic();
                                                         _exitExperienceSelectionMode();
                                                       },
                                                     ),
@@ -4727,7 +4713,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                               0
                                                           ? null
                                                           : () {
-                                                              _triggerTapHaptic();
+                                                              triggerHeavyHaptic();
                                                               unawaited(
                                                                   _handleCreateEventWithSelectedExperiences());
                                                             },
@@ -4750,7 +4736,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                               0
                                                           ? null
                                                           : () {
-                                                              _triggerTapHaptic();
+                                                              triggerHeavyHaptic();
                                                               unawaited(
                                                                   _handleShareSelectedExperiences());
                                                             },
@@ -4770,7 +4756,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                               0
                                                           ? null
                                                           : () {
-                                                              _triggerTapHaptic();
+                                                              triggerHeavyHaptic();
                                                               unawaited(
                                                                   _handleBulkDeleteSelectedExperiences());
                                                             },
@@ -4805,7 +4791,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _withHeavyTap(_showAddMenu),
+        onPressed: _showAddMenu,
         tooltip: 'Add',
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
@@ -4828,47 +4814,47 @@ class CollectionsScreenState extends State<CollectionsScreen>
               ListTile(
                 leading: const Icon(Icons.category_outlined),
                 title: const Text('Add Category'),
-                onTap: () async {
-                  _triggerTapHaptic();
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddCategoryModal();
-                },
+                }),
               ),
               ListTile(
                 leading: const Icon(Icons.palette_outlined),
                 title: const Text('Add Color Category'),
-                onTap: () async {
-                  _triggerTapHaptic();
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddColorCategoryModal();
-                },
+                }),
               ),
               ListTile(
                 leading: const Icon(Icons.add_circle_outline),
                 title: const Text('Add Experience'),
-                onTap: () async {
-                  _triggerTapHaptic();
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddExperienceModal();
-                },
+                }),
               ),
               ListTile(
                 leading: const Icon(Icons.link),
                 title: const Text('Add Content'),
-                onTap: () async {
-                  _triggerTapHaptic();
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddContentModal();
-                },
+                }),
               ),
               ListTile(
                 leading: const Icon(Icons.event_outlined),
                 title: const Text('Add Event'),
-                onTap: () async {
-                  _triggerTapHaptic();
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
                   Navigator.of(ctx).pop();
                   await _openEventEditorModal();
-                },
+                }),
               ),
             ],
           ),
@@ -5163,10 +5149,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
           if (matchingEvent != null) ...[
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: () {
-                _triggerTapHaptic();
+              onTap: withHeavyTap(() {
+                triggerHeavyHaptic();
                 _openEventEditorForExperience(matchingEvent);
-              },
+              }),
               child: Icon(
                 Icons.event,
                 color: _getEventColor(matchingEvent),
@@ -5205,10 +5191,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       height: playButtonDiameter,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          _triggerTapHaptic();
+                        onTap: withHeavyTap(() {
+                          triggerHeavyHaptic();
                           _openExperienceContentPreview(experience);
-                        },
+                        }),
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
@@ -5349,8 +5335,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
             ),
         ],
       ),
-      onTap: () async {
-        _triggerTapHaptic();
+      onTap: withHeavyTap(() async {
+        triggerHeavyHaptic();
         if (_isSelectingExperiences) {
           setState(() {
             if (_selectedExperienceIds.contains(experience.id)) {
@@ -5362,7 +5348,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         } else {
           await _openExperience(experience);
         }
-      },
+      }),
       onLongPress: () {
         if (!_isSelectingExperiences) {
           _enterExperienceSelectionMode(selectId: experience.id);
@@ -5469,10 +5455,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
               if (matchingEvent != null) ...[
                 const SizedBox(width: 4),
                 GestureDetector(
-                  onTap: () {
-                    _triggerTapHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     _openEventEditorForExperience(matchingEvent);
-                  },
+                  }),
                   child: Icon(
                     Icons.event,
                     color: _getEventColor(matchingEvent),
@@ -5543,10 +5529,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 if (matchingEvent != null) ...[
                   const SizedBox(width: 4),
                   GestureDetector(
-                    onTap: () {
-                      _triggerTapHaptic();
+                    onTap: withHeavyTap(() {
+                      triggerHeavyHaptic();
                       _openEventEditorForExperience(matchingEvent);
-                    },
+                    }),
                     child: Icon(
                       Icons.event,
                       color: Colors.white,
@@ -5658,8 +5644,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       elevation: 2.0,
       shape: cardShape,
       child: InkWell(
-        onTap: () async {
-          _triggerTapHaptic();
+        onTap: withHeavyTap(() async {
+          triggerHeavyHaptic();
           if (_isSelectingExperiences) {
             setState(() {
               if (_selectedExperienceIds.contains(experience.id)) {
@@ -5671,7 +5657,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           } else {
             await _openExperience(experience);
           }
-        },
+        }),
         onLongPress: () {
           if (!_isSelectingExperiences) {
             _enterExperienceSelectionMode(selectId: experience.id);
@@ -5785,7 +5771,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   tooltip: 'Select experiences',
                   icon: const Icon(Icons.check_box_outlined),
                   onPressed: () {
-                    _triggerTapHaptic();
+                    triggerHeavyHaptic();
                     _enterExperienceSelectionMode();
                   },
                 ),
@@ -6059,12 +6045,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
                 final double leftPadding = (depth * 16).toDouble();
                 return InkWell(
-                  onTap: () {
-                    _triggerTapHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     setState(() {
                       _locationExpansionExperiences[key] = !isExpanded;
                     });
-                  },
+                  }),
                   child: Container(
                     width: double.infinity,
                     color: Colors.white,
@@ -6111,8 +6097,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         ? 16
                         : 32;
                 return InkWell(
-                  onTap: () {
-                    _triggerTapHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     setState(() {
                       if (level == 'country') {
                         _countryExpansionExperiences[key] = !isExpanded;
@@ -6124,7 +6110,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         _noLocationExperiencesExpanded = !isExpanded;
                       }
                     });
-                  },
+                  }),
                   child: Container(
                     width: double.infinity,
                     color: Colors.white,
@@ -6190,7 +6176,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 icon: const Icon(Icons.arrow_back),
                 tooltip: 'Back to Categories',
                 onPressed: () {
-                  _triggerTapHaptic();
+                  triggerHeavyHaptic();
                   setState(() {
                     _selectedCategory = null; // Go back to category list
                   });
@@ -6262,7 +6248,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   tooltip: 'Category Options',
                   color: Colors.white,
                   onSelected: (String result) {
-                    _triggerTapHaptic();
+                    triggerHeavyHaptic();
                     switch (result) {
                       case 'edit':
                         _showEditSingleCategoryModal(category);
@@ -6452,12 +6438,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
               final double leftPadding = (depth * 16).toDouble();
               return InkWell(
-                onTap: () {
-                  _triggerTapHaptic();
+                onTap: withHeavyTap(() {
+                  triggerHeavyHaptic();
                   setState(() {
                     _locationExpansionContent[key] = !isExpanded;
                   });
-                },
+                }),
                 child: Container(
                   width: double.infinity,
                   color: Colors.white,
@@ -6580,14 +6566,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -6898,14 +6884,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Remove'),
@@ -7044,14 +7030,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -7090,14 +7076,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Remove', style: TextStyle(color: Colors.red)),
@@ -7187,14 +7173,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Remove'),
@@ -7360,14 +7346,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         actions: [
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(false);
             },
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               Navigator.of(context).pop(true);
             },
             child: const Text('Remove'),
@@ -7610,8 +7596,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       child: Stack(
         children: [
           InkWell(
-            onTap: () {
-              _triggerTapHaptic();
+            onTap: withHeavyTap(() {
+              triggerHeavyHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -7625,7 +7611,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   _selectedCategory = null;
                 }
               });
-            },
+            }),
             child: Padding(
               padding: const EdgeInsets.all(8.0),
               child: Column(
@@ -7817,7 +7803,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             tooltip: 'Color Category Options',
             color: Colors.white,
             onSelected: (String result) {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               switch (result) {
                 case 'edit':
                   _showEditSingleColorCategoryModal(category);
@@ -7904,8 +7890,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 popupMenu,
               ],
             ),
-            onTap: () {
-              _triggerTapHaptic();
+            onTap: withHeavyTap(() {
+              triggerHeavyHaptic();
               setState(() {
                 if (_isSelectingCategories) {
                   if (isSelected) {
@@ -7919,7 +7905,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   _selectedCategory = null;
                 }
               });
-            },
+            }),
           );
           return ReorderableDelayedDragStartListener(
             key: ValueKey(category.id),
@@ -7986,7 +7972,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 icon: const Icon(Icons.arrow_back),
                 tooltip: 'Back to Color Categories',
                 onPressed: () {
-                  _triggerTapHaptic();
+                  triggerHeavyHaptic();
                   setState(() {
                     _selectedColorCategory =
                         null; // Go back to color category list
@@ -8062,7 +8048,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   tooltip: 'Color Category Options',
                   color: Colors.white,
                   onSelected: (String result) {
-                    _triggerTapHaptic();
+                    triggerHeavyHaptic();
                     switch (result) {
                       case 'edit':
                         _showEditSingleColorCategoryModal(category);
@@ -8337,7 +8323,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             TextButton(
               child: const Text('Show All'),
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 // Clear temporary selections
                 tempSelectedCategoryIds.clear();
                 tempSelectedColorCategoryIds.clear();
@@ -8353,14 +8339,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
             TextButton(
               child: const Text('Cancel'),
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(context).pop();
               },
             ),
             TextButton(
               child: const Text('Apply'),
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 // Apply filters from dialog state
                 setState(() {
                   _selectedCategoryIds = tempSelectedCategoryIds;
@@ -8635,10 +8621,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
         borderRadius: BorderRadius.circular(16.0),
       ),
       child: InkWell(
-        onTap: () {
-          _triggerTapHaptic();
+        onTap: withHeavyTap(() {
+          triggerHeavyHaptic();
           _showMediaDetailsDialog(group);
-        },
+        }),
         child: Column(
           crossAxisAlignment:
               CrossAxisAlignment.stretch, // Ensure children fill width
@@ -8681,10 +8667,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
     return Tooltip(
       message: isExpanded ? 'Hide preview' : 'Show preview',
       child: GestureDetector(
-        onTap: () {
-          _triggerTapHaptic();
+        onTap: withHeavyTap(() {
+          triggerHeavyHaptic();
           _toggleContentPreview(mediaPath);
-        },
+        }),
         child: CircleAvatar(
           radius: 18,
           backgroundColor: Theme.of(context).primaryColor,
@@ -8726,13 +8712,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
     Widget buildActionAvatar({
       required Widget icon,
       required String tooltip,
-      required VoidCallback onTap,
+      required VoidCallback? onTap,
       Color? backgroundColor,
     }) {
       return Tooltip(
         message: tooltip,
         child: GestureDetector(
-          onTap: _withHeavyTap(onTap),
+          onTap: withHeavyTap(onTap),
           child: CircleAvatar(
             radius: 18,
             backgroundColor: backgroundColor ?? Colors.white,
@@ -8751,7 +8737,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           size: 20,
         ),
         tooltip: 'Open in Instagram',
-        onTap: () => _launchUrl(mediaPath),
+        onTap: withHeavyTap(() {
+          unawaited(_launchUrl(mediaPath));
+        } as VoidCallback),
         backgroundColor: const Color(0xFFE4405F),
       );
     } else if (isTikTokUrl) {
@@ -8762,7 +8750,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           size: 20,
         ),
         tooltip: 'Open in TikTok',
-        onTap: () => _launchUrl(mediaPath),
+        onTap: withHeavyTap(() {
+          unawaited(_launchUrl(mediaPath));
+        } as VoidCallback),
         backgroundColor: Colors.black,
       );
     } else if (isYelpUrl) {
@@ -8773,7 +8763,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           size: 20,
         ),
         tooltip: 'Open in Yelp',
-        onTap: () => _launchUrl(mediaPath),
+        onTap: withHeavyTap(() {
+          unawaited(_launchUrl(mediaPath));
+        } as VoidCallback),
         backgroundColor: const Color(0xFFD32323),
       );
     } else if (isMapsUrl) {
@@ -8784,7 +8776,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           size: 20,
         ),
         tooltip: 'Open in Google Maps',
-        onTap: () => _launchUrl(mediaPath),
+        onTap: withHeavyTap(() {
+          unawaited(_launchUrl(mediaPath));
+        } as VoidCallback),
         backgroundColor: const Color(0xFF4285F4),
       );
     } else if (isNetworkUrl) {
@@ -8795,7 +8789,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           size: 20,
         ),
         tooltip: 'Open Link',
-        onTap: () => _launchUrl(mediaPath),
+        onTap: withHeavyTap(() {
+          unawaited(_launchUrl(mediaPath));
+        } as VoidCallback),
         backgroundColor: Colors.blue.shade700,
       );
     }
@@ -8958,10 +8954,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 child: Tooltip(
                   message: 'Share',
                   child: GestureDetector(
-                  onTap: () {
-                    _triggerTapHaptic();
+                  onTap: withHeavyTap(() {
+                    triggerHeavyHaptic();
                     _shareContentItem(group);
-                  },
+                  }),
                   child: const Icon(
                     Icons.share_outlined,
                     color: Colors.blue,
@@ -8977,7 +8973,6 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 isPrivate: group.mediaItem.isPrivate,
                 showLabel: false,
                 onPressed: () {
-                  _triggerTapHaptic();
                   _toggleGroupedContentPrivacy(group);
                 },
               ),
@@ -9072,10 +9067,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                   : Theme.of(context).disabledColor;
 
                               return InkWell(
-                                onTap: () {
-                                  _triggerTapHaptic();
+                                onTap: withHeavyTap(() {
+                                  triggerHeavyHaptic();
                                   _openExperience(exp);
-                                },
+                                }),
                                 child: Padding(
                                   padding:
                                       const EdgeInsets.symmetric(vertical: 4.0),
@@ -9410,8 +9405,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         title: Text(exp.name,
                             style: Theme.of(dialogContext).textTheme.bodyLarge),
                         trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          _triggerTapHaptic();
+                        onTap: withHeavyTap(() {
+                          triggerHeavyHaptic();
                           Navigator.of(dialogContext)
                               .pop(); // Close dialog first
                           final resolvedCategory = category ??
@@ -9439,7 +9434,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                               _loadData();
                             }
                           });
-                        },
+                        }),
                       );
                     },
                   ),
@@ -9450,7 +9445,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             TextButton(
               child: const Text('Close'),
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(dialogContext).pop();
               },
             ),
@@ -10589,12 +10584,12 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
           : (ownerIsCurrentUser
               ? const Icon(Icons.more_horiz, color: Colors.black45)
               : null),
-      onTap: ownerIsCurrentUser && !participant.isCurrentUser
+      onTap: withHeavyTap(ownerIsCurrentUser && !participant.isCurrentUser
           ? () async {
-              _triggerTapHaptic();
+              triggerHeavyHaptic();
               await _showManageAccessDialog(participant);
             }
-          : null,
+          : null),
     );
   }
 
@@ -10620,21 +10615,21 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
           actions: [
             TextButton(
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(ctx).pop('remove');
               },
               child: const Text('Remove access'),
             ),
             TextButton(
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(ctx).pop('view');
               },
               child: const Text('View'),
             ),
             ElevatedButton(
               onPressed: () {
-                _triggerTapHaptic();
+                triggerHeavyHaptic();
                 Navigator.of(ctx).pop('edit');
               },
               child: const Text('Edit'),
@@ -10810,7 +10805,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: () {
-                    _triggerTapHaptic();
+                    triggerHeavyHaptic();
                     Navigator.of(context).pop();
                   },
                 ),
@@ -10887,10 +10882,10 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 ),
               ),
               title: const Text('Share view access only'),
-              onTap: () {
-                _triggerTapHaptic();
+              onTap: withHeavyTap(() {
+                triggerHeavyHaptic();
                 setState(() => _shareMode = 'view_access');
-              },
+              }),
             ),
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -10908,17 +10903,17 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 ),
               ),
               title: const Text('Share edit access'),
-              onTap: () {
-                _triggerTapHaptic();
+              onTap: withHeavyTap(() {
+                triggerHeavyHaptic();
                 setState(() => _shareMode = 'edit_access');
-              },
+              }),
             ),
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.send_outlined),
               title: const Text('Share to Plendy friends'),
-              onTap: () async {
-                _triggerTapHaptic();
+              onTap: withHeavyTap(() async {
+                triggerHeavyHaptic();
                 final bool grantEdit = _shareMode == 'edit_access';
                 final String accessMode = grantEdit ? 'edit' : 'view';
                 final String categoryName = widget.userCategory?.name ?? 
@@ -10985,7 +10980,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 if (result != null && context.mounted) {
                   showSharedWithFriendsSnackbar(context, result);
                 }
-              },
+              }),
             ),
             ListTile(
               leading: _creating
@@ -10997,10 +10992,10 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   : const Icon(Icons.link_outlined),
               title:
                   Text(_creating ? 'Creating link...' : 'Get shareable link'),
-              onTap: _creating
+              onTap: withHeavyTap(_creating
                   ? null
                   : () async {
-                      _triggerTapHaptic();
+                      triggerHeavyHaptic();
                       setState(() => _creating = true);
                       final bool grantEdit = _shareMode == 'edit_access';
                       final messenger = ScaffoldMessenger.of(context);
@@ -11050,7 +11045,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                       } finally {
                         if (mounted) setState(() => _creating = false);
                       }
-                    },
+                    }),
             ),
           ],
         ),
@@ -11110,7 +11105,7 @@ class _BulkShareBottomSheetContentState
                   children: [
                     ElevatedButton.icon(
                       onPressed: () async {
-                        _triggerTapHaptic();
+                        triggerHeavyHaptic();
                         await Share.share(url);
                         if (ctx.mounted) Navigator.of(ctx).pop();
                       },
@@ -11123,7 +11118,7 @@ class _BulkShareBottomSheetContentState
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: () async {
-                        _triggerTapHaptic();
+                        triggerHeavyHaptic();
                         await Clipboard.setData(ClipboardData(text: url));
                         if (ctx.mounted) {
                           Navigator.of(ctx).pop();
@@ -11164,7 +11159,7 @@ class _BulkShareBottomSheetContentState
                 IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: () {
-                    _triggerTapHaptic();
+                    triggerHeavyHaptic();
                     Navigator.of(context).pop();
                   },
                 ),
@@ -11217,10 +11212,10 @@ class _BulkShareBottomSheetContentState
                 ),
               ),
               title: const Text('Share view access only'),
-              onTap: () {
-                _triggerTapHaptic();
+              onTap: withHeavyTap(() {
+                triggerHeavyHaptic();
                 setState(() => _shareMode = 'view_access');
-              },
+              }),
             ),
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -11238,10 +11233,10 @@ class _BulkShareBottomSheetContentState
                 ),
               ),
               title: const Text('Share edit access'),
-              onTap: () {
-                _triggerTapHaptic();
+              onTap: withHeavyTap(() {
+                triggerHeavyHaptic();
                 setState(() => _shareMode = 'edit_access');
-              },
+              }),
             ),
             const SizedBox(height: 8),
             ListTile(
@@ -11254,10 +11249,10 @@ class _BulkShareBottomSheetContentState
                   : const Icon(Icons.link_outlined),
               title:
                   Text(_creating ? 'Creating link...' : 'Get shareable link'),
-              onTap: _creating
+              onTap: withHeavyTap(_creating
                   ? null
                   : () async {
-                      _triggerTapHaptic();
+                      triggerHeavyHaptic();
                       setState(() => _creating = true);
                       try {
                         final service = CategoryShareService();
@@ -11291,7 +11286,7 @@ class _BulkShareBottomSheetContentState
                       } finally {
                         if (mounted) setState(() => _creating = false);
                       }
-                    },
+                    }),
             ),
           ],
         ),

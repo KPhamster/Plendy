@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import '../services/experience_service.dart';
 import 'main_screen.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class SharePreviewScreen extends StatelessWidget {
   final String token;
@@ -800,7 +801,7 @@ class _MultiExperiencePreviewListState
                 clipBehavior: Clip.antiAlias,
                 color: Colors.grey.shade100,
                 child: InkWell(
-                  onTap: () => _openExperience(context, item),
+                  onTap: withHeavyTap(() => _openExperience(context, item)),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: Row(

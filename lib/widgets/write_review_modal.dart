@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 /// A modal dialog for writing or editing a review
 class WriteReviewModal extends StatefulWidget {
@@ -159,7 +160,7 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
             ),
             padding: const EdgeInsets.all(20),
             child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
+              onTap: withHeavyTap(() => FocusScope.of(context).unfocus()),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -196,11 +197,11 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
               children: [
                 // Thumbs Up
                 GestureDetector(
-                  onTap: _isSubmitting ? null : () {
+                  onTap: withHeavyTap(_isSubmitting ? null : () {
                     setState(() {
                       _selectedRating = _selectedRating == true ? null : true;
                     });
-                  },
+                  }),
                   child: Container(
                     width: 64,
                     height: 64,
@@ -230,11 +231,11 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
                 const SizedBox(width: 24),
                 // Thumbs Down
                 GestureDetector(
-                  onTap: _isSubmitting ? null : () {
+                  onTap: withHeavyTap(_isSubmitting ? null : () {
                     setState(() {
                       _selectedRating = _selectedRating == false ? null : false;
                     });
-                  },
+                  }),
                   child: Container(
                     width: 64,
                     height: 64,
@@ -421,7 +422,7 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
               border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
             ),
             child: InkWell(
-              onTap: _isSubmitting ? null : _pickImages,
+              onTap: withHeavyTap(_isSubmitting ? null : _pickImages),
               borderRadius: BorderRadius.circular(12),
               child: Center(
                 child: Column(
@@ -463,7 +464,7 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
               top: 4,
               right: 4,
               child: GestureDetector(
-                onTap: onRemove,
+                onTap: withHeavyTap(onRemove),
                 child: Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(

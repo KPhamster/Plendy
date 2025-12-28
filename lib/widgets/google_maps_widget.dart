@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/experience.dart';
 import '../services/google_maps_service.dart'; // Needed for findPlaceNearPosition
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class GoogleMapsWidget extends StatefulWidget {
   final Location? initialLocation;
@@ -226,7 +227,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
           markers: Set<Marker>.of(_markers.values),
           onMapCreated: _onMapCreated,
           // Add onTap back
-          onTap: widget.allowSelection ? _onMapTapped : null,
+          onTap: withHeavyTap(widget.allowSelection ? _onMapTapped : null),
         ),
         // Show loading indicator overlay ONLY during tap processing now
         if (_isProcessingTap)

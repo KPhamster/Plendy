@@ -42,7 +42,6 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
-import '../services/instagram_oembed_service.dart';
 import '../services/facebook_oembed_service.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'main_screen.dart';
@@ -60,6 +59,7 @@ import '../config/api_secrets.dart'
     if (dart.library.html) '../config/api_secrets.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -394,10 +394,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       children: [
                         if (_sharedUrlController.text.isNotEmpty)
                           InkWell(
-                            onTap: () {
+                            onTap: withHeavyTap(() {
                               _sharedUrlController.clear();
                               setInnerState(() {});
-                            },
+                            }),
                             borderRadius: BorderRadius.circular(16),
                             child: const Padding(
                               padding: EdgeInsets.all(4.0),
@@ -407,10 +407,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         if (_sharedUrlController.text.isNotEmpty)
                           const SizedBox(width: 4),
                         InkWell(
-                          onTap: () async {
+                          onTap: withHeavyTap(() async {
                             await _pasteSharedUrlFromClipboard();
                             setInnerState(() {});
-                          },
+                          }),
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.all(4.0),
@@ -420,7 +420,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         ),
                         const SizedBox(width: 4),
                         InkWell(
-                          onTap: _handleSharedUrlSubmit,
+                          onTap: withHeavyTap(_handleSharedUrlSubmit),
                           borderRadius: BorderRadius.circular(16),
                           child: const Padding(
                             padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
@@ -878,10 +878,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ),
                   title: const Text('Choose from Gallery'),
                   subtitle: const Text('Select an existing screenshot'),
-                  onTap: () {
+                  onTap: withHeavyTap(() {
                     Navigator.pop(context);
                     _pickScreenshotFromGallery();
-                  },
+                  }),
                 ),
                 ListTile(
                   leading: Container(
@@ -895,10 +895,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   title: const Text('Take a Photo'),
                   subtitle:
                       const Text('Capture text or sign with location info'),
-                  onTap: () {
+                  onTap: withHeavyTap(() {
                     Navigator.pop(context);
                     _takePhotoForLocation();
-                  },
+                  }),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -3218,10 +3218,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // ============================================================================
-  // INSTAGRAM/FACEBOOK OEMBED CONTENT EXTRACTION
+  // INSTAGRAM/FACEBOOK OEMBED CONTENT EXTRACTION & AUTO LOCATION EXTRACTION
   // ============================================================================
   
   /// Extract caption, hashtags, and mentions from an Instagram URL using Meta oEmbed API
+  /// AND automatically extract locations from the caption (like TikTok auto-extract)
   /// 
   /// This method fetches the post content and parses it into usable components.
   /// The extracted data is stored in:
@@ -3230,57 +3231,125 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// - [_extractedMentions]: List of mentions (without @)
   /// - [_extractedFromUrl]: Source URL
   /// - [_extractedFromPlatform]: 'Instagram' or 'Facebook'
+  /// 
+  /// After extraction, automatically triggers location extraction using AI.
+  /// Goes directly to WebView extraction (skips oEmbed API since it rarely works for Reels).
   Future<void> _extractInstagramContent(String url) async {
     // Skip if already processed this URL
     if (_instagramUrlsProcessed.contains(url)) {
-      print('📸 INSTAGRAM OEMBED: Already processed $url');
+      print('📸 INSTAGRAM: Already processed $url');
       return;
     }
 
-    print('📸 INSTAGRAM OEMBED: Extracting content from $url');
+    print('📸 INSTAGRAM: Scheduling WebView content extraction for $url');
     
-    try {
-      final oembedService = InstagramOEmbedService();
+    // Mark as processed to prevent duplicate extractions
+    _instagramUrlsProcessed.add(url);
+    
+    // Go directly to WebView extraction (oEmbed rarely works for Reels)
+    _scheduleInstagramWebViewExtraction(url);
+  }
+  
+  /// Extract content from Instagram WebView after it loads
+  /// 
+  /// Waits for the WebView to fully render before extracting visible text.
+  /// This is more reliable than oEmbed API, especially for Reels.
+  void _scheduleInstagramWebViewExtraction(String url) {
+    print('📸 INSTAGRAM: Waiting 5 seconds for WebView to load...');
+    
+    // Wait for WebView to fully load before attempting extraction
+    Future.delayed(const Duration(seconds: 5), () async {
+      if (!mounted) return;
       
-      if (!oembedService.isConfigured) {
-        print('⚠️ INSTAGRAM OEMBED: Service not configured (missing Facebook App credentials)');
+      // Skip if we already got caption from somewhere else
+      if (_extractedCaption != null && _extractedFromUrl == url) {
+        print('📸 INSTAGRAM: Caption already extracted, skipping');
         return;
       }
       
-      // Mark as processed to prevent duplicate extractions
-      _instagramUrlsProcessed.add(url);
-      
-      // Fetch caption from oEmbed API
-      final caption = await oembedService.getCaptionFromUrl(url);
-      
-      if (caption != null && caption.isNotEmpty) {
-        print('✅ INSTAGRAM OEMBED: Got caption (${caption.length} chars)');
-        
-        // Parse and store the extracted content
-        _storeExtractedContent(
-          caption: caption,
-          sourceUrl: url,
-          platform: 'Instagram',
-        );
-        
-        print('📸 INSTAGRAM OEMBED: Extracted ${_extractedHashtags.length} hashtags, ${_extractedMentions.length} mentions');
-        print('📸 INSTAGRAM OEMBED: Hashtags: $_extractedHashtags');
-        print('📸 INSTAGRAM OEMBED: Mentions: $_extractedMentions');
-      } else {
-        print('⚠️ INSTAGRAM OEMBED: No caption found in post');
+      // Skip if location extraction is already in progress
+      if (_isExtractingLocation || _isProcessingScreenshot) {
+        print('📸 INSTAGRAM: Extraction already in progress, skipping');
+        return;
       }
-    } catch (e) {
-      print('❌ INSTAGRAM OEMBED ERROR: $e');
-    }
+      
+      print('📸 INSTAGRAM: Extracting content from WebView...');
+      
+      // Try to get content from the Instagram preview WebView
+      final previewKey = _instagramPreviewKeys[url];
+      if (previewKey?.currentState != null) {
+        try {
+          final content = await previewKey!.currentState!.extractPageContent();
+          
+          if (content != null && content.isNotEmpty && content.length > 20) {
+            print('✅ INSTAGRAM: Got content from WebView (${content.length} chars)');
+            
+            // Clean up the content - remove boilerplate
+            String caption = content
+                .replaceAll(RegExp(r'View this (post|reel) on Instagram', caseSensitive: false), '')
+                .replaceAll(RegExp(r'A (post|reel) shared by.*$', caseSensitive: false, dotAll: true), '')
+                .replaceAll(RegExp(r'liked by.*and.*others', caseSensitive: false), '')
+                .replaceAll(RegExp(r'\d+ likes', caseSensitive: false), '')
+                .replaceAll(RegExp(r'Log in', caseSensitive: false), '')
+                .replaceAll(RegExp(r'Sign up', caseSensitive: false), '')
+                .replaceAll(RegExp(r'\s+'), ' ')
+                .trim();
+            
+            if (caption.length > 10) {
+              // Store the extracted content
+              _storeExtractedContent(
+                caption: caption,
+                sourceUrl: url,
+                platform: 'Instagram',
+              );
+              
+              print('📸 INSTAGRAM: Cleaned caption: ${caption.length} chars');
+              print('📸 INSTAGRAM: Hashtags: $_extractedHashtags');
+              print('📸 INSTAGRAM: Mentions: $_extractedMentions');
+              
+              // Automatically extract locations from the caption
+              await _autoExtractLocationsFromCaption(
+                caption: caption,
+                platform: 'Instagram',
+                sourceUrl: url,
+              );
+            } else {
+              print('⚠️ INSTAGRAM: Caption too short after cleaning');
+              _showInstagramScanHint();
+            }
+          } else {
+            print('⚠️ INSTAGRAM: No useful content in WebView');
+            _showInstagramScanHint();
+          }
+        } catch (e) {
+          print('❌ INSTAGRAM EXTRACT ERROR: $e');
+          _showInstagramScanHint();
+        }
+      } else {
+        print('⚠️ INSTAGRAM: No preview widget available yet');
+        _showInstagramScanHint();
+      }
+    });
+  }
+  
+  /// Show a hint toast when automatic Instagram extraction fails
+  void _showInstagramScanHint() {
+    if (!mounted) return;
+    Fluttertoast.showToast(
+      msg: '💡 Tip: Use "Scan Preview" button to extract location from visible content.',
+      toastLength: Toast.LENGTH_LONG,
+      backgroundColor: Colors.blue[700],
+    );
   }
   
   /// Extract caption, hashtags, and mentions from a Facebook URL using Meta oEmbed API
+  /// AND automatically extract locations from the caption (like TikTok auto-extract)
   /// 
   /// This method fetches the post content and parses it into usable components.
   Future<void> _extractFacebookContent(String url) async {
     // Skip if already processed this URL for content extraction
-    // Note: _facebookUrlsProcessed is used for location extraction, 
-    // we use a separate check here for content extraction
+    // Note: _facebookUrlsProcessed is used for WebView-based extraction, 
+    // this uses oEmbed API which is faster and more reliable
     if (_extractedFromUrl == url && _extractedFromPlatform == 'Facebook') {
       print('📘 FACEBOOK OEMBED: Already extracted content from $url');
       return;
@@ -3315,6 +3384,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           );
           
           print('📘 FACEBOOK OEMBED: Extracted ${_extractedHashtags.length} hashtags, ${_extractedMentions.length} mentions');
+          
+          // Mark as processed to prevent duplicate WebView-based extraction
+          _facebookUrlsProcessed.add(url);
+          
+          // Automatically extract locations from the caption (like TikTok)
+          await _autoExtractLocationsFromCaption(
+            caption: caption,
+            platform: 'Facebook',
+            sourceUrl: url,
+          );
         } else {
           print('⚠️ FACEBOOK OEMBED: No text found in post HTML');
         }
@@ -3323,6 +3402,127 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ FACEBOOK OEMBED ERROR: $e');
+    }
+  }
+  
+  /// Auto-extract locations from caption text using AI (same flow as TikTok)
+  /// 
+  /// This method:
+  /// 1. Shows scan progress UI
+  /// 2. Uses LinkLocationExtractionService to extract locations via AI + Places API
+  /// 3. Handles single/multiple location results
+  /// 4. Shows toast notifications for status
+  Future<void> _autoExtractLocationsFromCaption({
+    required String caption,
+    required String platform,
+    required String sourceUrl,
+  }) async {
+    // Skip if caption is too short to be useful
+    if (caption.length < 10) {
+      print('📍 $platform AUTO-EXTRACT: Caption too short to analyze');
+      return;
+    }
+    
+    // Skip if already extracting
+    if (_isExtractingLocation || _isProcessingScreenshot) {
+      print('📍 $platform AUTO-EXTRACT: Extraction already in progress');
+      return;
+    }
+
+    print('📍 $platform AUTO-EXTRACT: Starting automatic location extraction from oEmbed caption...');
+    print('📍 Caption preview: ${caption.substring(0, caption.length > 100 ? 100 : caption.length)}...');
+
+    setState(() {
+      _isExtractingLocation = true;
+      _isAiScanInProgress = true;
+      _scanProgress = 0.0;
+    });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
+
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
+
+    try {
+      _updateScanProgress(0.1);
+
+      // Get user location for better results (optional)
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      _updateScanProgress(0.25);
+
+      // Extract locations from the caption using AI + Places API grounding
+      final locations = await _locationExtractor.extractLocationsFromCaption(
+        caption,
+        platform: platform,
+        sourceUrl: sourceUrl,
+        userLocation: userLocation,
+        maxLocations: 5,
+      );
+      _updateScanProgress(0.8);
+
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print(
+              '📍 $platform AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
+
+      if (locations.isEmpty) {
+        print('⚠️ $platform AUTO-EXTRACT: No locations found in caption');
+        Fluttertoast.showToast(
+          msg:
+              '💡 No location found in caption. Try the "Scan Preview" button to analyze visible text.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ $platform AUTO-EXTRACT: Found ${locations.length} location(s)');
+      _updateScanProgress(0.9);
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
+    } catch (e) {
+      print('❌ $platform AUTO-EXTRACT ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Location scan failed. Try the "Scan Preview" button.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      // Disable wakelock and stop foreground service
+      WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = false;
+          _isAiScanInProgress = false;
+          _scanProgress = 0.0;
+        });
+      }
     }
   }
   
@@ -8269,7 +8469,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 return ListTile(
                   title: Text(name),
                   subtitle: Text(address, style: TextStyle(fontSize: 12)),
-                  onTap: () => Navigator.of(dialogContext).pop(result),
+                  onTap: withHeavyTap(() => Navigator.of(dialogContext).pop(result)),
                 );
               }),
             ],
@@ -8484,6 +8684,72 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
       return await _controller!.takeScreenshot();
     } catch (e) {
       print('❌ INSTAGRAM WRAPPER: Screenshot failed: $e');
+      return null;
+    }
+  }
+
+  /// Extract text content from the Instagram WebView
+  /// 
+  /// This is useful as a fallback when oEmbed doesn't return caption data.
+  /// For Reels especially, the caption may only be available after JavaScript renders.
+  Future<String?> extractPageContent() async {
+    if (_controller == null) {
+      print('⚠️ INSTAGRAM WRAPPER: Controller is null, cannot extract content');
+      return null;
+    }
+    
+    try {
+      print('📸 INSTAGRAM WRAPPER: Extracting page content...');
+      
+      // Try to extract text from the WebView
+      final result = await _controller!.evaluateJavascript(source: '''
+        (function() {
+          // Try to get text from the entire document
+          var bodyText = document.body ? document.body.innerText : '';
+          
+          // Also try to get specific Instagram embed content
+          var blockquotes = document.querySelectorAll('blockquote');
+          var blockquoteText = '';
+          blockquotes.forEach(function(bq) {
+            blockquoteText += bq.innerText + ' ';
+          });
+          
+          // Try to get iframe content if accessible
+          var iframes = document.querySelectorAll('iframe');
+          var iframeText = '';
+          iframes.forEach(function(iframe) {
+            try {
+              if (iframe.contentDocument && iframe.contentDocument.body) {
+                iframeText += iframe.contentDocument.body.innerText + ' ';
+              }
+            } catch(e) {
+              // Cross-origin iframe, can't access
+            }
+          });
+          
+          // Combine all text sources
+          var allText = bodyText + ' ' + blockquoteText + ' ' + iframeText;
+          
+          // Clean up whitespace
+          allText = allText.replace(/\\s+/g, ' ').trim();
+          
+          return allText;
+        })();
+      ''');
+      
+      if (result != null && result.toString().isNotEmpty && result.toString() != 'null') {
+        final content = result.toString().trim();
+        print('✅ INSTAGRAM WRAPPER: Extracted content (${content.length} chars)');
+        if (content.length > 200) {
+          print('📸 INSTAGRAM WRAPPER: Content preview: ${content.substring(0, 200)}...');
+        }
+        return content;
+      } else {
+        print('⚠️ INSTAGRAM WRAPPER: No content extracted from WebView');
+        return null;
+      }
+    } catch (e) {
+      print('❌ INSTAGRAM WRAPPER: Content extraction failed: $e');
       return null;
     }
   }
@@ -8736,7 +9002,7 @@ class _MultiLocationSelectionDialogState
             const SizedBox(height: 8),
             // Select All / Deselect All row
             InkWell(
-              onTap: _toggleAll,
+              onTap: withHeavyTap(_toggleAll),
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -8795,7 +9061,7 @@ class _MultiLocationSelectionDialogState
                     final isLowConfidence = _isLowConfidence(location);
 
                     return InkWell(
-                      onTap: () => _toggleLocation(index),
+                      onTap: withHeavyTap(() => _toggleLocation(index)),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -9368,7 +9634,7 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                         return Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: () => _selectSearchResult(result),
+                            onTap: withHeavyTap(() => _selectSearchResult(result)),
                             borderRadius: BorderRadius.circular(8),
                             child: Padding(
                               padding:

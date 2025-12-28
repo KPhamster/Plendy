@@ -23,6 +23,7 @@ import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 import 'package:plendy/config/colors.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 // --- END ADDED ---
 
 // Define necessary callbacks
@@ -635,10 +636,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           ? const Icon(Icons.check,
                                               color: Colors.blue)
                                           : null,
-                                      onTap: () {
+                                      onTap: withHeavyTap(() {
                                         FocusScope.of(dialogContext).unfocus();
                                         Navigator.pop(dialogContext, category.id);
-                                      },
+                                      }),
                                       visualDensity: VisualDensity.compact,
                                     );
                                   },
@@ -958,10 +959,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           ? const Icon(Icons.check,
                                               color: Colors.blue)
                                           : null,
-                                      onTap: () {
+                                      onTap: withHeavyTap(() {
                                         FocusScope.of(dialogContext).unfocus();
                                         Navigator.pop(dialogContext, category.id);
-                                      },
+                                      }),
                                       visualDensity: VisualDensity.compact,
                                     );
                                   },
@@ -1104,9 +1105,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // print("FORM_DEBUG (${widget.cardData.id}): websiteController text: '${websiteController.text}'");
 
     return GestureDetector(
-      onTap: () {
+      onTap: withHeavyTap(() {
         FocusManager.instance.primaryFocus?.unfocus();
-      },
+      }),
       child: Container(
         margin: EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
@@ -1145,7 +1146,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
             children: [
               // Header row with expand/collapse and delete functionality
               InkWell(
-                onTap: () {
+                onTap: withHeavyTap(() {
                   setState(() {
                     widget.cardData.isExpanded = !widget.cardData.isExpanded;
                     // Unfocus any active fields when collapsing
@@ -1153,7 +1154,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       FocusManager.instance.primaryFocus?.unfocus();
                     }
                   });
-                },
+                }),
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1254,9 +1255,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               widget.cardData.isSelectingLocation;
                           return GestureDetector(
                             // Call the parent's location selection logic
-                            onTap: isEnabled && !isLocationLoading
+                            onTap: withHeavyTap(isEnabled && !isLocationLoading
                                 ? () => widget.onLocationSelect(widget.cardData)
-                                : null,
+                                : null),
                             child: Container(
                               decoration: BoxDecoration(
                                 border: Border.all(
@@ -1433,7 +1434,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           ),
                           const SizedBox(width: 6),
                           InkWell(
-                            onTap: _launchYelpUrl,
+                            onTap: withHeavyTap(_launchYelpUrl),
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding: const EdgeInsets.all(4.0),
@@ -1446,7 +1447,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           ),
                           const SizedBox(width: 6),
                           InkWell(
-                            onTap: _launchMapLocation,
+                            onTap: withHeavyTap(_launchMapLocation),
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding: const EdgeInsets.all(4.0),
@@ -1821,10 +1822,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               // Clear button (first)
                               if (websiteController.text.isNotEmpty)
                                 InkWell(
-                                  onTap: () {
+                                  onTap: withHeavyTap(() {
                                     websiteController.clear();
                                     widget.onUpdate(refreshCategories: false);
-                                  },
+                                  }),
                                   borderRadius: BorderRadius.circular(16),
                                   child: Padding(
                                     padding: const EdgeInsets.all(4.0),
@@ -1837,7 +1838,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                               // Paste button (second)
                               InkWell(
-                                onTap: _pasteWebsiteUrlFromClipboard,
+                                onTap: withHeavyTap(_pasteWebsiteUrlFromClipboard),
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
                                   padding: const EdgeInsets.all(4.0),
@@ -1851,7 +1852,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                               // Launch button (last)
                               InkWell(
-                                onTap: websiteController.text.isNotEmpty &&
+                                onTap: withHeavyTap(websiteController.text.isNotEmpty &&
                                         _isValidUrl(
                                             websiteController.text.trim())
                                     ? () async {
@@ -1875,7 +1876,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           }
                                         }
                                       }
-                                    : null,
+                                    : null),
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
                                   padding: const EdgeInsets.fromLTRB(

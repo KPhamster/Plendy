@@ -21,6 +21,7 @@ import 'package:plendy/models/share_permission.dart';
 import 'package:plendy/models/enums/share_enums.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/config/colors.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -687,10 +688,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                   trailing: isSelected
                                       ? const Icon(Icons.check, color: Colors.blue)
                                       : null,
-                                  onTap: () {
+                                  onTap: withHeavyTap(() {
                                     FocusScope.of(dialogContext).unfocus();
                                     Navigator.pop(dialogContext, category.id);
-                                  },
+                                  }),
                                   visualDensity: VisualDensity.compact,
                                 );
                               },
@@ -1220,11 +1221,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                   trailing: isSelected
                                       ? const Icon(Icons.check, color: Colors.blue)
                                       : null,
-                                  onTap: () {
+                                  onTap: withHeavyTap(() {
                                     FocusScope.of(dialogContext).unfocus();
                                     Navigator.pop(
                                         dialogContext, category.id); // Return category ID
-                                  },
+                                  }),
                                   visualDensity: VisualDensity.compact,
                                 );
                               },
@@ -1572,10 +1573,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
                 // Location selection (using adapted widget/logic)
                 GestureDetector(
-                  onTap: (_cardData.locationEnabled.value &&
+                  onTap: withHeavyTap((_cardData.locationEnabled.value &&
                           !_cardData.isSelectingLocation)
                       ? _showLocationPicker
-                      : null,
+                      : null),
                   child: Container(
                     decoration: BoxDecoration(
                     color: Colors.white,
@@ -1710,7 +1711,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     ),
                     const SizedBox(width: 6),
                     InkWell(
-                      onTap: _launchYelpUrl,
+                      onTap: withHeavyTap(_launchYelpUrl),
                       borderRadius: BorderRadius.circular(16),
                       child: Padding(
                         padding: const EdgeInsets.all(4.0),
@@ -1723,7 +1724,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     ),
                     const SizedBox(width: 6),
                     InkWell(
-                      onTap: _launchMapLocation,
+                      onTap: withHeavyTap(_launchMapLocation),
                       borderRadius: BorderRadius.circular(16),
                       child: Padding(
                         padding: const EdgeInsets.all(4.0),
@@ -2032,9 +2033,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                           // Clear button (first)
                           if (_cardData.websiteController.text.isNotEmpty)
                             InkWell(
-                              onTap: () {
+                              onTap: withHeavyTap(() {
                                 _cardData.websiteController.clear();
-                              },
+                              }),
                               borderRadius: BorderRadius.circular(16),
                               child: Padding(
                                 padding: const EdgeInsets.all(4.0),
@@ -2047,7 +2048,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
                           // Paste button (second)
                           InkWell(
-                            onTap: _pasteWebsiteUrlFromClipboard,
+                            onTap: withHeavyTap(_pasteWebsiteUrlFromClipboard),
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding: const EdgeInsets.all(4.0),
@@ -2061,13 +2062,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
                           // Launch button (last)
                           InkWell(
-                            onTap: _cardData
+                            onTap: withHeavyTap(_cardData
                                         .websiteController.text.isNotEmpty &&
                                     _isValidUrl(
                                         _cardData.websiteController.text.trim())
                                 ? () => _launchUrl(
                                     _cardData.websiteController.text.trim())
-                                : null,
+                                : null),
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding:

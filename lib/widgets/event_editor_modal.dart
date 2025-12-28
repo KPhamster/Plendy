@@ -29,6 +29,7 @@ import '../screens/auth_screen.dart';
 import '../screens/main_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class EventEditorResult {
   final Event? savedEvent;
@@ -622,7 +623,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ),
         body: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onTap: () => FocusScope.of(context).unfocus(),
+          onTap: withHeavyTap(() => FocusScope.of(context).unfocus()),
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -691,7 +692,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         : _coverImageUrlController.text.trim();
 
     return GestureDetector(
-      onTap: _isReadOnly ? null : () => _showCoverImageOptions(),
+      onTap: withHeavyTap(_isReadOnly ? null : () => _showCoverImageOptions()),
       child: Container(
         height: 250,
         decoration: BoxDecoration(
@@ -789,41 +790,41 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ? null
                     : const Text('Add itinerary experiences to enable'),
                 enabled: hasItineraryExperiences,
-                onTap: hasItineraryExperiences
+                onTap: withHeavyTap(hasItineraryExperiences
                     ? () {
                         Navigator.of(ctx).pop();
                         _showExperienceCoverImageSelector();
                       }
-                    : null,
+                    : null),
               ),
               ListTile(
                 leading: const Icon(Icons.link),
                 title: const Text('Enter image URL'),
-                onTap: () {
+                onTap: withHeavyTap(() {
                   Navigator.of(ctx).pop();
                   _showImageUrlDialog();
-                },
+                }),
               ),
               ListTile(
                 leading: const Icon(Icons.photo_library),
                 title: const Text('Choose from device'),
-                onTap: () {
+                onTap: withHeavyTap(() {
                   Navigator.of(ctx).pop();
                   _pickCoverImage();
-                },
+                }),
               ),
               if (_coverImageUrlController.text.trim().isNotEmpty)
                 ListTile(
                   leading: Icon(Icons.delete, color: theme.primaryColor),
                   title: Text('Remove image',
                       style: TextStyle(color: theme.primaryColor)),
-                  onTap: () {
+                  onTap: withHeavyTap(() {
                     Navigator.of(ctx).pop();
                     setState(() {
                       _coverImageUrlController.clear();
                       _markUnsavedChanges();
                     });
-                  },
+                  }),
                 ),
             ],
           ),
@@ -1086,7 +1087,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                 : (experience?.location.placeId != null && experience!.location.placeId!.isNotEmpty
                                     ? Icon(Icons.cloud_download_outlined, color: primaryColor)
                                     : const Text('No image', style: TextStyle(color: Colors.grey)))),
-                        onTap: () async {
+                        onTap: withHeavyTap(() async {
                           // If we already have a URL, use it
                           if (hasDerivedImage && derivedUrl != null) {
                             Navigator.of(sheetContext).pop();
@@ -1185,7 +1186,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                               );
                             }
                           }
-                        },
+                        }),
                       );
                     }),
                 ],
@@ -1365,10 +1366,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ],
               ),
               content: GestureDetector(
-                onTap: () {
+                onTap: withHeavyTap(() {
                   // Dismiss keyboard when tapping outside text fields
                   FocusScope.of(context).unfocus();
-                },
+                }),
                 behavior: HitTestBehavior.opaque,
                 child: SingleChildScrollView(
                   child: SizedBox(
@@ -1608,10 +1609,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ],
               ),
               content: GestureDetector(
-                onTap: () {
+                onTap: withHeavyTap(() {
                   // Dismiss keyboard when tapping outside text fields
                   FocusScope.of(context).unfocus();
-                },
+                }),
                 behavior: HitTestBehavior.opaque,
                 child: SingleChildScrollView(
                   child: SizedBox(
@@ -1907,11 +1908,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           final emoji = emojiOptions[index];
                           final isSelected = emoji == selectedIcon;
                           return GestureDetector(
-                            onTap: () {
+                            onTap: withHeavyTap(() {
                               setDialogState(() {
                                 selectedIcon = emoji;
                               });
-                            },
+                            }),
                             child: Container(
                               decoration: BoxDecoration(
                                 color: isSelected
@@ -2060,9 +2061,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         trailing: isSelected
                             ? const Icon(Icons.check, color: Colors.blue)
                             : null,
-                        onTap: () {
+                        onTap: withHeavyTap(() {
                           Navigator.pop(ctx, category.id);
-                        },
+                        }),
                         visualDensity: VisualDensity.compact,
                       );
                     },
@@ -2093,7 +2094,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         trailing: initialCustomColor != null
                             ? const Icon(Icons.check, color: Colors.blue)
                             : null,
-                        onTap: () async {
+                        onTap: withHeavyTap(() async {
                           // Show color picker as nested dialog
                           final customColorResult = await _pickCustomColor(
                             initialColor: initialCustomColor,
@@ -2102,7 +2103,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             // Close the category dialog and return the custom color
                             Navigator.of(ctx).pop(customColorResult);
                           }
-                        },
+                        }),
                         visualDensity: VisualDensity.compact,
                       ),
                       TextButton.icon(
@@ -2224,7 +2225,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               if (!_isReadOnly) ...[
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: () => _pickEventColor(),
+                  onTap: withHeavyTap(() => _pickEventColor()),
                   child: Container(
                     width: 32,
                     height: 32,
@@ -2458,7 +2459,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               Tooltip(
                 message: 'Add event-only experience',
                 child: InkWell(
-                  onTap: _createEventOnlyExperience,
+                  onTap: withHeavyTap(_createEventOnlyExperience),
                   borderRadius: BorderRadius.circular(20),
                   child: Container(
                     width: 32,
@@ -2475,7 +2476,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               Tooltip(
                 message: 'Add from saved experiences',
                 child: InkWell(
-                  onTap: _openItinerarySelector,
+                  onTap: withHeavyTap(_openItinerarySelector),
                   borderRadius: BorderRadius.circular(20),
                   child: Container(
                     width: 32,
@@ -2800,7 +2801,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       const SizedBox(width: 4),
                       GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: () => _openExperienceContentPreview(experience),
+                        onTap: withHeavyTap(() => _openExperienceContentPreview(experience)),
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
@@ -2995,11 +2996,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         isExpanded ? Icons.expand_less : Icons.expand_more,
                         size: 20,
                       ),
-                      onTap: () {
+                      onTap: withHeavyTap(() {
                         setState(() {
                           _itineraryExpandedState[tileId] = !isExpanded;
                         });
-                      },
+                      }),
                     ),
                     if (isExpanded)
                       Padding(
@@ -3009,11 +3010,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           children: [
                             // Scheduled Time
                             InkWell(
-                              onTap: () {
+                              onTap: withHeavyTap(() {
                                 setState(() {
                                   _itineraryExpandedState[tileId] = false;
                                 });
-                              },
+                              }),
                               child: Padding(
                             padding:
                                     const EdgeInsets.symmetric(vertical: 8.0),
@@ -3059,11 +3060,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             ),
                             // Transport Info
                             InkWell(
-                              onTap: () {
+                              onTap: withHeavyTap(() {
                                 setState(() {
                                   _itineraryExpandedState[tileId] = false;
                                 });
-                              },
+                              }),
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 8.0),
@@ -3113,11 +3114,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             ),
                             // Note
                             InkWell(
-                              onTap: () {
+                              onTap: withHeavyTap(() {
                                 setState(() {
                                   _itineraryExpandedState[tileId] = false;
                                 });
-                              },
+                              }),
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 8.0),
@@ -3240,7 +3241,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       children: [
                         // Scheduled Time
                         InkWell(
-                          onTap: () => _editScheduledTime(entry, index),
+                          onTap: withHeavyTap(() => _editScheduledTime(entry, index)),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 8.0),
                             child: Row(
@@ -3285,7 +3286,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         ),
                         // Transport Info
                         InkWell(
-                          onTap: () => _editTransportInfo(entry, index),
+                          onTap: withHeavyTap(() => _editTransportInfo(entry, index)),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 8.0),
                             child: Row(
@@ -3328,7 +3329,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         ),
                         // Note
                         InkWell(
-                          onTap: () => _editNote(entry, index),
+                          onTap: withHeavyTap(() => _editNote(entry, index)),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 8.0),
                             child: Row(
@@ -4344,11 +4345,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () {
+            onTap: withHeavyTap(() {
               setState(() {
                 _isPeopleExpanded = !_isPeopleExpanded;
               });
-            },
+            }),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [

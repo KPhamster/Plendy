@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../models/experience.dart';
 // Assuming ExperienceCardData might be needed later
 import '../../../services/google_maps_service.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class MapsPreviewWidget extends StatefulWidget {
   final String mapsUrl;
@@ -208,7 +209,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
       children: [
         // Preview container with tap functionality
         InkWell(
-          onTap: () => widget.launchUrlCallback(mapsUrl), // Use callback
+          onTap: withHeavyTap(() => widget.launchUrlCallback(mapsUrl)), // Use callback
           borderRadius: BorderRadius.circular(8),
           child: Container(
             width: double.infinity,
@@ -350,7 +351,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                             SizedBox(width: 6),
                             Expanded(
                               child: InkWell(
-                                onTap: () async {
+                                onTap: withHeavyTap(() async {
                                   print(
                                       '🧭 ADDRESS WIDGET: Opening map for ${location.latitude}, ${location.longitude}');
                                   // Open map to show location with higher zoom level
@@ -371,7 +372,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                                   }
                                   await widget.launchUrlCallback(
                                       mapUrl); // Use callback
-                                },
+                                }),
                                 child: Text(
                                   location.address!,
                                   style: TextStyle(
@@ -555,7 +556,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
       children: [
         // Fallback container with Maps styling
         InkWell(
-          onTap: () => widget.launchUrlCallback(url), // Use callback
+          onTap: withHeavyTap(() => widget.launchUrlCallback(url)), // Use callback
           borderRadius: BorderRadius.circular(8),
           child: Container(
             width: double.infinity,

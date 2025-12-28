@@ -5,6 +5,7 @@ import '../widgets/google_maps_widget.dart';
 import '../models/experience.dart';
 import '../services/google_maps_service.dart';
 import 'dart:async';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class LocationPickerScreen extends StatefulWidget {
   final Location? initialLocation;
@@ -473,7 +474,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
           return Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: () => _selectSearchResult(result),
+              onTap: withHeavyTap(() => _selectSearchResult(result)),
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4.0),

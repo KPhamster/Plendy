@@ -5,6 +5,7 @@ import 'package:plendy/screens/main_screen.dart';
 import 'package:plendy/screens/my_people_screen.dart';
 import 'package:plendy/widgets/tutorial_map_screen_modal.dart';
 import 'package:plendy/widgets/tutorial_save_content_modal.dart';
+import 'package:plendy/utils/haptic_feedback.dart';
 
 class TutorialsScreen extends StatelessWidget {
   const TutorialsScreen({super.key});
@@ -130,7 +131,7 @@ class TutorialsScreen extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               subtitle: subtitleWidget,
-              onTap: onTap,
+              onTap: withHeavyTap(onTap),
             ),
           );
         },
