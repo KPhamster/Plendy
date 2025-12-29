@@ -24,6 +24,7 @@ import '../services/category_ordering_service.dart';
 import '../services/google_maps_service.dart';
 import '../services/google_knowledge_graph_service.dart';
 import '../services/link_location_extraction_service.dart';
+import '../services/ai_settings_service.dart';
 import '../models/extracted_location_data.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
@@ -49,6 +50,7 @@ import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import '../services/gemini_service.dart';
 import '../services/foreground_scan_service.dart';
+import '../services/category_auto_assign_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
@@ -246,11 +248,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final ExperienceService _experienceService = ExperienceService();
   final CategoryOrderingService _categoryOrderingService =
       CategoryOrderingService();
+  final CategoryAutoAssignService _categoryAutoAssignService =
+      CategoryAutoAssignService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final SharingService _sharingService = SharingService();
   final LinkLocationExtractionService _locationExtractor =
       LinkLocationExtractionService();
   final ForegroundScanService _foregroundScanService = ForegroundScanService();
+  final AiSettingsService _aiSettingsService = AiSettingsService.instance;
 
   // AI Location Extraction state
   bool _isExtractingLocation = false;
@@ -466,9 +471,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: Colors.blue[50],
+                          color: AppColors.wineLight.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue[200]!),
+                          border: Border.all(
+                              color: AppColors.wineLight.withOpacity(0.35)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -479,14 +485,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.blue[700]!),
+                                    AppColors.wineLight),
                               ),
                             ),
                             const SizedBox(width: 10),
+                            Image.asset(
+                              'assets/icon/icon-cropped.png',
+                              width: 16,
+                              height: 16,
+                            ),
+                            const SizedBox(width: 8),
                             Text(
-                              '🤖 AI finding locations...',
+                              'Plendy AI analyzing...',
                               style: TextStyle(
-                                color: Colors.blue[800],
+                                color: AppColors.wineLight,
                                 fontWeight: FontWeight.w500,
                                 fontSize: 13,
                               ),
@@ -604,6 +616,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         _scanProgress = progress.clamp(0.0, 1.0);
       });
     }
+  }
+
+  Future<bool> _shouldAutoExtractLocations() async {
+    return _aiSettingsService.shouldAutoExtractLocations();
   }
 
   /// Build the screenshot upload button widget
@@ -2702,10 +2718,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print(
           '🎬 AUTO-EXTRACT: YouTube URL detected via share intent, triggering video analysis');
       // Delay slightly to allow UI to settle
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) {
-          _extractLocationsFromUrl(url);
-        }
+      Future.delayed(const Duration(milliseconds: 500), () async {
+        if (!mounted) return;
+        if (!await _shouldAutoExtractLocations()) return;
+        _extractLocationsFromUrl(url);
       });
     }
   }
@@ -2767,6 +2783,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
     // Automatically submit after paste
     _handleSharedUrlSubmit();
+  }
+
+  bool _shouldAutoExtractFromSubmittedUrl(String url) {
+    if (_isInstagramUrl(url) || _isTikTokUrl(url) || _isFacebookUrl(url)) {
+      return false;
+    }
+    if (_isGoogleKnowledgeGraphUrl(url)) {
+      return false;
+    }
+    if (_isYouTubeUrl(url)) {
+      return true;
+    }
+    // Generic URLs auto-scan on WebView load.
+    return false;
   }
 
   // Handle submit: normalize URL and refresh preview
@@ -2833,7 +2863,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     FocusScope.of(context).unfocus();
 
     // Trigger AI-powered location extraction
-    _extractLocationsFromUrl(url);
+    final shouldAutoExtractFromSubmit = _shouldAutoExtractFromSubmittedUrl(url);
+    _shouldAutoExtractLocations().then((shouldAuto) {
+      if (!shouldAuto || !shouldAutoExtractFromSubmit) return;
+      _extractLocationsFromUrl(url);
+    });
   }
 
   /// Extract locations from URL using AI-powered Gemini service
@@ -2875,13 +2909,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('🤖 AI EXTRACTION: Starting location extraction from URL...');
 
       // Extract locations using Gemini + Maps grounding
-      // YouTube videos can have many locations (e.g., "Top 10" videos) - no limit
-      final isYouTube = _isYouTubeUrl(url);
+      // No limit on locations extracted from URLs
       _updateScanProgress(0.35);
       final locations = await _locationExtractor.extractLocationsFromSharedLink(
         url,
         userLocation: userLocation,
-        maxLocations: isYouTube ? null : 5, // No limit for YouTube
+        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -2962,6 +2995,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
+    if (!await _shouldAutoExtractLocations()) {
+      print('🎬 TIKTOK AUTO-EXTRACT: Auto extraction disabled in settings');
+      return;
+    }
+
     // Skip if already extracting
     if (_isExtractingLocation) {
       print('🎬 TIKTOK AUTO-EXTRACT: Extraction already in progress');
@@ -3008,7 +3046,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         authorName: data.authorName,
         sourceUrl: url,
         userLocation: userLocation,
-        maxLocations: 5,
+        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -3084,6 +3122,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
+    if (!await _shouldAutoExtractLocations()) {
+      print('📘 FACEBOOK AUTO-EXTRACT: Auto extraction disabled in settings');
+      return;
+    }
+
     // Mark as processed to prevent duplicate extractions
     _facebookUrlsProcessed.add(url);
 
@@ -3155,7 +3198,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         platform: 'Facebook',
         sourceUrl: url,
         userLocation: userLocation,
-        maxLocations: 5,
+        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -3429,6 +3472,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
+    if (!await _shouldAutoExtractLocations()) {
+      print('📍 $platform AUTO-EXTRACT: Auto extraction disabled in settings');
+      return;
+    }
+
     print('📍 $platform AUTO-EXTRACT: Starting automatic location extraction from oEmbed caption...');
     print('📍 Caption preview: ${caption.substring(0, caption.length > 100 ? 100 : caption.length)}...');
 
@@ -3464,7 +3512,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         platform: platform,
         sourceUrl: sourceUrl,
         userLocation: userLocation,
-        maxLocations: 5,
+        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -3818,22 +3866,70 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
+      // Find 'Want to go' color category to auto-assign to new locations
+      final wantToGoCategory = _userColorCategories.firstWhereOrNull(
+        (cat) => cat.name.toLowerCase() == 'want to go',
+      );
+      final String? wantToGoColorCategoryId = wantToGoCategory?.id;
+
       // Fill existing empty cards with new locations
       for (int i = 0; i < locationsForEmptyCards.length; i++) {
-        provider.updateCardWithExtractedLocation(
-          emptyCards[i].id,
-          locationsForEmptyCards[i],
+        final locationData = locationsForEmptyCards[i];
+        final cardId = emptyCards[i].id;
+        
+        provider.updateCardWithExtractedLocation(cardId, locationData);
+        
+        // Set color category to 'Want to go' for new locations (not from saved experiences)
+        if (wantToGoColorCategoryId != null) {
+          provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
+        }
+        
+        // Determine and set the best primary category based on place types
+        final bestCategoryId = await _determineBestCategoryForLocation(
+          locationData,
+          _userCategories,
+          useAiFallback: true, // Use AI if no direct match found
         );
+        if (bestCategoryId != null) {
+          provider.updateCardTextCategory(cardId, bestCategoryId);
+        }
+        
         print(
-            '📍 Filled existing card with: ${locationsForEmptyCards[i].name}');
+            '📍 Filled existing card with: ${locationData.name}');
       }
 
       // Create all new cards for remaining new locations in one batch
       if (locationsNeedingNewCards.isNotEmpty) {
+        // Track the number of cards before creation to identify newly created ones
+        final cardCountBefore = provider.experienceCards.length;
         await provider.createCardsFromLocations(locationsNeedingNewCards);
         cardsCreated += locationsNeedingNewCards.length;
         print(
             '📍 Created ${locationsNeedingNewCards.length} new cards for new locations');
+        
+        // Set color category and primary category for all newly created cards
+        for (int i = 0; i < locationsNeedingNewCards.length; i++) {
+          final cardIndex = cardCountBefore + i;
+          if (cardIndex < provider.experienceCards.length) {
+            final cardId = provider.experienceCards[cardIndex].id;
+            final locationData = locationsNeedingNewCards[i];
+            
+            // Set color category to 'Want to go'
+            if (wantToGoColorCategoryId != null) {
+              provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
+            }
+            
+            // Determine and set the best primary category based on place types
+            final bestCategoryId = await _determineBestCategoryForLocation(
+              locationData,
+              _userCategories,
+              useAiFallback: true, // Use AI if no direct match found
+            );
+            if (bestCategoryId != null) {
+              provider.updateCardTextCategory(cardId, bestCategoryId);
+            }
+          }
+        }
       }
 
       // Process existing experiences (duplicates user chose to use)
@@ -3863,6 +3959,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           cardsCreated++;
           existingUsed++;
         }
+      }
+
+      // Force UI rebuild after all category changes
+      // (provider notifyListeners doesn't trigger rebuild because _ExperienceCardsSection doesn't watch the provider)
+      if (mounted) {
+        setState(() {});
       }
 
       // Show appropriate toast message
@@ -3922,6 +4024,60 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
+  /// Determine the best primary category for an extracted location.
+  /// Delegates to CategoryAutoAssignService for shared logic.
+  Future<String?> _determineBestCategoryForLocation(
+    ExtractedLocationData locationData,
+    List<UserCategory> userCategories, {
+    bool useAiFallback = true,
+  }) async {
+    return _categoryAutoAssignService.determineBestCategoryForExtractedLocation(
+      locationData,
+      userCategories,
+      useAiFallback: useAiFallback,
+    );
+  }
+
+  /// Auto-categorize a card with Color Category (Want to go) and Primary Category.
+  /// 
+  /// This method sets:
+  /// 1. Color Category to 'Want to go' 
+  /// 2. Primary Category based on location name (using AI if needed)
+  /// 
+  /// Used when selecting a location from LocationPickerScreen or Quick Add dialog.
+  /// Delegates to CategoryAutoAssignService for shared logic.
+  Future<void> _autoCategorizeCardForNewLocation(
+    String cardId,
+    Location location,
+    ReceiveShareProvider provider,
+  ) async {
+    final locationName = location.displayName ?? location.getPlaceName();
+    print('🏷️ AUTO-CATEGORIZE: Setting categories for "$locationName"');
+    
+    final categorization = await _categoryAutoAssignService.autoCategorizeForNewLocation(
+      locationName: locationName,
+      userCategories: _userCategories,
+      colorCategories: _userColorCategories,
+      placeTypes: location.placeTypes, // Use stored placeTypes for better accuracy
+      placeId: location.placeId, // API fallback if placeTypes not stored
+    );
+    
+    // Set Color Category to 'Want to go'
+    if (categorization.colorCategoryId != null) {
+      provider.updateCardColorCategory(cardId, categorization.colorCategoryId!);
+      print('   ✅ Color Category set to "Want to go"');
+    }
+    
+    // Set Primary Category based on location name
+    if (categorization.primaryCategoryId != null) {
+      provider.updateCardTextCategory(cardId, categorization.primaryCategoryId!);
+      final categoryName = _userCategories
+          .firstWhereOrNull((c) => c.id == categorization.primaryCategoryId)
+          ?.name;
+      print('   ✅ Primary Category set to "$categoryName"');
+    }
+  }
+
   /// Show informational dialog about multiple cards added
   void _showMultiLocationInfoDialog(int count) {
     showDialog(
@@ -3955,19 +4111,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             onPressed: () => Navigator.pop(context),
             child: const Text('Got it!'),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoBulletPoint(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8, bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('• ', style: TextStyle(fontSize: 16)),
-          Expanded(child: Text(text)),
         ],
       ),
     );
@@ -4556,17 +4699,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     super.dispose();
   }
 
+  void _navigateToCollections() {
+    _sharingService.markShareFlowAsInactive();
+    if (!mounted) {
+      return;
+    }
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const MainScreen(initialIndex: 1)),
+      (Route<dynamic> route) => false,
+    );
+  }
+
   Widget _wrapWithWillPopScope(Widget child) {
     return WillPopScope(
       onWillPop: () async {
-        _sharingService.markShareFlowAsInactive();
-        if (mounted) {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const MainScreen()),
-            (Route<dynamic> route) => false,
-          );
-        }
+        _navigateToCollections();
         return false;
       },
       child: child,
@@ -5182,7 +5330,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             platform: 'Yelp',
             sourceUrl: url,
             userLocation: userLatLng,
-            maxLocations: 1,
+            maxLocations: null, // No limit
           );
 
           if (geminiLocations.isNotEmpty) {
@@ -6027,11 +6175,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (card.existingExperienceId == null ||
                 card.existingExperienceId!.isEmpty) {
               isNewExperience = true;
+              // Include placeTypes in location for auto-categorization optimization
+              final locationWithPlaceTypes = card.placeTypes != null && card.placeTypes!.isNotEmpty
+                  ? locationToSave.copyWith(placeTypes: card.placeTypes)
+                  : locationToSave;
               Experience newExperience = Experience(
                 id: '',
                 name: cardTitle,
                 description: notes,
-                location: locationToSave,
+                location: locationWithPlaceTypes,
                 categoryId: categoryIdToSave,
                 yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                 website: cardWebsite.isNotEmpty ? cardWebsite : null,
@@ -6163,15 +6315,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               if (!mounted) return;
               if (existingPublicExp == null) {
                 String publicName = locationToSave.getPlaceName();
+                // Include placeTypes for auto-categorization when users save from Discovery
+                final locationWithPlaceTypesForPublic = card.placeTypes != null && card.placeTypes!.isNotEmpty
+                    ? locationToSave.copyWith(placeTypes: card.placeTypes)
+                    : locationToSave;
                 PublicExperience newPublicExperience = PublicExperience(
                     id: '',
                     name: publicName,
-                    location: locationToSave,
+                    location: locationWithPlaceTypesForPublic,
                     placeID: placeId,
                     yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                     website: cardWebsite.isNotEmpty ? cardWebsite : null,
                     allMediaPaths: uniqueMediaPaths,
-                    icon: selectedCategoryObject?.icon);
+                    icon: selectedCategoryObject?.icon,
+                    placeTypes: card.placeTypes);
                 await _experienceService
                     .createPublicExperience(newPublicExperience);
                 if (!mounted) return;
@@ -6543,6 +6700,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               searchQuery: selectedLocation.address ?? 'Selected Location');
         }
       }
+      
+      // Auto-set Color Category to 'Want to go' and determine Primary Category
+      // for the newly selected location (only if we reach here - not if existing experience was used)
+      // Use card.selectedLocation which has been updated with detailedLocation (including placeTypes from API)
+      if (mounted && card.selectedLocation != null && card.selectedLocation!.placeId != null) {
+        await _autoCategorizeCardForNewLocation(card.id, card.selectedLocation!, provider);
+        // Force UI rebuild after category changes
+        if (mounted) {
+          setState(() {});
+        }
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -6797,6 +6965,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         placeIdForPreview: location.placeId,
       );
 
+      // Auto-set Color Category to 'Want to go' and determine Primary Category
+      await _autoCategorizeCardForNewLocation(targetCard.id, location, provider);
+
+      // Force UI rebuild after category changes (provider notifyListeners doesn't trigger rebuild
+      // because _ExperienceCardsSection doesn't watch the provider)
+      if (mounted) {
+        setState(() {});
+      }
+
       // Show toast for new location
       final locationName = location.displayName ?? location.getPlaceName();
       Fluttertoast.showToast(
@@ -6971,10 +7148,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         leading: IconButton(
           icon: Icon(useIOSBackIcon ? Icons.arrow_back_ios : Icons.arrow_back),
           onPressed: () {
-            _sharingService.markShareFlowAsInactive();
-            if (mounted) {
-              Navigator.of(context).pop();
-            }
+            _navigateToCollections();
           },
         ),
         automaticallyImplyLeading: false,
@@ -7697,10 +7871,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '🚀 AUTO-SCAN: Web page loaded, automatically scanning for locations...');
 
     // Small delay to ensure WebView is fully rendered
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted && !_isProcessingScreenshot && !_isExtractingLocation) {
-        _scanPageContent();
+    Future.delayed(const Duration(milliseconds: 500), () async {
+      if (!mounted || _isProcessingScreenshot || _isExtractingLocation) {
+        return;
       }
+      if (!await _shouldAutoExtractLocations()) return;
+      _scanPageContent();
     });
   }
 

@@ -26,6 +26,7 @@ class Location extends Equatable {
   final String? website; // Add website field
   final double? rating; // ADDED: Google Maps rating for the place
   final int? userRatingCount; // ADDED: Number of ratings
+  final List<String>? placeTypes; // ADDED: Google Places API types for auto-categorization
 
   const Location({
     this.placeId,
@@ -49,6 +50,7 @@ class Location extends Equatable {
     this.website, // Add to constructor
     this.rating, // ADDED
     this.userRatingCount, // ADDED
+    this.placeTypes, // ADDED: Google Places API types
   });
 
   @override
@@ -74,6 +76,7 @@ class Location extends Equatable {
         website,
         rating, // ADDED
         userRatingCount, // ADDED
+        placeTypes, // ADDED
       ];
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -100,6 +103,7 @@ class Location extends Equatable {
       website: map['website'], // Add from map
       rating: (map['rating'] as num?)?.toDouble(), // ADDED
       userRatingCount: map['userRatingCount'] as int?, // ADDED
+      placeTypes: (map['placeTypes'] as List<dynamic>?)?.cast<String>(), // ADDED
     );
   }
 
@@ -146,6 +150,9 @@ class Location extends Equatable {
     if (rating != null) map['rating'] = rating; // ADDED
     if (userRatingCount != null) {
       map['userRatingCount'] = userRatingCount; // ADDED
+    }
+    if (placeTypes != null && placeTypes!.isNotEmpty) {
+      map['placeTypes'] = placeTypes; // ADDED
     }
 
     return map;
@@ -203,6 +210,7 @@ class Location extends Equatable {
     String? website,
     double? rating,
     int? userRatingCount,
+    List<String>? placeTypes,
   }) {
     return Location(
       placeId: placeId ?? this.placeId,
@@ -233,6 +241,7 @@ class Location extends Equatable {
       website: website ?? this.website,
       rating: rating ?? this.rating,
       userRatingCount: userRatingCount ?? this.userRatingCount,
+      placeTypes: placeTypes ?? this.placeTypes,
     );
   }
 

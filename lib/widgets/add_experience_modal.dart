@@ -5,6 +5,7 @@ import 'package:plendy/models/color_category.dart';
 import 'package:plendy/models/experience_card_data.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:plendy/services/google_maps_service.dart';
+import 'package:plendy/services/category_auto_assign_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 import 'package:plendy/widgets/add_color_category_modal.dart';
@@ -45,6 +46,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   final AuthService _authService = AuthService();
   final CategoryOrderingService _categoryOrderingService =
       CategoryOrderingService();
+  final CategoryAutoAssignService _categoryAutoAssignService =
+      CategoryAutoAssignService();
 
   List<UserCategory> _currentUserCategories = [];
   List<ColorCategory> _currentColorCategories = [];
@@ -236,7 +239,12 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     );
 
     if (result != null && mounted) {
-      Future.microtask(() => FocusScope.of(context).unfocus());
+      // Safely unfocus after navigation returns
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          FocusScope.of(context).unfocus();
+        }
+      });
 
       final Location selectedLocation =
           result is Map ? result['location'] : result as Location;
@@ -252,6 +260,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 selectedLocation.address ?? 'Selected Location';
             _cardData.locationEnabled.value = true;
           });
+          // Auto-categorize even without Place ID
+          await _autoCategorizeForNewLocation(selectedLocation);
           return;
         }
 
@@ -262,6 +272,10 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
         setState(() {
           _cardData.selectedLocation = detailedLocation;
+          // Store placeTypes from API for auto-categorization
+          if (detailedLocation.placeTypes != null && detailedLocation.placeTypes!.isNotEmpty) {
+            _cardData.placeTypes = detailedLocation.placeTypes;
+          }
           if (_cardData.titleController.text.isEmpty) {
             _cardData.titleController.text = detailedLocation.getPlaceName();
           }
@@ -272,6 +286,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
           _cardData.searchController.text = detailedLocation.address ?? '';
           _cardData.locationEnabled.value = true;
         });
+
+        // Auto-set Color Category to "Want to go" and Primary Category based on location
+        await _autoCategorizeForNewLocation(detailedLocation);
       } catch (e) {
         print("Error getting place details after picking location: $e");
         setState(() {
@@ -280,6 +297,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               selectedLocation.address ?? 'Selected Location';
           _cardData.locationEnabled.value = true;
         });
+        // Still try to auto-categorize
+        await _autoCategorizeForNewLocation(selectedLocation);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error updating location details: $e')),
@@ -287,6 +306,39 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
         }
       }
     }
+  }
+
+  /// Auto-set Color Category to "Want to go" and Primary Category based on location name.
+  Future<void> _autoCategorizeForNewLocation(Location location) async {
+    final locationName = location.displayName ?? location.getPlaceName();
+    print('🏷️ ADD_MODAL: Auto-categorizing for "$locationName"');
+
+    final result = await _categoryAutoAssignService.autoCategorizeForNewLocation(
+      locationName: locationName,
+      userCategories: _currentUserCategories,
+      colorCategories: _currentColorCategories,
+      placeTypes: location.placeTypes, // Use stored placeTypes for better accuracy
+      placeId: location.placeId, // API fallback if placeTypes not stored
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      // Set Color Category to "Want to go" if found
+      if (result.colorCategoryId != null) {
+        _cardData.selectedColorCategoryId = result.colorCategoryId;
+        print('   ✅ Color Category set to "Want to go"');
+      }
+
+      // Set Primary Category based on location name
+      if (result.primaryCategoryId != null) {
+        _cardData.selectedCategoryId = result.primaryCategoryId;
+        final categoryName = _currentUserCategories
+            .firstWhereOrNull((c) => c.id == result.primaryCategoryId)
+            ?.name;
+        print('   ✅ Primary Category set to "$categoryName"');
+      }
+    });
   }
 
   Future<void> _showCategorieselectionDialog() async {

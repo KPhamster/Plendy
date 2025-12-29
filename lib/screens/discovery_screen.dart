@@ -44,9 +44,14 @@ class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
     super.key,
     this.initialShareToken,
+    this.onExperienceSaved,
   });
 
   final String? initialShareToken;
+  
+  /// Callback triggered when an experience is successfully saved from Discovery.
+  /// Use this to refresh Collections or other screens.
+  final VoidCallback? onExperienceSaved;
 
   @override
   State<DiscoveryScreen> createState() => DiscoveryScreenState();
@@ -2496,6 +2501,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     _DiscoveryFeedItem item, {
     List<Experience>? seedExperiences,
   }) async {
+    final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
     final List<Experience> linkedExperiences = List<Experience>.from(
         seedExperiences ?? await _getLinkedExperiencesForMedia(item.mediaUrl));
 
@@ -2506,15 +2512,42 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       return [_buildExperienceDraft(item.experience)];
     }
 
-    final bool alreadyContainsPreview = dedupedExperiences.any(
+    // Filter experiences: only keep ones the current user can edit (owns or has editor access)
+    // For experiences owned by others, convert them to drafts (strip the ID) so user gets a copy
+    final List<Experience> editableExperiences = [];
+    for (final exp in dedupedExperiences) {
+      final bool canEdit = currentUserId != null &&
+          (exp.createdBy == currentUserId ||
+              exp.editorUserIds.contains(currentUserId));
+      if (canEdit) {
+        // User can edit this experience - keep it with its ID
+        editableExperiences.add(exp);
+      } else {
+        // User cannot edit - convert to draft (new experience) by stripping the ID
+        // Also clear category IDs since they belong to the other user's categories
+        // Note: Using empty string for colorCategoryId since copyWith doesn't have a clear flag
+        // and the modal checks `isNotEmpty` before using it
+        editableExperiences.add(exp.copyWith(
+          id: '', // Clear ID so it creates a new experience
+          createdBy: null, // Clear ownership
+          editorUserIds: const [], // Clear editor list
+          clearCategoryId: true, // Clear category (belongs to other user)
+          colorCategoryId: '', // Clear color category (empty string bypasses isNotEmpty check)
+          otherCategories: const [], // Clear other categories
+          otherColorCategoryIds: const [], // Clear other color categories
+        ));
+      }
+    }
+
+    final bool alreadyContainsPreview = editableExperiences.any(
       (exp) => _experienceMatchesPublic(exp, item.experience),
     );
     if (alreadyContainsPreview) {
-      return dedupedExperiences;
+      return editableExperiences;
     }
 
     final Experience draft = _buildExperienceDraft(item.experience);
-    return [...dedupedExperiences, draft];
+    return [...editableExperiences, draft];
   }
 
   Future<void> _openSaveExperiencesSheet({
@@ -2546,6 +2579,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(resultMessage)),
     );
+
+    // Notify listeners (e.g., Collections screen) that an experience was saved
+    widget.onExperienceSaved?.call();
   }
 
   Future<List<Experience>> _getLinkedExperiencesForMedia(String mediaUrl) {

@@ -45,7 +45,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _selectedIndex = widget.initialIndex;
     _pageController = PageController(initialPage: _selectedIndex);
     _screens = [
-      DiscoveryScreen(key: _discoveryKey),
+      DiscoveryScreen(
+        key: _discoveryKey,
+        onExperienceSaved: _refreshCollections,
+      ),
       CollectionsScreen(
         key: _collectionsKey,
         onLoadingChanged: _handleCollectionsLoadingChanged,
@@ -213,6 +216,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (discoveryState != null) {
       await discoveryState.refreshFeed();
     }
+  }
+
+  /// Refresh collections data (called when an experience is saved from Discovery)
+  void _refreshCollections() {
+    _collectionsKey.currentState?.refreshData();
   }
 
   void _handleCollectionsLoadingChanged(bool isLoading) {

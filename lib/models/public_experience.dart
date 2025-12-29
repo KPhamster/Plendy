@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'experience.dart'; // Import Location definition
@@ -19,6 +21,8 @@ class PublicExperience {
   final List<String> thumbsDownUserIds;
   // Category icon (emoji) derived from experiences with the same placeID
   final String? icon;
+  // Google Places API types for auto-categorization
+  final List<String>? placeTypes;
 
   PublicExperience({
     required this.id,
@@ -33,6 +37,7 @@ class PublicExperience {
     this.thumbsUpUserIds = const [],
     this.thumbsDownUserIds = const [],
     this.icon,
+    this.placeTypes,
   });
 
   // CopyWith method for immutability
@@ -49,6 +54,7 @@ class PublicExperience {
     List<String>? thumbsUpUserIds,
     List<String>? thumbsDownUserIds,
     String? icon,
+    List<String>? placeTypes,
   }) {
     return PublicExperience(
       id: id ?? this.id,
@@ -63,6 +69,7 @@ class PublicExperience {
       thumbsUpUserIds: thumbsUpUserIds ?? this.thumbsUpUserIds,
       thumbsDownUserIds: thumbsDownUserIds ?? this.thumbsDownUserIds,
       icon: icon ?? this.icon,
+      placeTypes: placeTypes ?? this.placeTypes,
     );
   }
 
@@ -80,6 +87,7 @@ class PublicExperience {
       'thumbsUpUserIds': thumbsUpUserIds,
       'thumbsDownUserIds': thumbsDownUserIds,
       'icon': icon,
+      'placeTypes': placeTypes,
       // id is not stored in the document data itself
     };
   }
@@ -102,6 +110,7 @@ class PublicExperience {
       thumbsUpUserIds: List<String>.from(data['thumbsUpUserIds'] ?? []),
       thumbsDownUserIds: List<String>.from(data['thumbsDownUserIds'] ?? []),
       icon: data['icon'] as String?,
+      placeTypes: (data['placeTypes'] as List<dynamic>?)?.cast<String>(),
     );
   }
 
@@ -121,6 +130,7 @@ class PublicExperience {
       thumbsUpUserIds: List<String>.from(map['thumbsUpUserIds'] ?? []),
       thumbsDownUserIds: List<String>.from(map['thumbsDownUserIds'] ?? []),
       icon: map['icon'] as String?,
+      placeTypes: (map['placeTypes'] as List<dynamic>?)?.cast<String>(),
     );
   }
   
@@ -141,11 +151,16 @@ class PublicExperience {
     final List<String> mediaPaths =
         allMediaPaths.where((path) => path.isNotEmpty).toList();
 
+    // Include placeTypes in the location for auto-categorization
+    final locationWithPlaceTypes = placeTypes != null && placeTypes!.isNotEmpty
+        ? location.copyWith(placeTypes: placeTypes)
+        : location;
+
     return Experience(
       id: '',
       name: name,
       description: '',
-      location: location,
+      location: locationWithPlaceTypes,
       categoryId: null,
       yelpUrl: yelpUrl,
       googleUrl: null,
@@ -184,11 +199,18 @@ class PublicExperience {
     final String baseId =
         id.isNotEmpty ? id : (placeID.isNotEmpty ? placeID : 'public_exp');
 
-    return allMediaPaths.asMap().entries
-        // Filter any empty or whitespace-only entries
-        .where((entry) => entry.value.trim().isNotEmpty)
-        .map((entry) {
-      final String trimmedPath = entry.value.trim();
+    final LinkedHashMap<String, String> uniquePaths =
+        LinkedHashMap<String, String>();
+    for (final path in allMediaPaths) {
+      final String trimmedPath = path.trim();
+      if (trimmedPath.isEmpty) continue;
+      final String normalizedKey = _normalizeMediaPathForComparison(trimmedPath);
+      if (normalizedKey.isEmpty) continue;
+      uniquePaths.putIfAbsent(normalizedKey, () => trimmedPath);
+    }
+
+    return uniquePaths.values.toList().asMap().entries.map((entry) {
+      final String trimmedPath = entry.value;
       final int index = entry.key;
       return SharedMediaItem(
         id: 'public_${baseId}_$index',
@@ -199,6 +221,131 @@ class PublicExperience {
         isPrivate: false,
       );
     }).toList();
+  }
+
+  static String _normalizeMediaPathForComparison(String path) {
+    final String trimmed = path.trim();
+    if (trimmed.isEmpty) return '';
+
+    final Uri? uri = _tryParseUri(trimmed);
+    if (uri == null || uri.host.isEmpty) {
+      return _stripTrailingSlash(trimmed);
+    }
+
+    final String host = _normalizeHost(uri.host);
+    final String scheme = uri.scheme.isNotEmpty ? uri.scheme.toLowerCase() : 'https';
+    final String rawPath = uri.path.isEmpty ? '/' : uri.path;
+
+    if (_isInstagramHost(host)) {
+      final String normalizedHost = _normalizeSocialHost(host);
+      final String normalizedPath = _normalizeInstagramPath(rawPath);
+      return '$scheme://$normalizedHost$normalizedPath';
+    }
+
+    if (_isTikTokHost(host) || _isFacebookHost(host)) {
+      final String normalizedHost = _normalizeSocialHost(host);
+      final String normalizedPath = _stripTrailingSlash(rawPath);
+      return '$scheme://$normalizedHost$normalizedPath';
+    }
+
+    final String? youtubeKey = _extractYouTubeKey(uri, host);
+    if (youtubeKey != null) {
+      return youtubeKey;
+    }
+
+    return _stripTrailingSlash(trimmed);
+  }
+
+  static Uri? _tryParseUri(String value) {
+    final Uri? direct = Uri.tryParse(value);
+    if (direct != null && direct.host.isNotEmpty) {
+      return direct;
+    }
+    final Uri? withScheme = Uri.tryParse('https://$value');
+    if (withScheme != null && withScheme.host.isNotEmpty) {
+      return withScheme;
+    }
+    return direct;
+  }
+
+  static String _normalizeHost(String host) {
+    String normalized = host.toLowerCase();
+    if (normalized.startsWith('www.')) {
+      normalized = normalized.substring(4);
+    }
+    return normalized;
+  }
+
+  static String _normalizeSocialHost(String host) {
+    String normalized = _normalizeHost(host);
+    if (normalized.startsWith('m.')) {
+      normalized = normalized.substring(2);
+    }
+    return normalized;
+  }
+
+  static bool _isInstagramHost(String host) {
+    return host.contains('instagram.com');
+  }
+
+  static bool _isTikTokHost(String host) {
+    return host.contains('tiktok.com');
+  }
+
+  static bool _isFacebookHost(String host) {
+    return host.contains('facebook.com') ||
+        host == 'fb.com' ||
+        host == 'fb.watch';
+  }
+
+  static String? _extractYouTubeKey(Uri uri, String host) {
+    if (!host.contains('youtube.com') && !host.contains('youtu.be')) {
+      return null;
+    }
+
+    final List<String> segments =
+        uri.pathSegments.where((segment) => segment.isNotEmpty).toList();
+
+    if (host.contains('youtu.be') && segments.isNotEmpty) {
+      return 'youtube:${segments.first}';
+    }
+
+    if (segments.isEmpty) return null;
+
+    if (segments.first == 'watch') {
+      final String? videoId = uri.queryParameters['v'];
+      if (videoId != null && videoId.isNotEmpty) {
+        return 'youtube:$videoId';
+      }
+    }
+
+    if (segments.first == 'shorts' && segments.length > 1) {
+      return 'youtube:${segments[1]}';
+    }
+
+    if (segments.first == 'embed' && segments.length > 1) {
+      return 'youtube:${segments[1]}';
+    }
+
+    return null;
+  }
+
+  static String _normalizeInstagramPath(String path) {
+    String normalized = _stripTrailingSlash(path);
+    if (normalized.contains('/reel/')) {
+      normalized = normalized.replaceFirst('/reel/', '/p/');
+    }
+    if (normalized.contains('/tv/')) {
+      normalized = normalized.replaceFirst('/tv/', '/p/');
+    }
+    return _stripTrailingSlash(normalized);
+  }
+
+  static String _stripTrailingSlash(String value) {
+    if (value.length > 1 && value.endsWith('/')) {
+      return value.substring(0, value.length - 1);
+    }
+    return value;
   }
 
   // Optional: toString for debugging
@@ -225,7 +372,8 @@ class PublicExperience {
         other.thumbsDownCount == thumbsDownCount &&
         ListEquality().equals(other.thumbsUpUserIds, thumbsUpUserIds) &&
         ListEquality().equals(other.thumbsDownUserIds, thumbsDownUserIds) &&
-        other.icon == icon;
+        other.icon == icon &&
+        ListEquality().equals(other.placeTypes, placeTypes);
   }
 
   @override
@@ -242,7 +390,8 @@ class PublicExperience {
         thumbsDownCount.hashCode ^
         ListEquality().hash(thumbsUpUserIds) ^
         ListEquality().hash(thumbsDownUserIds) ^
-        icon.hashCode;
+        icon.hashCode ^
+        ListEquality().hash(placeTypes);
   }
 }
 
