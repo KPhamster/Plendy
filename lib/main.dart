@@ -1808,13 +1808,15 @@ class _MyAppState extends State<MyApp> {
         
         // Use currentUser if stream hasn't emitted yet (avoid waiting state)
         final User? effectiveUser = snapshot.hasData ? snapshot.data : authService.currentUser;
-        final bool isWaitingWithNoUser = snapshot.connectionState == ConnectionState.waiting && effectiveUser == null;
         
-        print("AUTH FLOW: effectiveUser=${effectiveUser?.uid}, isWaitingWithNoUser=$isWaitingWithNoUser");
+        print("AUTH FLOW: effectiveUser=${effectiveUser?.uid}");
         
-        if (isWaitingWithNoUser) {
-          print("AUTH FLOW: Showing loading indicator (waiting for auth state, no current user)");
-          return const Center(child: CircularProgressIndicator());
+        // If stream is waiting but we have a current user, use that user
+        // If stream is waiting and no current user, go directly to AuthScreen
+        // (no need to wait - there's no user to load)
+        if (snapshot.connectionState == ConnectionState.waiting && effectiveUser == null) {
+          print("AUTH FLOW: No user detected - showing AuthScreen immediately");
+          return const AuthScreen();
         }
 
         // Initialize/cleanup NotificationStateService based on auth state

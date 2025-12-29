@@ -383,7 +383,10 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
     final updatedCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
       backgroundColor: Colors.white,
-      builder: (context) => AddColorCategoryModal(categoryToEdit: category),
+      builder: (context) => AddColorCategoryModal(
+        categoryToEdit: category,
+        isNameLocked: category.isDefaultCategory,
+      ),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),

@@ -8,6 +8,7 @@ import '../models/experience_card_data.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../services/category_ordering_service.dart';
+import '../services/category_auto_assign_service.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import '../widgets/select_saved_experience_modal_content.dart';
@@ -32,6 +33,8 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
   final ExperienceService _experienceService = ExperienceService();
   final CategoryOrderingService _categoryOrderingService =
       CategoryOrderingService();
+  final CategoryAutoAssignService _categoryAutoAssignService =
+      CategoryAutoAssignService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -67,6 +70,9 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
           _addExperienceCard(fromExperience: experience);
         }
       }
+      
+      // Auto-categorize new draft experiences that have location data
+      await _autoCategorizeNewDrafts();
     } catch (e) {
       _showSnackBar('Unable to load categories: $e');
     } finally {
@@ -74,6 +80,63 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
         setState(() {
           _isLoading = false;
         });
+      }
+    }
+  }
+  
+  /// Auto-categorize new draft experiences that already have location data.
+  /// This is called when the modal opens with initial experiences from Discovery.
+  Future<void> _autoCategorizeNewDrafts() async {
+    if (_userCategories.isEmpty) return;
+    
+    for (final card in _experienceCards) {
+      // Only auto-categorize new drafts (no existing ID) with location data
+      final isNewDraft = card.existingExperienceId == null || 
+          card.existingExperienceId!.isEmpty;
+      final hasLocation = card.selectedLocation != null;
+      
+      if (!isNewDraft || !hasLocation) continue;
+      
+      // Get location name for category determination
+      final locationName = card.selectedLocation?.displayName ?? 
+          card.selectedLocation?.getPlaceName() ?? 
+          card.titleController.text;
+      
+      if (locationName.isEmpty) continue;
+      
+      // Get placeTypes from location for better category matching
+      final placeTypes = card.selectedLocation?.placeTypes;
+      final placeId = card.selectedLocation?.placeId;
+      
+      // Determine best primary category - use placeTypes if available (from PublicExperience/Location)
+      // If no placeTypes but we have placeId, the service will fetch from API
+      String? bestCategoryId;
+      if (placeTypes != null && placeTypes.isNotEmpty) {
+        print('📍 AUTO-CATEGORY: Using stored placeTypes for "$locationName": ${placeTypes.take(5).join(', ')}');
+        bestCategoryId = await _categoryAutoAssignService
+            .determineBestCategoryByPlaceTypes(locationName, placeTypes, _userCategories);
+      } else if (placeId != null && placeId.isNotEmpty) {
+        print('📍 AUTO-CATEGORY: No stored placeTypes for "$locationName", will fetch from API');
+        // Fetch placeTypes from API as fallback
+        final result = await _categoryAutoAssignService.autoCategorizeForNewLocation(
+          locationName: locationName,
+          userCategories: _userCategories,
+          colorCategories: _userColorCategories,
+          placeTypes: null,
+          placeId: placeId,
+        );
+        bestCategoryId = result.primaryCategoryId;
+      } else {
+        print('📍 AUTO-CATEGORY: No placeTypes or placeId, using location name matching');
+        bestCategoryId = await _categoryAutoAssignService
+            .determineBestCategoryByLocationName(locationName, _userCategories);
+      }
+      
+      if (bestCategoryId != null && mounted) {
+        setState(() {
+          card.selectedCategoryId = bestCategoryId;
+        });
+        print('📍 AUTO-CATEGORY: Set primary category for "$locationName" to ID: $bestCategoryId');
       }
     }
   }
@@ -154,7 +217,18 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     }
     if (card.selectedColorCategoryId == null &&
         _userColorCategories.isNotEmpty) {
-      card.selectedColorCategoryId = _userColorCategories.first.id;
+      // For new experiences, default to "Want to go" color category if available
+      final bool isNewExperience = card.existingExperienceId == null ||
+          card.existingExperienceId!.isEmpty;
+      if (isNewExperience) {
+        final wantToGoCategory = _userColorCategories.firstWhere(
+          (cat) => cat.name.toLowerCase() == 'want to go',
+          orElse: () => _userColorCategories.first,
+        );
+        card.selectedColorCategoryId = wantToGoCategory.id;
+      } else {
+        card.selectedColorCategoryId = _userColorCategories.first.id;
+      }
     }
   }
 
@@ -221,6 +295,49 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
       if ((selectedLocation.website ?? '').isNotEmpty &&
           card.websiteController.text.trim().isEmpty) {
         card.websiteController.text = selectedLocation.website!;
+      }
+    });
+
+    // Auto-set categories for new experiences (those without an existing ID)
+    final bool isNewExperience = card.existingExperienceId == null ||
+        card.existingExperienceId!.isEmpty;
+    if (isNewExperience) {
+      await _autoCategorizeCardForNewLocation(card, selectedLocation);
+    }
+  }
+
+  /// Auto-set Color Category to "Want to go" and Primary Category based on location name.
+  Future<void> _autoCategorizeCardForNewLocation(
+    ExperienceCardData card,
+    Location location,
+  ) async {
+    final locationName = location.displayName ?? location.getPlaceName();
+    print('🏷️ SAVE_MODAL: Auto-categorizing for "$locationName"');
+
+    final categorization = await _categoryAutoAssignService.autoCategorizeForNewLocation(
+      locationName: locationName,
+      userCategories: _userCategories,
+      colorCategories: _userColorCategories,
+      placeTypes: location.placeTypes, // Use stored placeTypes for better accuracy
+      placeId: location.placeId, // API fallback if placeTypes not stored
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      // Set Color Category to "Want to go" if found
+      if (categorization.colorCategoryId != null) {
+        card.selectedColorCategoryId = categorization.colorCategoryId;
+        print('   ✅ Color Category set to "Want to go"');
+      }
+
+      // Set Primary Category based on location name
+      if (categorization.primaryCategoryId != null) {
+        card.selectedCategoryId = categorization.primaryCategoryId;
+        final categoryName = _userCategories
+            .firstWhereOrNull((c) => c.id == categorization.primaryCategoryId)
+            ?.name;
+        print('   ✅ Primary Category set to "$categoryName"');
       }
     });
   }

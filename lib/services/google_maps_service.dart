@@ -499,9 +499,9 @@ class GoogleMapsService {
         return defaultLocation;
       }
 
-      // Include 'website', 'rating', 'user_ratings_total' in the fields parameter
+      // Include 'website', 'rating', 'user_ratings_total', 'types' in the fields parameter
       final url =
-          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity,website,photos,rating,user_ratings_total&key=$apiKey';
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity,website,photos,rating,user_ratings_total,types&key=$apiKey';
 
       final response = await _dio.get(url);
 
@@ -562,6 +562,9 @@ class GoogleMapsService {
             // Get rating and userRatingCount
             final double? rating = (result['rating'] as num?)?.toDouble();
             final int? userRatingCount = result['user_ratings_total'] as int?;
+            
+            // Get place types for auto-categorization
+            final List<String>? placeTypes = (result['types'] as List<dynamic>?)?.cast<String>();
 
             // Get the first photo reference if available
             String? photoReference;
@@ -594,6 +597,7 @@ class GoogleMapsService {
               website: websiteUrl, // Save the website URL directly
               rating: rating, // ADDED
               userRatingCount: userRatingCount, // ADDED
+              placeTypes: placeTypes, // ADDED: For auto-categorization
             );
 
             // 2. Store successful result in cache before returning

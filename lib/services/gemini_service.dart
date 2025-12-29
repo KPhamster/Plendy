@@ -4284,6 +4284,40 @@ If you cannot find reliable information about this specific place, return:
   }
 
   // ============ END AI RERANKING METHODS ============
+
+  /// Generate a simple text response without any grounding
+  /// Useful for quick text analysis, categorization, or simple Q&A
+  /// 
+  /// [prompt] - The prompt to send to Gemini
+  /// 
+  /// Returns the text response, or null if the call fails
+  Future<String?> generateSimpleText(String prompt) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI SIMPLE: API key not configured');
+      return null;
+    }
+
+    try {
+      final response = await _callGeminiDirect(prompt);
+      if (response == null) return null;
+
+      // Extract text from response
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      if (content == null) return null;
+
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+
+      return parts.first['text'] as String?;
+    } catch (e) {
+      print('❌ GEMINI SIMPLE ERROR: $e');
+      return null;
+    }
+  }
 }
 
 /// Simple class to hold extracted location info from images

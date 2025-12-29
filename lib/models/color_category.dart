@@ -122,9 +122,35 @@ class ColorCategory extends Equatable {
   // --- ADDED: Default Color Categories ---
   static const Map<String, String> defaultColorCategories = {
     'Want to go': 'EB2727', // Red
-    'Been here already': '359D35', // Green
+    'Been here': '359D35', // Green
     'Favorite': 'FF899D', // Pink
   };
+
+  /// Legacy default category names that should also be locked.
+  /// These are old default names that existing users may still have.
+  static const List<String> _legacyDefaultNames = [
+    'Been here already',
+  ];
+
+  /// Returns true if the given name is one of the default color category names.
+  /// Default category names cannot be changed by users.
+  static bool isDefaultCategoryName(String name) {
+    final lowerName = name.toLowerCase();
+    // Check current defaults
+    if (defaultColorCategories.keys
+        .any((defaultName) => defaultName.toLowerCase() == lowerName)) {
+      return true;
+    }
+    // Check legacy defaults
+    if (_legacyDefaultNames
+        .any((legacyName) => legacyName.toLowerCase() == lowerName)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Returns true if this category is a default color category (based on name).
+  bool get isDefaultCategory => isDefaultCategoryName(name);
   // --- END ADDED ---
 
   // --- ADDED: Initializer for default Color Categories ---

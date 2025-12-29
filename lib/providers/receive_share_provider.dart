@@ -244,6 +244,10 @@ class ReceiveShareProvider extends ChangeNotifier {
         // print("PROVIDER_DEBUG: Current websiteController text: '${targetCard.websiteController.text}'");
 
         targetCard.selectedLocation = location;
+        // Copy placeTypes from location for auto-categorization
+        if (location.placeTypes != null && location.placeTypes!.isNotEmpty) {
+          targetCard.placeTypes = location.placeTypes;
+        }
         // Update search query only if it's empty or location address is different
         if (targetCard.searchController.text.isEmpty ||
             targetCard.searchController.text != (location.address ?? '')) {
@@ -432,6 +436,10 @@ class ReceiveShareProvider extends ChangeNotifier {
       // Update controllers and properties directly on the card object
       card.titleController.text = title;
       card.selectedLocation = location; // This is your Location model instance
+      // Copy placeTypes from location for auto-categorization
+      if (location.placeTypes != null && location.placeTypes!.isNotEmpty) {
+        card.placeTypes = location.placeTypes;
+      }
 
       if (yelpUrl != null) {
         card.yelpUrlController.text = yelpUrl;
@@ -560,7 +568,11 @@ class ReceiveShareProvider extends ChangeNotifier {
       placeId: locationData.placeId,
       displayName: locationData.name,
       website: locationData.website,
+      placeTypes: locationData.placeTypes, // Include place types for auto-categorization
     );
+    
+    // Store placeTypes in card for save flow
+    card.placeTypes = locationData.placeTypes;
     
     if (locationData.address != null) {
       card.searchController.text = locationData.address!;

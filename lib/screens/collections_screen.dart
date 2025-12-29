@@ -7007,7 +7007,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
   Future<void> _showEditSingleColorCategoryModal(ColorCategory category) async {
     final result = await showModalBottomSheet<ColorCategory>(
       context: context,
-      builder: (_) => AddColorCategoryModal(categoryToEdit: category),
+      builder: (_) => AddColorCategoryModal(
+        categoryToEdit: category,
+        isNameLocked: category.isDefaultCategory,
+      ),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -9463,6 +9466,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
       // The content will just be empty until experiences are available
       unawaited(_loadGroupedContent());
     }
+  }
+
+  /// Public method to refresh all data (categories, experiences, content).
+  /// Call this when data is modified from outside the Collections screen
+  /// (e.g., after saving from Discovery).
+  Future<void> refreshData() async {
+    await _loadData();
   }
 
   Future<void> _loadGroupedContent() async {

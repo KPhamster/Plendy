@@ -70,6 +70,10 @@ class ExperienceCardData {
   List<String> selectedOtherCategoryIds = [];
   /// Selected IDs for "other" color categories
   List<String> selectedOtherColorCategoryIds = [];
+  
+  /// Google Places API types for auto-categorization
+  /// This is populated from extracted location data or Places API responses
+  List<String>? placeTypes;
 
   ExperienceCardData();
 

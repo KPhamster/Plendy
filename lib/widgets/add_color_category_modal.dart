@@ -9,7 +9,15 @@ import 'package:plendy/utils/haptic_feedback.dart';
 class AddColorCategoryModal extends StatefulWidget {
   final ColorCategory? categoryToEdit;
 
-  const AddColorCategoryModal({super.key, this.categoryToEdit});
+  /// If true, the name field is locked and cannot be edited.
+  /// Used for default color categories whose names should not change.
+  final bool isNameLocked;
+
+  const AddColorCategoryModal({
+    super.key,
+    this.categoryToEdit,
+    this.isNameLocked = false,
+  });
 
   @override
   State<AddColorCategoryModal> createState() => _AddColorCategoryModalState();
@@ -207,20 +215,30 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
               const SizedBox(height: 8),
               TextFormField(
                 controller: _nameController,
+                enabled: !widget.isNameLocked,
                 decoration: InputDecoration(
-                  labelText: _isEditing
-                      ? 'Edit category name'
-                      : 'Name your new color category',
+                  labelText: widget.isNameLocked
+                      ? 'Category name (locked)'
+                      : _isEditing
+                          ? 'Edit category name'
+                          : 'Name your new color category',
+                  helperText: widget.isNameLocked
+                      ? 'Default category names cannot be changed'
+                      : null,
                   border: const OutlineInputBorder(),
                   filled: true,
-                  fillColor: Colors.white,
+                  fillColor: widget.isNameLocked ? Colors.grey[100] : Colors.white,
                 ),
                 textCapitalization: TextCapitalization.sentences,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return 'Please enter a category name';
                   }
-                  // Optional: Add validation to check if name already exists (might need service call)
+                  // Prevent creating new categories with default names
+                  if (!_isEditing &&
+                      ColorCategory.isDefaultCategoryName(value.trim())) {
+                    return 'This name is reserved for a default category';
+                  }
                   return null;
                 },
               ),

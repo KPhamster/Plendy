@@ -121,6 +121,8 @@ class UserCategory extends Equatable {
     'Event': '🎉',
     'Attraction': '⭐',
     'Date Spot': '💖',
+    'Stay': '🏨',
+    'Dessert': '🍰',
     'Other': '📍', // Generic location pin for 'Other'
   };
 
