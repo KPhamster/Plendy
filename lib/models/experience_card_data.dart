@@ -75,6 +75,10 @@ class ExperienceCardData {
   /// This is populated from extracted location data or Places API responses
   List<String>? placeTypes;
 
+  /// Fetched description from Google Places API (editorialSummary/reviewSummary/generativeSummary)
+  /// This is used as the description when user hasn't provided their own notes
+  String? fetchedDescription;
+
   ExperienceCardData();
 
   /// Dispose resources tied to the card instance.

@@ -1008,6 +1008,29 @@ class ExperienceService {
     }
   }
 
+  /// Updates the description field of a PublicExperience document.
+  /// Used for backfilling descriptions from Places API for legacy experiences.
+  Future<bool> updatePublicExperienceDescription(
+      String publicExperienceId, String description) async {
+    if (publicExperienceId.isEmpty) {
+      print('updatePublicExperienceDescription: Invalid arguments (ID empty)');
+      return false;
+    }
+
+    try {
+      await _publicExperiencesCollection.doc(publicExperienceId).update({
+        'description': description,
+      });
+      print(
+          'updatePublicExperienceDescription: Successfully updated description for ID: $publicExperienceId');
+      return true;
+    } catch (e) {
+      print(
+          'updatePublicExperienceDescription: Error updating description for ID $publicExperienceId: $e');
+      return false;
+    }
+  }
+
   // ======= Shared Media Item Operations =======
 
   /// Finds a single SharedMediaItem document by its path.
@@ -1133,6 +1156,7 @@ class ExperienceService {
           yelpUrl: experienceTemplate.yelpUrl,
           website: experienceTemplate.website,
           allMediaPaths: [mediaPath],
+          description: experienceTemplate.description.isNotEmpty ? experienceTemplate.description : null,
         );
         await createPublicExperience(newPublicExperience);
         debugPrint(
@@ -3545,6 +3569,7 @@ class ExperienceService {
           thumbsDownCount: initialThumbsDown,
           thumbsUpUserIds: initialThumbsUpUserIds,
           thumbsDownUserIds: initialThumbsDownUserIds,
+          description: experienceTemplate.description.isNotEmpty ? experienceTemplate.description : null,
         );
 
         await createPublicExperience(newPublicExperience);

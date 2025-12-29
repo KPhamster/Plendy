@@ -23,6 +23,8 @@ class PublicExperience {
   final String? icon;
   // Google Places API types for auto-categorization
   final List<String>? placeTypes;
+  // Editorial/review/generative summary from Google Places API (cached)
+  final String? description;
 
   PublicExperience({
     required this.id,
@@ -38,6 +40,7 @@ class PublicExperience {
     this.thumbsDownUserIds = const [],
     this.icon,
     this.placeTypes,
+    this.description,
   });
 
   // CopyWith method for immutability
@@ -55,6 +58,7 @@ class PublicExperience {
     List<String>? thumbsDownUserIds,
     String? icon,
     List<String>? placeTypes,
+    String? description,
   }) {
     return PublicExperience(
       id: id ?? this.id,
@@ -70,6 +74,7 @@ class PublicExperience {
       thumbsDownUserIds: thumbsDownUserIds ?? this.thumbsDownUserIds,
       icon: icon ?? this.icon,
       placeTypes: placeTypes ?? this.placeTypes,
+      description: description ?? this.description,
     );
   }
 
@@ -88,6 +93,7 @@ class PublicExperience {
       'thumbsDownUserIds': thumbsDownUserIds,
       'icon': icon,
       'placeTypes': placeTypes,
+      'description': description,
       // id is not stored in the document data itself
     };
   }
@@ -111,6 +117,7 @@ class PublicExperience {
       thumbsDownUserIds: List<String>.from(data['thumbsDownUserIds'] ?? []),
       icon: data['icon'] as String?,
       placeTypes: (data['placeTypes'] as List<dynamic>?)?.cast<String>(),
+      description: data['description'] as String?,
     );
   }
 
@@ -131,6 +138,7 @@ class PublicExperience {
       thumbsDownUserIds: List<String>.from(map['thumbsDownUserIds'] ?? []),
       icon: map['icon'] as String?,
       placeTypes: (map['placeTypes'] as List<dynamic>?)?.cast<String>(),
+      description: map['description'] as String?,
     );
   }
   
@@ -159,7 +167,7 @@ class PublicExperience {
     return Experience(
       id: '',
       name: name,
-      description: '',
+      description: description ?? '',
       location: locationWithPlaceTypes,
       categoryId: null,
       yelpUrl: yelpUrl,
@@ -351,7 +359,7 @@ class PublicExperience {
   // Optional: toString for debugging
   @override
   String toString() {
-    return 'PublicExperience(id: $id, name: $name, placeID: $placeID, location: ${location.address}, paths: ${allMediaPaths.length}, thumbsUp: $thumbsUpCount, thumbsDown: $thumbsDownCount)';
+    return 'PublicExperience(id: $id, name: $name, placeID: $placeID, location: ${location.address}, paths: ${allMediaPaths.length}, thumbsUp: $thumbsUpCount, thumbsDown: $thumbsDownCount, description: ${description?.substring(0, description!.length > 30 ? 30 : description!.length) ?? 'null'})';
   }
 
   // Optional: Equality and hashCode
@@ -373,7 +381,8 @@ class PublicExperience {
         ListEquality().equals(other.thumbsUpUserIds, thumbsUpUserIds) &&
         ListEquality().equals(other.thumbsDownUserIds, thumbsDownUserIds) &&
         other.icon == icon &&
-        ListEquality().equals(other.placeTypes, placeTypes);
+        ListEquality().equals(other.placeTypes, placeTypes) &&
+        other.description == description;
   }
 
   @override
@@ -391,7 +400,8 @@ class PublicExperience {
         ListEquality().hash(thumbsUpUserIds) ^
         ListEquality().hash(thumbsDownUserIds) ^
         icon.hashCode ^
-        ListEquality().hash(placeTypes);
+        ListEquality().hash(placeTypes) ^
+        description.hashCode;
   }
 }
 

@@ -665,6 +665,83 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
 
+  /// Backfills the description field if it's empty for legacy experiences.
+  /// Fetches summary from Places API (editorialSummary → reviewSummary → generativeSummary)
+  /// and saves it to both the Experience and PublicExperience documents.
+  Future<void> _backfillDescriptionIfNeeded() async {
+    final String? placeId = _currentExperience.location.placeId;
+    if (placeId == null || placeId.isEmpty) return;
+
+    // Check if experience description needs backfilling
+    final bool experienceNeedsBackfill = _currentExperience.description.isEmpty;
+    
+    // Check if public experience description needs backfilling (will be checked after loading)
+    final bool publicExperienceNeedsBackfill = 
+        _publicExperience != null && 
+        (_publicExperience!.description == null || _publicExperience!.description!.isEmpty);
+
+    // If neither needs backfilling, skip
+    if (!experienceNeedsBackfill && !publicExperienceNeedsBackfill) {
+      print('ExperiencePageScreen: Description backfill not needed - already has content.');
+      return;
+    }
+
+    print('ExperiencePageScreen: Description is empty, attempting to backfill from Places API...');
+
+    try {
+      // Fetch summary from Places API
+      final String? fetchedSummary = await _googleMapsService.fetchPlaceSummary(placeId);
+      
+      if (fetchedSummary == null || fetchedSummary.isEmpty) {
+        print('ExperiencePageScreen: No summary available from Places API for backfill.');
+        return;
+      }
+
+      print('ExperiencePageScreen: Fetched summary for backfill: ${fetchedSummary.substring(0, fetchedSummary.length > 50 ? 50 : fetchedSummary.length)}...');
+
+      // Update Experience document if it needs backfilling and user can edit
+      if (experienceNeedsBackfill && !widget.readOnlyPreview && _canEditExperience()) {
+        final Experience updatedExperience = _currentExperience.copyWith(
+          description: fetchedSummary,
+          updatedAt: DateTime.now(),
+        );
+
+        try {
+          await _experienceService.updateExperience(updatedExperience);
+          if (mounted) {
+            setState(() {
+              _currentExperience = updatedExperience;
+              _didDataChange = true;
+            });
+          }
+          print('ExperiencePageScreen: Successfully backfilled description to Experience document.');
+        } catch (e) {
+          print('ExperiencePageScreen: Error saving backfilled description to Experience: $e');
+        }
+      }
+
+      // Update PublicExperience document if it needs backfilling
+      if (publicExperienceNeedsBackfill && _publicExperience != null) {
+        try {
+          await _experienceService.updatePublicExperienceDescription(
+            _publicExperience!.id,
+            fetchedSummary,
+          );
+          if (mounted) {
+            setState(() {
+              _publicExperience = _publicExperience!.copyWith(description: fetchedSummary);
+            });
+          }
+          print('ExperiencePageScreen: Successfully backfilled description to PublicExperience document.');
+        } catch (e) {
+          print('ExperiencePageScreen: Error saving backfilled description to PublicExperience: $e');
+        }
+      }
+    } catch (e) {
+      print('ExperiencePageScreen: Error during description backfill: $e');
+    }
+  }
+
   // --- ADDED: Method to load public experience for rating counts ---
   Future<void> _loadPublicExperience() async {
     final String? placeId = _currentExperience.location.placeId;
@@ -678,6 +755,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         setState(() {
           _publicExperience = publicExperience;
         });
+        // After loading public experience, check if description needs backfilling
+        _backfillDescriptionIfNeeded();
       }
     } catch (e) {
       debugPrint('ExperiencePageScreen: Error loading public experience: $e');
@@ -932,22 +1011,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         children: [
           // 1. Background Image
           Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                image: _buildHeaderDecorationImage(experience),
-                color: experience.location.photoUrl == null
-                    ? Colors.grey[400] // Placeholder color if no image
-                    : null,
-              ),
-              // Basic placeholder if no image URL
-              child: experience.location.photoUrl == null
-                  ? Center(
-                      child: Icon(
-                      Icons.image_not_supported,
-                      color: Colors.white70,
-                      size: 50,
-                    ))
-                  : null,
+            child: Builder(
+              builder: (context) {
+                final decorationImage = _buildHeaderDecorationImage(experience);
+                final hasImage = decorationImage != null;
+                return Container(
+                  decoration: BoxDecoration(
+                    image: decorationImage,
+                    color: !hasImage
+                        ? Colors.grey[400] // Placeholder color if no image
+                        : null,
+                  ),
+                  // Basic placeholder if no image URL
+                  child: !hasImage
+                      ? Center(
+                          child: Icon(
+                          Icons.image_not_supported,
+                          color: Colors.white70,
+                          size: 50,
+                        ))
+                      : null,
+                );
+              },
             ),
           ),
 
@@ -1613,7 +1698,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // Get formatted values to log them
-    final formattedDescription = getDetail('editorialSummary');
+    // Use saved description from experience if available, otherwise fallback to Places API editorialSummary
+    final String? formattedDescription = (experience.description.isNotEmpty)
+        ? experience.description
+        : getDetail('editorialSummary') as String?;
     // Keep hours/status formatting via dedicated UI rows; avoid unused locals
     final formattedReservable = formatReservable(getDetail('reservable'));
     final formattedParking = formatParking(getDetail('parkingOptions'));
