@@ -1724,4 +1724,115 @@ class GoogleMapsService {
       return null;
     }
   }
+
+  /// Fetches the best available summary for a place using Places API (New).
+  /// Priority: editorialSummary → reviewSummary → generativeSummary
+  /// Returns null if no summary is available.
+  Future<String?> fetchPlaceSummary(String placeId) async {
+    final apiKey = _getApiKey();
+    if (apiKey.isEmpty) {
+      print('❌ PLACE SUMMARY: No API key available');
+      return null;
+    }
+
+    // Request all three summary fields
+    const String fieldMask = 'editorialSummary,reviewSummary,generativeSummary';
+    final url = 'https://places.googleapis.com/v1/places/$placeId';
+
+    print('📝 PLACE SUMMARY: Fetching summaries for Place ID: $placeId');
+
+    try {
+      final response = await _dio.get(
+        url,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': fieldMask,
+          },
+          sendTimeout: Duration(seconds: 10),
+          receiveTimeout: Duration(seconds: 10),
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data as Map<String, dynamic>?;
+        if (data == null) {
+          print('📝 PLACE SUMMARY: Empty response data');
+          return null;
+        }
+
+        // Helper to safely extract text from a summary field
+        String? extractText(dynamic summaryField) {
+          if (summaryField == null) return null;
+          
+          // If it's directly a String, return it
+          if (summaryField is String) {
+            return summaryField.isNotEmpty ? summaryField : null;
+          }
+          
+          // If it's a Map, try to get the 'text' field
+          if (summaryField is Map) {
+            final textValue = summaryField['text'];
+            // 'text' could be a String or another Map with 'text'
+            if (textValue is String && textValue.isNotEmpty) {
+              return textValue;
+            }
+            // Handle nested structure where text itself is a LocalizedText object
+            if (textValue is Map && textValue['text'] is String) {
+              final nestedText = textValue['text'] as String;
+              return nestedText.isNotEmpty ? nestedText : null;
+            }
+          }
+          
+          return null;
+        }
+
+        // Priority 1: editorialSummary (human-written, no AI attribution needed)
+        final editorialText = extractText(data['editorialSummary']);
+        if (editorialText != null) {
+          print('📝 PLACE SUMMARY: Found editorialSummary');
+          return editorialText;
+        }
+
+        // Priority 2: reviewSummary (AI-generated synthesis of reviews)
+        final reviewText = extractText(data['reviewSummary']);
+        if (reviewText != null) {
+          print('📝 PLACE SUMMARY: Found reviewSummary');
+          return reviewText;
+        }
+
+        // Priority 3: generativeSummary (AI-generated place description)
+        if (data['generativeSummary'] != null) {
+          final generativeSummary = data['generativeSummary'];
+          if (generativeSummary is Map) {
+            // Try overview first
+            final overviewText = extractText(generativeSummary['overview']);
+            if (overviewText != null) {
+              print('📝 PLACE SUMMARY: Found generativeSummary.overview');
+              return overviewText;
+            }
+            // Try description as fallback
+            final descriptionText = extractText(generativeSummary['description']);
+            if (descriptionText != null) {
+              print('📝 PLACE SUMMARY: Found generativeSummary.description');
+              return descriptionText;
+            }
+          }
+        }
+
+        print('📝 PLACE SUMMARY: No summaries available for this place');
+        return null;
+      } else {
+        print('❌ PLACE SUMMARY: API Error - Status Code: ${response.statusCode}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ PLACE SUMMARY: DioException - ${e.type}: ${e.message}');
+      return null;
+    } catch (e) {
+      print('❌ PLACE SUMMARY: Generic Exception - $e');
+      return null;
+    }
+  }
 }

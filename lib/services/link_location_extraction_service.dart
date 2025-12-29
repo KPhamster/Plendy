@@ -800,6 +800,7 @@ class LinkLocationExtractionService {
       String? resolvedAddress;
       String? resolvedName;
       String? website;
+      List<String>? placeTypes;
       
       if (placeId != null && placeId.isNotEmpty) {
         print('🔍 PLACES RESOLVE: Getting details for Place ID: $placeId');
@@ -815,19 +816,28 @@ class LinkLocationExtractionService {
           resolvedName = placeDetails.displayName ?? finalResult['description'] as String?;
           website = placeDetails.website;
           
+          // Get place types from Place Details API (preferred) or fall back to autocomplete
+          placeTypes = placeDetails.placeTypes ?? 
+              (finalResult['types'] as List<dynamic>?)?.cast<String>();
+          
           print('✅ PLACES RESOLVE: Got details - "$resolvedName" at $coords');
           if (website != null) {
             print('🌐 PLACES RESOLVE: Got website: $website');
+          }
+          if (placeTypes != null && placeTypes.isNotEmpty) {
+            print('📋 PLACES RESOLVE: Got types: ${placeTypes.take(5).join(", ")}');
           }
         } catch (e) {
           print('⚠️ PLACES RESOLVE: Could not get place details: $e');
           // Fall back to autocomplete data
           resolvedName = finalResult['description'] as String?;
           resolvedAddress = finalResult['address'] as String?;
+          placeTypes = (finalResult['types'] as List<dynamic>?)?.cast<String>();
         }
       } else {
         resolvedName = finalResult['description'] as String?;
         resolvedAddress = finalResult['address'] as String?;
+        placeTypes = (finalResult['types'] as List<dynamic>?)?.cast<String>();
       }
       
       print('✅ PLACES RESOLVE: Final result "$resolvedName" at $coords');
@@ -837,12 +847,13 @@ class LinkLocationExtractionService {
         name: resolvedName ?? locationName,
         address: resolvedAddress,
         coordinates: coords,
-        type: PlaceType.unknown,
+        type: ExtractedLocationData.inferPlaceType(placeTypes ?? []),
         source: ExtractionSource.placesSearch,
         confidence: coords != null ? finalConfidence : finalConfidence * 0.7, // Higher confidence with coords
         metadata: {'original_query': locationName, 'location_context': locationContext},
         website: website,
         needsConfirmation: needsConfirmation,
+        placeTypes: placeTypes,
       );
     } catch (e) {
       print('❌ PLACES RESOLVE ERROR: $e');

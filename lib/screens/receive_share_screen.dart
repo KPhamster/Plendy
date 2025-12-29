@@ -6172,6 +6172,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     ? cardLocation
                     : defaultLocation;
 
+            // Determine description: user notes > fetched summary > empty
+            // Defined before if/else so it's available for PublicExperience creation later
+            String descriptionToSave;
+            if (notes.isNotEmpty) {
+              descriptionToSave = notes;
+            } else if (card.fetchedDescription != null && card.fetchedDescription!.isNotEmpty) {
+              descriptionToSave = card.fetchedDescription!;
+            } else {
+              descriptionToSave = '';
+            }
+
             if (card.existingExperienceId == null ||
                 card.existingExperienceId!.isEmpty) {
               isNewExperience = true;
@@ -6182,7 +6193,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               Experience newExperience = Experience(
                 id: '',
                 name: cardTitle,
-                description: notes,
+                description: descriptionToSave,
                 location: locationWithPlaceTypes,
                 categoryId: categoryIdToSave,
                 yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
@@ -6328,7 +6339,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     website: cardWebsite.isNotEmpty ? cardWebsite : null,
                     allMediaPaths: uniqueMediaPaths,
                     icon: selectedCategoryObject?.icon,
-                    placeTypes: card.placeTypes);
+                    placeTypes: card.placeTypes,
+                    description: descriptionToSave.isNotEmpty ? descriptionToSave : null);
                 await _experienceService
                     .createPublicExperience(newPublicExperience);
                 if (!mounted) return;
@@ -6599,6 +6611,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           if (!mounted) return; // Check mounted after await
 
+          // Fetch summary for the location (editorialSummary → reviewSummary → generativeSummary)
+          String? fetchedSummary;
+          try {
+            fetchedSummary = await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
+          } catch (e) {
+            print("ReceiveShareScreen: Error fetching summary: $e");
+          }
+          if (!mounted) return;
+
           final String businessName = detailedLocation.getPlaceName();
           final String yelpUrl = card.yelpUrlController.text.trim();
 
@@ -6607,6 +6628,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (card.placeIdForPreview != null) {
             _yelpPreviewFutures.remove(card.placeIdForPreview);
           }
+
+          // Store the fetched description in the card
+          card.fetchedDescription = fetchedSummary;
 
           provider.updateCardFromShareDetails(
             cardId: card.id,
@@ -6655,6 +6679,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           if (!mounted) return; // Check mounted after await
 
+          // Fetch summary for the location (editorialSummary → reviewSummary → generativeSummary)
+          String? fetchedSummary;
+          try {
+            fetchedSummary = await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
+          } catch (e) {
+            print("ReceiveShareScreen: Error fetching summary: $e");
+          }
+          if (!mounted) return;
+
           final String title = detailedLocation.getPlaceName();
           final String? website = detailedLocation.website;
           final String address = detailedLocation.address ?? '';
@@ -6663,6 +6696,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (card.placeIdForPreview != null) {
             _yelpPreviewFutures.remove(card.placeIdForPreview);
           }
+
+          // Store the fetched description in the card
+          card.fetchedDescription = fetchedSummary;
 
           provider.updateCardFromShareDetails(
             cardId: card.id,

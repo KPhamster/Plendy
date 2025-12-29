@@ -270,12 +270,25 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
         print(
             "Add Modal: Fetched details for picked location: ${detailedLocation.displayName}");
 
+        // Fetch summary for the location (editorialSummary → reviewSummary → generativeSummary)
+        String? fetchedSummary;
+        try {
+          fetchedSummary = await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
+          if (fetchedSummary != null) {
+            print("Add Modal: Fetched summary for location: ${fetchedSummary.substring(0, fetchedSummary.length > 50 ? 50 : fetchedSummary.length)}...");
+          }
+        } catch (e) {
+          print("Add Modal: Error fetching summary: $e");
+        }
+
         setState(() {
           _cardData.selectedLocation = detailedLocation;
           // Store placeTypes from API for auto-categorization
           if (detailedLocation.placeTypes != null && detailedLocation.placeTypes!.isNotEmpty) {
             _cardData.placeTypes = detailedLocation.placeTypes;
           }
+          // Store fetched summary for use when saving
+          _cardData.fetchedDescription = fetchedSummary;
           if (_cardData.titleController.text.isEmpty) {
             _cardData.titleController.text = detailedLocation.getPlaceName();
           }
@@ -1159,12 +1172,20 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 address: 'No location specified');
 
         final now = DateTime.now();
+        // Determine description: user notes > fetched summary > default
+        String descriptionToSave;
+        if (_cardData.notesController.text.trim().isNotEmpty) {
+          descriptionToSave = _cardData.notesController.text.trim();
+        } else if (_cardData.fetchedDescription != null && _cardData.fetchedDescription!.isNotEmpty) {
+          descriptionToSave = _cardData.fetchedDescription!;
+        } else {
+          descriptionToSave = '';
+        }
+
         final newExperience = Experience(
           id: '',
           name: _cardData.titleController.text.trim(),
-          description: _cardData.notesController.text.trim().isEmpty
-              ? 'Created from Plendy'
-              : _cardData.notesController.text.trim(),
+          description: descriptionToSave,
           categoryId: _cardData.selectedCategoryId!,
           location: locationToSave,
           yelpUrl: _cardData.yelpUrlController.text.trim().isNotEmpty
