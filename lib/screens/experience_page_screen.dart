@@ -2873,8 +2873,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       _fetchedCategoriesForMedia[
                                           exp.categoryId]; // NEW: Lookup by ID
 
+                                  // Prefer denormalized icon from experience, fall back to category lookup
                                   final categoryIcon =
-                                      categoryForMediaItem?.icon ?? '❓';
+                                      exp.categoryIconDenorm ??
+                                          categoryForMediaItem?.icon ??
+                                          '📍';
                                   final categoryName =
                                       categoryForMediaItem?.name ??
                                           'Uncategorized';
@@ -2891,14 +2894,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       onTap: withHeavyTap(() async {
                                         print(
                                             'Tapped on other experience ${exp.name} from exp page tab');
-                                        // final category = // OLD
-                                        //     _fetchedCategoriesForMedia[
-                                        //             categoryName] ??
-                                        //         UserCategory(
-                                        //             id: '',
-                                        //             name: categoryName,
-                                        //             icon: '❓',
-                                        //             ownerUserId: '');
+                                        // Use denormalized icon from experience for navigation fallback
                                         final UserCategory
                                             categoryForNavigation =
                                             _fetchedCategoriesForMedia[exp
@@ -2907,7 +2903,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                                     id: exp.categoryId ??
                                                         '', // Use the ID if available for fallback
                                                     name: 'Uncategorized',
-                                                    icon: '❓',
+                                                    icon: exp.categoryIconDenorm ?? '📍',
                                                     ownerUserId: '');
 
                                         final result =
@@ -4957,11 +4953,41 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     print(
         "[ExpPage - _loadOtherExperienceData] Comparing against current Experience ID: ${_currentExperience.id}");
 
+    // For public experiences (readOnlyPreview with publicExperienceId), the
+    // SharedMediaItem objects from buildMediaItemsForPreview() don't have
+    // experienceIds populated. We need to look up the actual SharedMediaItem
+    // from Firestore by path to get the real experienceIds.
+    final bool isPublicExperienceView = widget.readOnlyPreview &&
+        widget.publicExperienceId != null &&
+        widget.publicExperienceId!.isNotEmpty;
+
+    // Map to store fetched media items by path for public experience view
+    final Map<String, SharedMediaItem> fetchedMediaItemsByPath = {};
+
     // 1. Collect all *other* experience IDs from the current media items
     for (final item in _mediaItems) {
+      List<String> experienceIdsForItem = item.experienceIds;
+
+      // For public experiences, fetch the actual SharedMediaItem from Firestore
+      if (isPublicExperienceView && item.experienceIds.isEmpty) {
+        try {
+          final SharedMediaItem? firestoreItem =
+              await _experienceService.findSharedMediaItemByPath(item.path);
+          if (firestoreItem != null) {
+            experienceIdsForItem = firestoreItem.experienceIds;
+            fetchedMediaItemsByPath[item.path] = firestoreItem;
+            print(
+                "[ExpPage - _loadOtherExperienceData] Fetched media item for path ${item.path} with experienceIds: $experienceIdsForItem");
+          }
+        } catch (e) {
+          print(
+              "[ExpPage - _loadOtherExperienceData] Error fetching media item for path ${item.path}: $e");
+        }
+      }
+
       print(
-          "[ExpPage - _loadOtherExperienceData] Processing item ${item.id} (Path: ${item.path}) with experienceIds: ${item.experienceIds}");
-      final otherIds = item.experienceIds
+          "[ExpPage - _loadOtherExperienceData] Processing item ${item.id} (Path: ${item.path}) with experienceIds: $experienceIdsForItem");
+      final otherIds = experienceIdsForItem
           .where((id) => id != _currentExperience.id)
           .toList();
       if (otherIds.isNotEmpty) {
@@ -5033,9 +5059,59 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
 
+    // 3b. For experiences that still don't have a category icon resolved,
+    // fetch from the experience owner's categories using getUserCategoryByOwner
+    for (final exp in fetchedExperiencesById.values) {
+      final String? categoryId = exp.categoryId;
+      final String? createdBy = exp.createdBy;
+
+      // Skip if already have category or if missing required fields
+      if (categoryId == null ||
+          categoryId.isEmpty ||
+          categoryLookupMapById.containsKey(categoryId)) {
+        continue;
+      }
+
+      // First check if experience has denormalized icon
+      if (exp.categoryIconDenorm != null && exp.categoryIconDenorm!.isNotEmpty) {
+        // Create a placeholder category with the icon for lookup
+        categoryLookupMapById[categoryId] = UserCategory(
+          id: categoryId,
+          name: 'Category',
+          icon: exp.categoryIconDenorm!,
+          ownerUserId: createdBy ?? '',
+        );
+        print(
+            "[ExpPage - _loadOtherExperienceData] Using denormalized icon '${exp.categoryIconDenorm}' for experience '${exp.name}'");
+        continue;
+      }
+
+      // Try to fetch category from the experience owner
+      if (createdBy != null && createdBy.isNotEmpty) {
+        try {
+          final ownerCategory = await _experienceService.getUserCategoryByOwner(
+            createdBy,
+            categoryId,
+          );
+          if (ownerCategory != null) {
+            categoryLookupMapById[categoryId] = ownerCategory;
+            print(
+                "[ExpPage - _loadOtherExperienceData] Fetched category '${ownerCategory.name}' with icon '${ownerCategory.icon}' from owner '$createdBy'");
+          }
+        } catch (e) {
+          print(
+              "[ExpPage - _loadOtherExperienceData] Failed to fetch category $categoryId from owner $createdBy: $e");
+        }
+      }
+    }
+
     // 4. Build the map for the state
     for (final item in _mediaItems) {
-      final otherIds = item.experienceIds
+      // Use fetched media item's experienceIds for public experiences if available
+      final List<String> experienceIdsForItem =
+          fetchedMediaItemsByPath[item.path]?.experienceIds ??
+              item.experienceIds;
+      final otherIds = experienceIdsForItem
           .where((id) => id != _currentExperience.id)
           .toList();
       if (otherIds.isNotEmpty) {

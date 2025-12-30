@@ -36,6 +36,8 @@ class SharedMediaPreviewModal extends StatefulWidget {
   final bool showSavedDate; // Whether to show the "Saved" date/time in metadata
   final bool
       isPublicExperience; // Whether this is a public experience from the community
+  final String?
+      publicExperienceId; // ID of the public experience for saving
   final VoidCallback?
       onViewExperience; // Custom handler for viewing the experience
 
@@ -50,6 +52,7 @@ class SharedMediaPreviewModal extends StatefulWidget {
     this.additionalUserCategories = const <UserCategory>[],
     this.showSavedDate = true, // Default to showing it
     this.isPublicExperience = false, // Default to false (personal experience)
+    this.publicExperienceId, // Optional public experience ID
     this.onViewExperience, // Optional custom handler
   });
 
@@ -273,6 +276,24 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     navigator.pop();
     if (widget.onViewExperience != null) {
       widget.onViewExperience!();
+      return;
+    }
+    // For public experiences, pass readOnlyPreview and publicExperienceId
+    // so that ExperiencePageScreen shows the Save button and Content tab
+    if (widget.isPublicExperience) {
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => ExperiencePageScreen(
+            experience: widget.experience,
+            category: widget.category ?? _buildFallbackCategory(),
+            userColorCategories: widget.userColorCategories,
+            additionalUserCategories: widget.additionalUserCategories,
+            readOnlyPreview: true,
+            initialMediaItems: widget.mediaItems,
+            publicExperienceId: widget.publicExperienceId,
+          ),
+        ),
+      );
       return;
     }
     navigator.push(
