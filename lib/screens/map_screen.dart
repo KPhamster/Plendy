@@ -5062,6 +5062,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
     if (_publicReadOnlyExperience != null) {
       final Experience publicExperience = _publicReadOnlyExperience!;
+      final String? publicExperienceId = _publicReadOnlyExperienceId;
+      final List<SharedMediaItem>? publicPreviewMediaItems =
+          _publicPreviewMediaItems;
       setState(() {
         _tappedLocationMarker = null;
         _tappedLocationDetails = null;
@@ -5078,9 +5081,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             category: _publicReadOnlyCategory,
             userColorCategories: const <ColorCategory>[],
             readOnlyPreview: true,
-            initialMediaItems: _publicPreviewMediaItems,
+            initialMediaItems: publicPreviewMediaItems,
             focusMapOnPop: true,
-            publicExperienceId: _publicReadOnlyExperienceId,
+            publicExperienceId: publicExperienceId,
           ),
         ),
       );
@@ -5512,6 +5515,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             category: _publicReadOnlyCategory,
             userColorCategories: const <ColorCategory>[],
             isPublicExperience: true,
+            publicExperienceId: _publicReadOnlyExperienceId,
           );
         },
       );
@@ -7794,6 +7798,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       allMarkers.remove(_tappedExperience!.id);
       print(
           "🗺️ MAP SCREEN: Hiding original marker for '${_tappedExperience!.name}' to show selected marker.");
+    }
+
+    // If a public experience is currently tapped, remove its original marker from the map
+    // so it can be replaced by the styled _tappedLocationMarker.
+    if (_publicReadOnlyExperienceId != null && _isGlobalToggleActive) {
+      allMarkers.remove(_publicReadOnlyExperienceId);
+      print(
+          "🗺️ MAP SCREEN: Hiding original public marker for '${_publicReadOnlyExperience?.name}' to show selected marker.");
     }
 
     if (_tappedLocationMarker != null) {
