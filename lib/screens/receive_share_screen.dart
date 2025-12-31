@@ -4252,14 +4252,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } else {
       eventName = 'Event';
     }
-    final startDateTime = _detectedEventInfo!.startDateTime;
-    final endDateTime = _detectedEventInfo!.endDateTime;
-    
-    // Format the dates for display
-    final dateFormat = '${startDateTime.month}/${startDateTime.day}/${startDateTime.year}';
-    final timeFormat = _formatTimeOfDay(TimeOfDay.fromDateTime(startDateTime));
-    final endTimeFormat = _formatTimeOfDay(TimeOfDay.fromDateTime(endDateTime));
-    
     return showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -4273,10 +4265,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.12),
+                  color: AppColors.plum.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.event, color: Colors.orange, size: 24),
+                child: const Icon(Icons.event, color: AppColors.plum, size: 24),
               ),
               const SizedBox(width: 12),
               const Expanded(
@@ -4295,47 +4287,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 'Would you like to save and remind yourself of this event?',
                 style: TextStyle(fontSize: 15),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.grey[300]!),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      eventName,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
-                        const SizedBox(width: 8),
-                        Text(
-                          dateFormat,
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        const Icon(Icons.schedule, size: 16, color: Colors.grey),
-                        const SizedBox(width: 8),
-                        Text(
-                          '$timeFormat - $endTimeFormat',
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: Text(
+                  eventName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ),
             ],
@@ -4348,7 +4313,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
+                backgroundColor: AppColors.plum,
                 foregroundColor: Colors.white,
               ),
               child: const Text('Yes, create event'),
@@ -9951,20 +9916,20 @@ class _MultiLocationSelectionDialogState
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.12),
+              color: AppColors.plum.withOpacity(0.12),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withOpacity(0.35)),
+              border: Border.all(color: AppColors.plum.withOpacity(0.35)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.event, size: 16, color: Colors.orange),
+                const Icon(Icons.event, size: 16, color: AppColors.plum),
                 const SizedBox(width: 6),
                 const Expanded(
                   child: Text(
                     'Event detected! You can save it after adding these locations.',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.orange,
+                      color: AppColors.plum,
                       fontWeight: FontWeight.w500,
                     ),
                   ),

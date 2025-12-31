@@ -27,6 +27,8 @@ class AppColors {
 
   static const Color sage = Color(0xFF6D8B74); //Background/surface
 
+  static const Color plum = Color(0xFF7A5ABC); //Background/surface
+
   static const Color wineTint = Color(0xFFAD4A57); //Hover
 
   static const Color wineLight = Color(0xFFCE949C); //Subtle fill
