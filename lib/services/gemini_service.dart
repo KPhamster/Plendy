@@ -6,6 +6,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../config/api_secrets.dart';
 import '../models/gemini_grounding_result.dart';
+import '../models/extracted_event_info.dart';
 
 /// Service for interacting with Google's Gemini API with Maps grounding
 /// 
@@ -1057,18 +1058,18 @@ Output:
   /// 
   /// [images] - List of image data (bytes and mimeType)
   /// 
-  /// Returns a list of extracted locations with the combined region context
-  Future<({List<ExtractedLocationInfo> locations, String? regionContext})> extractLocationsFromMultipleImages(
+  /// Returns a list of extracted locations with the combined region context and extracted text
+  Future<({List<ExtractedLocationInfo> locations, String? regionContext, String? extractedText})> extractLocationsFromMultipleImages(
     List<({Uint8List bytes, String mimeType})> images,
   ) async {
     if (!isConfigured) {
       print('⚠️ GEMINI MULTI-IMAGE: API key not configured');
-      return (locations: <ExtractedLocationInfo>[], regionContext: null);
+      return (locations: <ExtractedLocationInfo>[], regionContext: null, extractedText: null);
     }
 
     if (images.isEmpty) {
       print('⚠️ GEMINI MULTI-IMAGE: No images provided');
-      return (locations: <ExtractedLocationInfo>[], regionContext: null);
+      return (locations: <ExtractedLocationInfo>[], regionContext: null, extractedText: null);
     }
 
     // If only one image, use the standard single-image method
@@ -1079,7 +1080,7 @@ Output:
         mimeType: images.first.mimeType,
       );
       final regionContext = locations.isNotEmpty ? locations.first.regionContext : null;
-      return (locations: locations, regionContext: regionContext);
+      return (locations: locations, regionContext: regionContext, extractedText: null);
     }
 
     try {
@@ -1092,7 +1093,8 @@ Output:
       if (combinedContext == null) {
         print('⚠️ GEMINI MULTI-IMAGE: Could not analyze combined context, falling back to individual analysis');
         // Fallback: analyze each image separately and merge
-        return _fallbackIndividualAnalysis(images);
+        final fallbackResult = await _fallbackIndividualAnalysis(images);
+        return (locations: fallbackResult.locations, regionContext: fallbackResult.regionContext, extractedText: null);
       }
       
       print('✅ GEMINI MULTI-IMAGE: Combined context analyzed');
@@ -1151,6 +1153,7 @@ Output:
           return (
             locations: [searchResult],
             regionContext: combinedContext.geographicFocus,
+            extractedText: combinedContext.extractedText,
           );
         }
       }
@@ -1164,11 +1167,11 @@ Output:
         print('   📍 ${loc.name} ${loc.city != null ? "(${loc.city})" : ""}');
       }
       
-      return (locations: locations, regionContext: combinedContext.geographicFocus);
+      return (locations: locations, regionContext: combinedContext.geographicFocus, extractedText: combinedContext.extractedText);
     } catch (e, stackTrace) {
       print('❌ GEMINI MULTI-IMAGE ERROR: $e');
       print('Stack trace: $stackTrace');
-      return (locations: <ExtractedLocationInfo>[], regionContext: null);
+      return (locations: <ExtractedLocationInfo>[], regionContext: null, extractedText: null);
     }
   }
 
@@ -4315,6 +4318,180 @@ If you cannot find reliable information about this specific place, return:
       return parts.first['text'] as String?;
     } catch (e) {
       print('❌ GEMINI SIMPLE ERROR: $e');
+      return null;
+    }
+  }
+  
+  /// Detect event information from text content using AI
+  /// 
+  /// Analyzes the text to find:
+  /// - Event names (festival, concert, fair, etc.)
+  /// - Start date/time
+  /// - End date/time (if mentioned)
+  /// 
+  /// Returns ExtractedEventInfo if an event is detected, null otherwise.
+  Future<ExtractedEventInfo?> detectEventFromText(String text) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI EVENT: API key not configured');
+      return null;
+    }
+    
+    if (text.length < 20) {
+      print('⚠️ GEMINI EVENT: Text too short to analyze');
+      return null;
+    }
+    
+    try {
+      print('📅 GEMINI EVENT: Analyzing text for event information...');
+      
+      final prompt = '''
+Analyze this text and determine if it describes an event (past, present, or future). If yes, extract the event details.
+IMPORTANT: Extract events regardless of whether they have already occurred - users may want to save past events they attended.
+
+TEXT TO ANALYZE:
+"""
+$text
+"""
+
+TODAY'S DATE: ${DateTime.now().toIso8601String().split('T')[0]}
+
+INSTRUCTIONS:
+1. Look for event-related content: festivals, fairs, concerts, shows, exhibitions, pop-ups, limited-time events, etc.
+2. Find any date/time information - explicit dates like "April 4-6, 2025", "this weekend", "next Saturday", etc.
+3. Extract the EXACT dates mentioned in the text, even if they are in the past
+4. For multi-day events like "April 4-6, 2025", use the first day as start and last day as end
+5. If only a date is given without time, use 10:00 AM as start and 10:00 PM as end
+6. For events without end times, estimate a reasonable duration (2-4 hours typical)
+
+RESPONSE FORMAT:
+Return a JSON object with this exact structure:
+{
+  "is_event": true/false,
+  "event_name": "Name of the event" or null,
+  "start_datetime": "YYYY-MM-DDTHH:MM:SS" or null,
+  "end_datetime": "YYYY-MM-DDTHH:MM:SS" or null,
+  "confidence": 0.0 to 1.0,
+  "reasoning": "Brief explanation of why this is/isn't an event"
+}
+
+EXAMPLES:
+- "OC Japan Fair April 4-6, 2025" → is_event: true, start: 2025-04-04T10:00:00, end: 2025-04-06T22:00:00
+- "Best restaurants in LA" → is_event: false
+- "Join us March 15th for food and music" → is_event: true, use March 15 with current year if not specified
+
+Return ONLY the JSON object, no other text.
+''';
+
+      final endpoint = '$_baseUrl/models/$_defaultModel:generateContent?key=$_apiKey';
+      
+      final response = await _dio.post(
+        endpoint,
+        data: {
+          'contents': [
+            {
+              'parts': [
+                {'text': prompt}
+              ]
+            }
+          ],
+          'generationConfig': {
+            'temperature': 0.1,
+            'maxOutputTokens': 500,
+          },
+        },
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+      
+      if (response.statusCode != 200) {
+        print('❌ GEMINI EVENT: API returned ${response.statusCode}');
+        return null;
+      }
+      
+      // Extract text from response
+      final candidates = response.data['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) {
+        print('⚠️ GEMINI EVENT: No candidates in response');
+        return null;
+      }
+      
+      final content = candidates[0]['content'];
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) {
+        print('⚠️ GEMINI EVENT: No parts in response');
+        return null;
+      }
+      
+      String responseText = parts[0]['text'] as String? ?? '';
+      responseText = responseText.trim();
+      
+      // Remove markdown code blocks if present
+      if (responseText.startsWith('```json')) {
+        responseText = responseText.substring(7);
+      } else if (responseText.startsWith('```')) {
+        responseText = responseText.substring(3);
+      }
+      if (responseText.endsWith('```')) {
+        responseText = responseText.substring(0, responseText.length - 3);
+      }
+      responseText = responseText.trim();
+      
+      // Parse JSON response
+      final Map<String, dynamic> parsed;
+      try {
+        parsed = jsonDecode(responseText) as Map<String, dynamic>;
+      } catch (e) {
+        print('❌ GEMINI EVENT: Failed to parse JSON: $e');
+        print('   Response was: $responseText');
+        return null;
+      }
+      
+      final isEvent = parsed['is_event'] as bool? ?? false;
+      if (!isEvent) {
+        print('📅 GEMINI EVENT: Not detected as event - ${parsed['reasoning']}');
+        return null;
+      }
+      
+      final startDateTimeStr = parsed['start_datetime'] as String?;
+      final endDateTimeStr = parsed['end_datetime'] as String?;
+      
+      if (startDateTimeStr == null) {
+        print('⚠️ GEMINI EVENT: Event detected but no start time found');
+        return null;
+      }
+      
+      final startDateTime = DateTime.tryParse(startDateTimeStr);
+      if (startDateTime == null) {
+        print('⚠️ GEMINI EVENT: Could not parse start datetime: $startDateTimeStr');
+        return null;
+      }
+      
+      // Parse end time or default to 2 hours after start
+      DateTime endDateTime;
+      if (endDateTimeStr != null) {
+        endDateTime = DateTime.tryParse(endDateTimeStr) ?? startDateTime.add(const Duration(hours: 2));
+      } else {
+        endDateTime = startDateTime.add(const Duration(hours: 2));
+      }
+      
+      final confidence = (parsed['confidence'] as num?)?.toDouble() ?? 0.8;
+      final eventName = parsed['event_name'] as String?;
+      
+      print('✅ GEMINI EVENT: Detected event "$eventName"');
+      print('   Start: $startDateTime, End: $endDateTime, Confidence: ${(confidence * 100).toInt()}%');
+      
+      return ExtractedEventInfo(
+        eventName: eventName,
+        startDateTime: startDateTime,
+        endDateTime: endDateTime,
+        confidence: confidence,
+        rawText: text.length > 100 ? text.substring(0, 100) : text,
+      );
+    } catch (e) {
+      print('❌ GEMINI EVENT ERROR: $e');
       return null;
     }
   }

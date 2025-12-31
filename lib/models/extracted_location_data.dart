@@ -71,6 +71,11 @@ class ExtractedLocationData {
   /// Flag indicating the match quality is low and user should confirm
   /// This is set when AI reranking couldn't find a confident match
   final bool needsConfirmation;
+  
+  /// The original text/query that was scanned/extracted before resolution
+  /// e.g., if user scanned "eiffel tower cafe" and it resolved to "Café de l'Homme",
+  /// this field would contain "eiffel tower cafe"
+  final String? originalQuery;
 
   const ExtractedLocationData({
     this.placeId,
@@ -85,6 +90,7 @@ class ExtractedLocationData {
     this.placeTypes,
     this.website,
     this.needsConfirmation = false,
+    this.originalQuery,
   });
 
   /// Create from a map (for JSON deserialization)
@@ -107,6 +113,7 @@ class ExtractedLocationData {
       placeTypes: (map['placeTypes'] as List?)?.cast<String>(),
       website: map['website'] as String?,
       needsConfirmation: map['needsConfirmation'] as bool? ?? false,
+      originalQuery: map['originalQuery'] as String?,
     );
   }
 
@@ -126,6 +133,7 @@ class ExtractedLocationData {
       'placeTypes': placeTypes,
       'website': website,
       'needsConfirmation': needsConfirmation,
+      'originalQuery': originalQuery,
     };
   }
 
@@ -143,6 +151,7 @@ class ExtractedLocationData {
     List<String>? placeTypes,
     String? website,
     bool? needsConfirmation,
+    String? originalQuery,
   }) {
     return ExtractedLocationData(
       placeId: placeId ?? this.placeId,
@@ -157,6 +166,7 @@ class ExtractedLocationData {
       placeTypes: placeTypes ?? this.placeTypes,
       website: website ?? this.website,
       needsConfirmation: needsConfirmation ?? this.needsConfirmation,
+      originalQuery: originalQuery ?? this.originalQuery,
     );
   }
 
@@ -215,6 +225,6 @@ class ExtractedLocationData {
 
   @override
   String toString() {
-    return 'ExtractedLocationData(name: $name, placeId: $placeId, source: $source, confidence: $confidence${needsConfirmation ? ', needsConfirmation: true' : ''})';
+    return 'ExtractedLocationData(name: $name, placeId: $placeId, source: $source, confidence: $confidence${needsConfirmation ? ', needsConfirmation: true' : ''}${originalQuery != null ? ', originalQuery: $originalQuery' : ''})';
   }
 }

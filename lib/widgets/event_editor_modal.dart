@@ -236,24 +236,26 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
       try {
         // Queue reminder notifications for all attendees (including newly invited viewers)
-        // Only queue if the notification time is in the future
-        final notificationDuration = savedEvent.notificationPreference.type == EventNotificationType.fiveMinutes
-            ? const Duration(minutes: 5)
-            : savedEvent.notificationPreference.type == EventNotificationType.fifteenMinutes
-                ? const Duration(minutes: 15)
-                : savedEvent.notificationPreference.type == EventNotificationType.thirtyMinutes
-                    ? const Duration(minutes: 30)
-                    : savedEvent.notificationPreference.type == EventNotificationType.oneHour
-                        ? const Duration(hours: 1)
-                        : savedEvent.notificationPreference.type == EventNotificationType.oneDay
-                            ? const Duration(days: 1)
-                            : savedEvent.notificationPreference.customDuration ?? const Duration(minutes: 30);
-        
-        final notificationTime = savedEvent.startDateTime.subtract(notificationDuration);
-        
-        // Only queue if the notification time hasn't passed yet
-        if (notificationTime.isAfter(DateTime.now())) {
-          await _eventNotificationQueueService.queueEventNotifications(savedEvent);
+        // Only queue if notification type is not 'none' and the notification time is in the future
+        if (savedEvent.notificationPreference.type != EventNotificationType.none) {
+          final notificationDuration = savedEvent.notificationPreference.type == EventNotificationType.fiveMinutes
+              ? const Duration(minutes: 5)
+              : savedEvent.notificationPreference.type == EventNotificationType.fifteenMinutes
+                  ? const Duration(minutes: 15)
+                  : savedEvent.notificationPreference.type == EventNotificationType.thirtyMinutes
+                      ? const Duration(minutes: 30)
+                      : savedEvent.notificationPreference.type == EventNotificationType.oneHour
+                          ? const Duration(hours: 1)
+                          : savedEvent.notificationPreference.type == EventNotificationType.oneDay
+                              ? const Duration(days: 1)
+                              : savedEvent.notificationPreference.customDuration ?? const Duration(minutes: 30);
+          
+          final notificationTime = savedEvent.startDateTime.subtract(notificationDuration);
+          
+          // Only queue if the notification time hasn't passed yet
+          if (notificationTime.isAfter(DateTime.now())) {
+            await _eventNotificationQueueService.queueEventNotifications(savedEvent);
+          }
         }
       } catch (e) {
         debugPrint('EventEditorModal: Failed to queue notifications - $e');
@@ -2200,6 +2202,30 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   padding: const EdgeInsets.all(4),
                 ),
               ),
+              // Only show Ticketmaster button if API confirmed event exists on Ticketmaster
+              if (_currentEvent.ticketmasterUrl?.isNotEmpty == true) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Search on Ticketmaster',
+                  child: ActionChip(
+                    avatar: const Icon(
+                      Icons.confirmation_number,
+                      size: 18,
+                      color: Color(0xFF1E65B9), // Ticketmaster blue
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: _openTicketmasterSearch,
+                    tooltip: 'Search on Ticketmaster',
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
+                  ),
+                ),
+              ],
               if (_currentEvent.shareToken?.isNotEmpty == true) ...[
                 const SizedBox(width: 8),
                 Tooltip(
@@ -3558,6 +3584,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
         _currentEvent = result;
         _markUnsavedChanges();
       });
+    }
+  }
+
+  Future<void> _openTicketmasterSearch() async {
+    // Use the search term that found results, or fall back to event title
+    final searchTerm = _currentEvent.ticketmasterSearchTerm ?? _currentEvent.title;
+    final searchQuery = Uri.encodeComponent(searchTerm);
+    final searchUrl = 'https://www.ticketmaster.com/search?q=$searchQuery';
+    final uri = Uri.parse(searchUrl);
+    
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open Ticketmaster.')),
+        );
+      }
     }
   }
 
@@ -4929,6 +4973,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
       Duration? customDuration,
     ) {
       switch (type) {
+        case EventNotificationType.none:
+          return 'None';
         case EventNotificationType.fiveMinutes:
           return '5 minutes before';
         case EventNotificationType.fifteenMinutes:
@@ -4985,6 +5031,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 fillColor: Colors.white,
               ),
               items: const [
+                DropdownMenuItem(
+                  value: EventNotificationType.none,
+                  child: Text('None'),
+                ),
                 DropdownMenuItem(
                   value: EventNotificationType.fiveMinutes,
                   child: Text('5 minutes before'),

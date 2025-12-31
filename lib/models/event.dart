@@ -22,7 +22,7 @@ extension EventVisibilityX on EventVisibility {
 }
 
 /// Available reminder offsets for event notifications.
-enum EventNotificationType { fiveMinutes, fifteenMinutes, thirtyMinutes, oneHour, oneDay, custom }
+enum EventNotificationType { none, fiveMinutes, fifteenMinutes, thirtyMinutes, oneHour, oneDay, custom }
 
 class EventNotificationPreference extends Equatable {
   final EventNotificationType type;
@@ -38,6 +38,8 @@ class EventNotificationPreference extends Equatable {
 
   Duration get effectiveDuration {
     switch (type) {
+      case EventNotificationType.none:
+        return Duration.zero;
       case EventNotificationType.fiveMinutes:
         return const Duration(minutes: 5);
       case EventNotificationType.fifteenMinutes:
@@ -75,6 +77,8 @@ class EventNotificationPreference extends Equatable {
 
   static EventNotificationType _notificationTypeFromString(String? value) {
     switch (value) {
+      case 'none':
+        return EventNotificationType.none;
       case 'fiveMinutes':
         return EventNotificationType.fiveMinutes;
       case 'fifteenMinutes':
@@ -328,6 +332,8 @@ class Event extends Equatable {
   final String? shareToken;
   final List<EventComment> comments;
   final String? colorHex;
+  final String? ticketmasterUrl;
+  final String? ticketmasterSearchTerm;
 
   const Event({
     required this.id,
@@ -349,6 +355,8 @@ class Event extends Equatable {
     this.shareToken,
     this.comments = const [],
     this.colorHex,
+    this.ticketmasterUrl,
+    this.ticketmasterSearchTerm,
   });
 
   factory Event.fromMap(Map<String, dynamic> map, {String? id}) {
@@ -374,6 +382,8 @@ class Event extends Equatable {
       shareToken: map['shareToken'],
       comments: _commentsFromList(map['comments']),
       colorHex: map['colorHex'],
+      ticketmasterUrl: map['ticketmasterUrl'],
+      ticketmasterSearchTerm: map['ticketmasterSearchTerm'],
     );
   }
 
@@ -397,6 +407,8 @@ class Event extends Equatable {
       if (capacity != null) 'capacity': capacity,
       if (shareToken != null) 'shareToken': shareToken,
       if (colorHex != null) 'colorHex': colorHex,
+      if (ticketmasterUrl != null) 'ticketmasterUrl': ticketmasterUrl,
+      if (ticketmasterSearchTerm != null) 'ticketmasterSearchTerm': ticketmasterSearchTerm,
     };
   }
 
@@ -421,6 +433,8 @@ class Event extends Equatable {
     bool clearShareToken = false,
     List<EventComment>? comments,
     String? colorHex,
+    String? ticketmasterUrl,
+    String? ticketmasterSearchTerm,
   }) {
     return Event(
       id: id ?? this.id,
@@ -443,6 +457,8 @@ class Event extends Equatable {
       shareToken: clearShareToken ? null : (shareToken ?? this.shareToken),
       comments: comments ?? this.comments,
       colorHex: colorHex ?? this.colorHex,
+      ticketmasterUrl: ticketmasterUrl ?? this.ticketmasterUrl,
+      ticketmasterSearchTerm: ticketmasterSearchTerm ?? this.ticketmasterSearchTerm,
     );
   }
 
@@ -467,6 +483,8 @@ class Event extends Equatable {
         shareToken,
         comments,
         colorHex,
+        ticketmasterUrl,
+        ticketmasterSearchTerm,
       ];
 
   static List<EventExperienceEntry> _entriesFromList(dynamic data) {
