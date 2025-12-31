@@ -3402,12 +3402,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print('📸 INSTAGRAM: Hashtags: $_extractedHashtags');
               print('📸 INSTAGRAM: Mentions: $_extractedMentions');
               
-              // Automatically extract locations from the caption
-              await _autoExtractLocationsFromCaption(
-                caption: caption,
-                platform: 'Instagram',
-                sourceUrl: url,
-              );
+              // Use text extraction with Maps grounding (no city context bias)
+              // This is the same approach as Preview Scan's text path, but without OCR
+              print('📸 INSTAGRAM: Using Maps-grounded text extraction...');
+              await _autoExtractWithMapsGrounding(url);
             } else {
               print('⚠️ INSTAGRAM: Caption too short after cleaning');
               _showInstagramScanHint();
@@ -3756,6 +3754,228 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ $platform AUTO-EXTRACT ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Location scan failed. Try the "Scan Preview" button.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      // Disable wakelock and stop foreground service
+      WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = false;
+          _isAiScanInProgress = false;
+          _scanProgress = 0.0;
+        });
+      }
+    }
+  }
+  
+  /// Auto-extract locations using Gemini with Maps grounding (no city context bias)
+  /// 
+  /// This method uses the same approach as Preview Scan's text extraction path:
+  /// - Extracts page text from WebView
+  /// - Sends to Gemini with Google Maps grounding enabled
+  /// - Returns locations with verified placeIds and coordinates
+  /// 
+  /// Unlike [_autoExtractLocationsFromCaption], this does NOT detect city context
+  /// from the caption and apply it to all searches, which avoids incorrect results
+  /// when locations are not in the detected city.
+  Future<void> _autoExtractWithMapsGrounding(String sourceUrl) async {
+    // Skip if already extracting
+    if (_isExtractingLocation || _isProcessingScreenshot) {
+      print('📍 MAPS GROUNDING: Extraction already in progress');
+      return;
+    }
+
+    if (!await _shouldAutoExtractLocations()) {
+      print('📍 MAPS GROUNDING: Auto extraction disabled in settings');
+      return;
+    }
+
+    // Use the already-extracted caption (stored by _storeExtractedContent)
+    // Don't try to re-extract from WebView as that often fails for Instagram reels
+    if (_extractedCaption == null || _extractedCaption!.isEmpty) {
+      print('⚠️ MAPS GROUNDING: No caption available to analyze');
+      Fluttertoast.showToast(
+        msg: '💡 No caption found. Try the "Scan Preview" button.',
+        toastLength: Toast.LENGTH_LONG,
+        backgroundColor: Colors.orange[700],
+      );
+      return;
+    }
+
+    print('📍 MAPS GROUNDING: Starting location extraction with Maps grounding...');
+    print('📍 MAPS GROUNDING: Using pre-extracted caption (${_extractedCaption!.length} chars)');
+
+    setState(() {
+      _isExtractingLocation = true;
+      _isAiScanInProgress = true;
+      _scanProgress = 0.0;
+    });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
+
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
+
+    try {
+      _updateScanProgress(0.1);
+
+      // Get user location for better results (optional)
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      _updateScanProgress(0.25);
+
+      // Send the already-extracted caption directly to Gemini with Maps grounding
+      // This avoids the city context bias that extractLocationsFromCaption has
+      final geminiService = GeminiService();
+      final result = await geminiService.extractLocationsFromWebPage(
+        _extractedCaption!,
+        pageUrl: sourceUrl,
+        userLocation: userLocation,
+      );
+      _updateScanProgress(0.5);
+
+      // Convert Gemini results and verify via Places API if needed
+      List<ExtractedLocationData> locations = [];
+      if (result != null && result.locations.isNotEmpty) {
+        print('✅ MAPS GROUNDING: Gemini found ${result.locations.length} location(s)');
+        
+        // Process each location - verify via Places API if no grounding
+        final totalLocations = result.locations.length;
+        for (int i = 0; i < totalLocations; i++) {
+          final loc = result.locations[i];
+          final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+          final hasGrounding = loc.placeId.isNotEmpty;
+          
+          // Update progress as we verify each location
+          _updateScanProgress(0.5 + (0.3 * (i + 1) / totalLocations));
+          
+          if (hasGrounding && hasValidCoords) {
+            // Location already has grounding - use directly
+            print('✅ MAPS GROUNDING: "${loc.name}" already verified via grounding');
+            locations.add(ExtractedLocationData(
+              name: loc.name,
+              address: loc.formattedAddress,
+              placeId: loc.placeId,
+              coordinates: loc.coordinates,
+              type: ExtractedLocationData.inferPlaceType(loc.types),
+              source: ExtractionSource.geminiGrounding,
+              confidence: 0.9,
+              googleMapsUri: loc.uri,
+              placeTypes: loc.types,
+              originalQuery: loc.name, // Store original name from caption
+            ));
+          } else {
+            // No grounding - verify via Places API (WITHOUT city context bias)
+            print('🔍 MAPS GROUNDING: Verifying "${loc.name}" via Places API...');
+            
+            // Use _locationExtractor to resolve - pass just the name, no context
+            // This searches for the exact location name without "seattle" bias
+            final verifiedLocations = await _locationExtractor.extractLocationsFromCaption(
+              loc.name, // Just the location name, not full caption
+              platform: 'Instagram',
+              maxLocations: 1,
+            );
+            
+            if (verifiedLocations.isNotEmpty) {
+              final verified = verifiedLocations.first;
+              print('✅ MAPS GROUNDING: Verified "${loc.name}" → "${verified.name}" (placeId: ${verified.placeId != null})');
+              
+              // Use verified data but keep original query
+              locations.add(ExtractedLocationData(
+                name: verified.name,
+                address: verified.address ?? loc.formattedAddress,
+                placeId: verified.placeId,
+                coordinates: verified.coordinates ?? loc.coordinates,
+                type: verified.type,
+                source: verified.placeId != null 
+                    ? ExtractionSource.placesSearch 
+                    : ExtractionSource.geminiGrounding,
+                confidence: verified.placeId != null ? 0.85 : 0.5,
+                googleMapsUri: verified.googleMapsUri ?? loc.uri,
+                placeTypes: verified.placeTypes ?? loc.types,
+                originalQuery: loc.name, // Store original name from caption
+              ));
+            } else {
+              // Couldn't verify - include with lower confidence
+              print('⚠️ MAPS GROUNDING: Could not verify "${loc.name}"');
+              locations.add(ExtractedLocationData(
+                name: loc.name,
+                address: loc.formattedAddress,
+                placeId: null,
+                coordinates: hasValidCoords ? loc.coordinates : null,
+                type: ExtractedLocationData.inferPlaceType(loc.types),
+                source: ExtractionSource.geminiGrounding,
+                confidence: 0.5,
+                googleMapsUri: loc.uri,
+                placeTypes: loc.types,
+                originalQuery: loc.name,
+              ));
+            }
+          }
+        }
+      }
+      _updateScanProgress(0.8);
+
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('📍 MAPS GROUNDING: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
+
+      if (locations.isEmpty) {
+        print('⚠️ MAPS GROUNDING: No locations found');
+        Fluttertoast.showToast(
+          msg: '💡 No location found. Try the "Scan Preview" button to analyze visible text.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ MAPS GROUNDING: Found ${locations.length} location(s)');
+      _updateScanProgress(0.85);
+      
+      // Try to detect event information from the extracted caption
+      ExtractedEventInfo? detectedEvent;
+      if (_extractedCaption != null && _extractedCaption!.isNotEmpty) {
+        detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
+      }
+      _updateScanProgress(0.95);
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      // Always show the location selection dialog
+      await _handleMultipleExtractedLocations(
+        locations,
+        provider,
+        detectedEventInfo: detectedEvent,
+      );
+      _updateScanProgress(1.0);
+    } catch (e) {
+      print('❌ MAPS GROUNDING ERROR: $e');
       if (mounted) {
         Fluttertoast.showToast(
           msg: '❌ Location scan failed. Try the "Scan Preview" button.',
