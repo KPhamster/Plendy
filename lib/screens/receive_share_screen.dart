@@ -55,6 +55,10 @@ import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
 import '../models/experience_card_data.dart';
+import '../models/extracted_event_info.dart';
+import '../models/event.dart';
+import '../widgets/event_editor_modal.dart';
+import '../services/ticketmaster_service.dart';
 // Import ApiSecrets conditionally
 import '../config/api_secrets.dart'
     if (dart.library.io) '../config/api_secrets.dart'
@@ -256,6 +260,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       LinkLocationExtractionService();
   final ForegroundScanService _foregroundScanService = ForegroundScanService();
   final AiSettingsService _aiSettingsService = AiSettingsService.instance;
+  final TicketmasterService _ticketmasterService = TicketmasterService();
 
   // AI Location Extraction state
   bool _isExtractingLocation = false;
@@ -348,6 +353,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Experience?
       _quickAddSelectedExperience; // Non-null if saved experience selected
   bool _isQuickAddSavedExperience = false;
+  
+  // Event detection state - stored for use after successful save
+  ExtractedEventInfo? _detectedEventInfo;
 
   Widget _buildSharedUrlBar({required bool showInstructions}) {
     // Rebuilds show suffix icons immediately based on controller text
@@ -1382,7 +1390,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.88);
+      
+      // Try to detect event information from any available text content
+      // Priority 1: Use the OCR extracted text from Gemini (has dates like "April 4-6, 2025")
+      // Priority 2: Use the WebView extracted caption
+      // Priority 3: Check location metadata
+      ExtractedEventInfo? detectedEvent;
+      
+      // Priority 1: OCR extracted text from Gemini scan (most likely to have dates)
+      if (_lastScanExtractedText != null && _lastScanExtractedText!.isNotEmpty) {
+        print('📅 COMBINED SCAN: Checking OCR extracted text for event info (${_lastScanExtractedText!.length} chars)...');
+        detectedEvent = await _detectEventFromTextAsync(_lastScanExtractedText!);
+      }
+      
+      // Priority 2: WebView extracted caption (might have additional context)
+      if (detectedEvent == null && _extractedCaption != null && _extractedCaption!.isNotEmpty) {
+        print('📅 COMBINED SCAN: Checking WebView caption for event info...');
+        detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
+      }
+      
+      // Priority 3: Check location metadata for event-related text
+      if (detectedEvent == null && mergedLocations.isNotEmpty) {
+        for (final location in mergedLocations) {
+          if (location.metadata != null) {
+            final extractedText = location.metadata!['extractedText'] as String?;
+            if (extractedText != null && extractedText.isNotEmpty) {
+              print('📅 COMBINED SCAN: Checking location metadata for event info...');
+              detectedEvent = await _detectEventFromTextAsync(extractedText);
+              if (detectedEvent != null) break;
+            }
+          }
+        }
+      }
+      
+      // Clear the stored extracted text after use
+      _lastScanExtractedText = null;
+      
+      _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -1391,7 +1436,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Always show the location dialog, even for single locations
       // This allows users to verify the extracted location before saving
-      await _handleMultipleExtractedLocations(mergedLocations, provider);
+      // If event info was detected, the dialog will show a second page for event designation
+      await _handleMultipleExtractedLocations(
+        mergedLocations, 
+        provider,
+        detectedEventInfo: detectedEvent,
+      );
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ COMBINED SCAN ERROR: $e');
@@ -1479,6 +1529,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             '📷 COMBINED SCAN: Multi-image analysis found ${result.locations.length} location(s)');
         if (result.regionContext != null) {
           print('🌍 COMBINED SCAN: Region context: "${result.regionContext}"');
+        }
+        
+        // Store extracted text for event detection
+        if (result.extractedText != null && result.extractedText!.isNotEmpty) {
+          _lastScanExtractedText = result.extractedText;
+          print('📝 COMBINED SCAN: Stored extracted text (${result.extractedText!.length} chars) for event detection');
         }
 
         return result.locations;
@@ -2236,6 +2292,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   
   /// The platform the content was extracted from ('Instagram' or 'Facebook')
   String? _extractedFromPlatform;
+  
+  /// Full extracted text from Gemini OCR/image analysis (includes dates, event info, etc.)
+  /// This is populated during screenshot scans and contains the raw text from images.
+  String? _lastScanExtractedText;
 
   // Add debounce timer for location updates
   Timer? _locationUpdateDebounce;
@@ -3327,16 +3387,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (content != null && content.isNotEmpty && content.length > 20) {
             print('✅ INSTAGRAM: Got content from WebView (${content.length} chars)');
             
-            // Clean up the content - remove boilerplate
-            String caption = content
-                .replaceAll(RegExp(r'View this (post|reel) on Instagram', caseSensitive: false), '')
-                .replaceAll(RegExp(r'A (post|reel) shared by.*$', caseSensitive: false, dotAll: true), '')
-                .replaceAll(RegExp(r'liked by.*and.*others', caseSensitive: false), '')
-                .replaceAll(RegExp(r'\d+ likes', caseSensitive: false), '')
-                .replaceAll(RegExp(r'Log in', caseSensitive: false), '')
-                .replaceAll(RegExp(r'Sign up', caseSensitive: false), '')
-                .replaceAll(RegExp(r'\s+'), ' ')
-                .trim();
+            // Clean up the content - remove boilerplate using dedicated Instagram cleaner
+            String caption = _cleanInstagramCaption(content);
             
             if (caption.length > 10) {
               // Store the extracted content
@@ -3383,6 +3435,148 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       toastLength: Toast.LENGTH_LONG,
       backgroundColor: Colors.blue[700],
     );
+  }
+  
+  /// Clean Instagram caption by removing UI boilerplate and formatting nicely
+  /// 
+  /// Instagram WebView content often includes lots of UI text like:
+  /// - "username and otheraccount Original audio View profile" (Reels)
+  /// - "username and otheraccount Location Name Verified N," (Photo posts with location)
+  /// - "Verified NNN posts · NNNK followers View more on Instagram"
+  /// - "Like Comment Share Save NNN"
+  /// - "View all NNN comments Add a comment... Instagram"
+  /// 
+  /// The MOST RELIABLE pattern is that the username appears TWICE consecutively
+  /// right before the actual caption text: "{username} {username} {caption}"
+  /// 
+  /// This extracts just the username and actual caption content.
+  String _cleanInstagramCaption(String rawContent) {
+    String content = rawContent;
+    
+    // Extract username from the beginning (first word is usually the poster's username)
+    // Handle case where content might already have a dash (from previous processing)
+    final firstWord = content.split(RegExp(r'[\s\-]+')).first;
+    final username = firstWord.replaceAll(RegExp(r'[^a-zA-Z0-9._]'), '');
+    
+    if (username.isEmpty) {
+      return content;
+    }
+    
+    // MOST RELIABLE: Find the LAST occurrence of "{username} {username}" 
+    // This pattern appears right before the actual caption in almost all Instagram posts
+    final doubleUsernamePattern = RegExp(
+      RegExp.escape(username) + r'\s+' + RegExp.escape(username) + r'\s+',
+      caseSensitive: false,
+    );
+    
+    // Find ALL matches and use the LAST one (closest to the actual caption)
+    final allMatches = doubleUsernamePattern.allMatches(content).toList();
+    if (allMatches.isNotEmpty) {
+      final lastMatch = allMatches.last;
+      String captionText = content.substring(lastMatch.end).trim();
+      captionText = _removeInstagramTrailingUI(captionText);
+      
+      // Remove any duplicate username at the start of caption if still present
+      while (captionText.startsWith(username)) {
+        captionText = captionText.substring(username.length).trim();
+      }
+      
+      if (captionText.isNotEmpty) {
+        return '$username - $captionText';
+      }
+    }
+    
+    // FALLBACK: Try other patterns if double-username wasn't found
+    final captionStartPatterns = [
+      // Match: "Save NNN, username caption" (engagement count before username)
+      RegExp(r'Save\s+[\d,]+\s+likes?\s*' + RegExp.escape(username) + r'\s+', caseSensitive: false),
+      RegExp(r'Save\s+[\d,]+\s*' + RegExp.escape(username) + r'\s+', caseSensitive: false),
+      // Match: "Location Name Verified N, username caption" (Photo posts with tagged location)
+      RegExp(r'Verified\s+[\d,]+\s*' + RegExp.escape(username) + r'\s+', caseSensitive: false),
+    ];
+    
+    String? captionText;
+    for (final pattern in captionStartPatterns) {
+      final match = pattern.firstMatch(content);
+      if (match != null) {
+        captionText = content.substring(match.end).trim();
+        break;
+      }
+    }
+    
+    // Clean up trailing Instagram UI elements from the caption
+    if (captionText != null && captionText.isNotEmpty) {
+      captionText = _removeInstagramTrailingUI(captionText);
+      
+      // Remove duplicate username at the start of caption if present
+      while (captionText != null && captionText.startsWith(username)) {
+        captionText = captionText.substring(username.length).trim();
+      }
+      
+      if (captionText != null && captionText.isNotEmpty) {
+        return '$username - $captionText';
+      }
+    }
+    
+    // Fallback: Remove known UI patterns and return cleaned content
+    content = content
+        // Remove audio info for Reels (Original audio format)
+        .replaceAll(RegExp(r'\s+and\s+\w+\s+Original audio', caseSensitive: false), '')
+        .replaceAll(RegExp(r'Original audio', caseSensitive: false), '')
+        // Remove music info for Reels (Artist · Song Title Watch on Instagram)
+        .replaceAll(RegExp(r"Verified\s+[\w\s]+·[^W]+Watch on Instagram", caseSensitive: false), '')
+        .replaceAll(RegExp(r"[\w\s]+·[^W]+Watch on Instagram", caseSensitive: false), '')
+        .replaceAll(RegExp(r'Watch on Instagram', caseSensitive: false), '')
+        // Remove tagged accounts and locations before caption
+        .replaceAll(RegExp(r'\s+and\s+\w+\s+[\w\s]+Verified\s+\d+,?', caseSensitive: false), '')
+        // Remove profile view patterns
+        .replaceAll(RegExp(r'View profile\s+\w+', caseSensitive: false), '')
+        .replaceAll(RegExp(r'View profile', caseSensitive: false), '')
+        // Remove verified badge and stats
+        .replaceAll(RegExp(r'Verified\s+\d+\s+posts\s+·\s+[\d.]+[KMB]?\s+followers', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\d+\s+posts\s+·\s+[\d.]+[KMB]?\s+followers', caseSensitive: false), '')
+        // Remove "View more on Instagram"
+        .replaceAll(RegExp(r'View more on Instagram', caseSensitive: false), '')
+        // Remove action buttons
+        .replaceAll(RegExp(r'Like\s+Comment\s+Share\s+Save\s*\d*,?', caseSensitive: false), '')
+        // Remove "View this post/reel on Instagram"
+        .replaceAll(RegExp(r'View this (post|reel) on Instagram', caseSensitive: false), '')
+        // Remove "A post/reel shared by..." footer
+        .replaceAll(RegExp(r'A (post|reel) shared by.*$', caseSensitive: false, dotAll: true), '')
+        // Remove engagement metrics
+        .replaceAll(RegExp(r'liked by.*and.*others', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\d+\s+likes', caseSensitive: false), '')
+        // Remove login prompts
+        .replaceAll(RegExp(r'Log in', caseSensitive: false), '')
+        .replaceAll(RegExp(r'Sign up', caseSensitive: false), '')
+        // Clean up whitespace
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    
+    // Remove trailing UI elements
+    content = _removeInstagramTrailingUI(content);
+    
+    // If we have a clean content that starts with username, format it nicely
+    if (content.startsWith(username) && content.length > username.length + 5) {
+      final afterUsername = content.substring(username.length).trim();
+      if (!afterUsername.startsWith('-')) {
+        return '$username - $afterUsername';
+      }
+    }
+    
+    return content;
+  }
+  
+  /// Remove trailing Instagram UI elements like comments section
+  String _removeInstagramTrailingUI(String text) {
+    return text
+        // Remove "View all NNN comments Add a comment... Instagram"
+        .replaceAll(RegExp(r'\s*View all \d+ comments.*$', caseSensitive: false, dotAll: true), '')
+        // Remove "Add a comment... Instagram" without view all
+        .replaceAll(RegExp(r'\s*Add a comment\.{0,3}\s*Instagram\s*$', caseSensitive: false), '')
+        // Remove trailing "Instagram" label
+        .replaceAll(RegExp(r'\s+Instagram\s*$', caseSensitive: false), '')
+        .trim();
   }
   
   /// Extract caption, hashtags, and mentions from a Facebook URL using Meta oEmbed API
@@ -3541,7 +3735,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ $platform AUTO-EXTRACT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.85);
+      
+      // Try to detect event information from the caption
+      final detectedEvent = await _detectEventFromTextAsync(caption);
+      _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -3549,7 +3747,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(locations, provider);
+      // If event info was detected, the dialog will show a second page for event designation
+      await _handleMultipleExtractedLocations(
+        locations,
+        provider,
+        detectedEventInfo: detectedEvent,
+      );
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ $platform AUTO-EXTRACT ERROR: $e');
@@ -3798,27 +4001,38 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Handle multiple extracted locations - show dialog with checklist to user
+  /// If [detectedEventInfo] is provided, the dialog will show a second page
+  /// for the user to select which locations should be designated as events.
   Future<void> _handleMultipleExtractedLocations(
     List<ExtractedLocationData> locations,
-    ReceiveShareProvider provider,
-  ) async {
+    ReceiveShareProvider provider, {
+    ExtractedEventInfo? detectedEventInfo,
+  }) async {
     // Check for duplicates before showing dialog
     final duplicates = await _checkLocationsForDuplicates(locations);
 
     if (!mounted) return;
 
     // Show dialog with selectable checklist (including duplicate info)
+    // If event info is detected, the dialog will show a second page for event designation
     final result = await showDialog<_MultiLocationSelectionResult>(
       context: context,
       builder: (context) => _MultiLocationSelectionDialog(
         locations: locations,
         duplicates: duplicates,
+        detectedEventInfo: detectedEventInfo,
       ),
     );
 
     // Handle the result (which now includes both locations and their duplicate info)
     final selectedLocations = result?.selectedLocations;
     final selectedDuplicates = result?.selectedDuplicates;
+    
+    // Store event info for use after successful save
+    if (result?.eventInfo != null) {
+      _detectedEventInfo = result!.eventInfo;
+      print('📅 EVENT: Detected event info stored for post-save handling: ${_detectedEventInfo?.eventName ?? 'Event'}');
+    }
 
     if (selectedLocations != null && selectedLocations.isNotEmpty) {
       // Separate locations into new vs existing (duplicates)
@@ -4022,6 +4236,243 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     });
+  }
+
+  /// Show dialog asking user if they want to create an event from detected event info
+  /// [savedExperiences] is used to get a fallback title if event name wasn't detected
+  Future<bool?> _showEventConfirmationDialog({List<Experience>? savedExperiences}) async {
+    if (_detectedEventInfo == null) return false;
+    
+    // Determine the event title for display
+    String eventName;
+    if (_detectedEventInfo!.eventName != null && _detectedEventInfo!.eventName!.isNotEmpty) {
+      eventName = _detectedEventInfo!.eventName!;
+    } else if (savedExperiences != null && savedExperiences.isNotEmpty && savedExperiences.first.name.isNotEmpty) {
+      eventName = savedExperiences.first.name;
+    } else {
+      eventName = 'Event';
+    }
+    final startDateTime = _detectedEventInfo!.startDateTime;
+    final endDateTime = _detectedEventInfo!.endDateTime;
+    
+    // Format the dates for display
+    final dateFormat = '${startDateTime.month}/${startDateTime.day}/${startDateTime.year}';
+    final timeFormat = _formatTimeOfDay(TimeOfDay.fromDateTime(startDateTime));
+    final endTimeFormat = _formatTimeOfDay(TimeOfDay.fromDateTime(endDateTime));
+    
+    return showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.event, color: Colors.orange, size: 24),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Event Detected',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Would you like to save and remind yourself of this event?',
+                style: TextStyle(fontSize: 15),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      eventName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
+                        const SizedBox(width: 8),
+                        Text(
+                          dateFormat,
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.schedule, size: 16, color: Colors.grey),
+                        const SizedBox(width: 8),
+                        Text(
+                          '$timeFormat - $endTimeFormat',
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('No, thanks'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Yes, create event'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  String _formatTimeOfDay(TimeOfDay time) {
+    final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+    final minute = time.minute.toString().padLeft(2, '0');
+    final period = time.period == DayPeriod.am ? 'AM' : 'PM';
+    return '$hour:$minute $period';
+  }
+
+  /// Open EventEditorModal with a new event pre-populated with saved experiences
+  Future<void> _openEventEditorWithExperiences(
+    List<Experience> experiences,
+    ExtractedEventInfo eventInfo,
+  ) async {
+    final currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      print('⚠️ Cannot create event: user not logged in');
+      return;
+    }
+    
+    final now = DateTime.now();
+    
+    // Create event entries from the saved experiences
+    final experienceEntries = experiences.map((exp) {
+      return EventExperienceEntry(
+        experienceId: exp.id,
+      );
+    }).toList();
+    
+    // Determine the event title:
+    // 1. Use detected event name from Gemini if available
+    // 2. Otherwise use the first experience's name as fallback
+    // 3. Finally fall back to "Untitled Event"
+    String eventTitle;
+    if (eventInfo.eventName != null && eventInfo.eventName!.isNotEmpty) {
+      eventTitle = eventInfo.eventName!;
+    } else if (experiences.isNotEmpty && experiences.first.name.isNotEmpty) {
+      eventTitle = experiences.first.name;
+    } else {
+      eventTitle = 'Untitled Event';
+    }
+    
+    // Automatically set cover image from the first experience in the itinerary
+    String? coverImageUrl;
+    if (experiences.isNotEmpty) {
+      final firstExp = experiences.first;
+      
+      // First try to get photo from existing data
+      coverImageUrl = _buildCoverImageUrlFromExperience(firstExp);
+      
+      // If no photo data but we have a placeId, fetch from Google Places API
+      if (coverImageUrl == null && 
+          firstExp.location.placeId != null && 
+          firstExp.location.placeId!.isNotEmpty) {
+        try {
+          coverImageUrl = await _mapsService.getPlaceImageUrl(
+            firstExp.location.placeId!,
+            maxWidth: 800,
+            maxHeight: 600,
+          );
+        } catch (e) {
+          print('Failed to fetch cover image from API: $e');
+        }
+      }
+    }
+    
+    // Create a new Event with the detected info
+    final newEvent = Event(
+      id: '', // Will be generated on save
+      title: eventTitle,
+      description: '',
+      startDateTime: eventInfo.startDateTime,
+      endDateTime: eventInfo.endDateTime,
+      coverImageUrl: coverImageUrl,
+      plannerUserId: currentUserId,
+      createdAt: now,
+      updatedAt: now,
+      experiences: experienceEntries,
+      ticketmasterUrl: eventInfo.ticketmasterUrl,
+      ticketmasterSearchTerm: eventInfo.ticketmasterSearchTerm,
+    );
+    
+    if (!mounted) return;
+    
+    // Open the EventEditorModal
+    await showModalBottomSheet<EventEditorResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => EventEditorModal(
+        event: newEvent,
+        experiences: experiences,
+        categories: _userCategories,
+        colorCategories: _userColorCategories,
+        isReadOnly: false, // Allow editing
+      ),
+    );
+  }
+
+  /// Build a cover image URL from an Experience's location photo data.
+  /// Returns null if no photo is available.
+  String? _buildCoverImageUrlFromExperience(Experience experience) {
+    final resourceName = experience.location.photoResourceName;
+    if (resourceName != null && resourceName.isNotEmpty) {
+      return GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+        resourceName,
+        maxWidthPx: 800,
+        maxHeightPx: 600,
+      );
+    }
+    final photoUrl = experience.location.photoUrl;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return photoUrl;
+    }
+    return null;
   }
 
   /// Determine the best primary category for an extracted location.
@@ -6050,6 +6501,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     List<String> errors = [];
     bool shouldAttemptNavigation =
         false; // Renamed from navigateAway for clarity
+    
+    // Track saved experience IDs for potential event creation
+    final List<String> savedExperienceIds = [];
+    final List<Experience> savedExperiences = [];
 
     try {
       if (!mounted) return;
@@ -6119,6 +6574,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               experienceIds: [],
               isTiktokPhoto: isTiktokPhoto,
               isPrivate: _sharedMediaIsPrivate,
+              caption: _extractedCaption,
             );
             String newItemId =
                 await _experienceService.createSharedMediaItem(newItem);
@@ -6190,6 +6646,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               final locationWithPlaceTypes = card.placeTypes != null && card.placeTypes!.isNotEmpty
                   ? locationToSave.copyWith(placeTypes: card.placeTypes)
                   : locationToSave;
+              
               Experience newExperience = Experience(
                 id: '',
                 name: cardTitle,
@@ -6216,6 +6673,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   await _experienceService.getExperience(targetExperienceId);
               if (!mounted) return;
               successCount++;
+              // Track for potential event creation
+              if (targetExperienceId.isNotEmpty) {
+                savedExperienceIds.add(targetExperienceId);
+                if (currentExperienceData != null) {
+                  savedExperiences.add(currentExperienceData);
+                }
+              }
             } else {
               isNewExperience = false;
               targetExperienceId = card.existingExperienceId!;
@@ -6250,6 +6714,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               currentExperienceData = updatedExpData;
               if (!mounted) return;
               updateCount++;
+              // Track for potential event creation
+              if (targetExperienceId.isNotEmpty) {
+                savedExperienceIds.add(targetExperienceId);
+                savedExperiences.add(updatedExpData);
+              }
             }
 
             final List<String> relevantMediaItemIds = uniqueMediaPaths
@@ -6434,6 +6903,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       if (shouldAttemptNavigation) {
+        if (!mounted) return;
+
+        // Check if we should offer to create an event
+        if (_detectedEventInfo != null && savedExperienceIds.isNotEmpty) {
+          final shouldCreateEvent = await _showEventConfirmationDialog(savedExperiences: savedExperiences);
+          if (shouldCreateEvent == true && mounted) {
+            // Open EventEditorModal with the saved experiences
+            await _openEventEditorWithExperiences(
+              savedExperiences,
+              _detectedEventInfo!,
+            );
+          }
+          // Clear the detected event info after handling
+          _detectedEventInfo = null;
+        }
+
         if (!mounted) return;
 
         _sharingService.prepareToNavigateAwayFromShare(); // Use new method
@@ -8840,6 +9325,251 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return null; // No duplicate found, or user chose to create new
   }
   // END ADDED
+  
+  /// Attempt to detect event information from text content (captions, descriptions, etc.)
+  /// Returns ExtractedEventInfo if an event is detected, null otherwise.
+  /// 
+  /// Uses a two-step approach:
+  /// 1. Quick regex check for explicit date/time patterns
+  /// 2. AI-based detection for natural language event references
+  Future<ExtractedEventInfo?> _detectEventFromTextAsync(String? text) async {
+    if (text == null || text.isEmpty) return null;
+    
+    // Step 1: Try quick regex-based detection first
+    final regexResult = _detectEventFromTextRegex(text);
+    if (regexResult != null) {
+      print('📅 EVENT DETECTION: Found event via regex - ${regexResult.startDateTime}');
+      // Try to enrich with Ticketmaster information
+      final enrichedResult = await _searchTicketmasterForEvent(regexResult);
+      return enrichedResult;
+    }
+    
+    // Step 2: Check for event-related keywords before calling AI
+    final eventKeywords = [
+      'event', 'festival', 'fair', 'concert', 'show', 'exhibition',
+      'happening', 'this weekend', 'this saturday', 'this sunday',
+      'next week', 'tickets', 'admission', 'doors open', 'starts at',
+      'march', 'april', 'may', 'june', 'july', 'august', 'september',
+      'october', 'november', 'december', 'january', 'february',
+    ];
+    
+    final lowerText = text.toLowerCase();
+    final hasEventKeywords = eventKeywords.any((kw) => lowerText.contains(kw));
+    
+    if (!hasEventKeywords) {
+      print('📅 EVENT DETECTION: No event keywords found, skipping AI detection');
+      return null;
+    }
+    
+    // Step 3: Use Gemini AI to detect event information
+    try {
+      print('📅 EVENT DETECTION: Using AI to analyze text for event info...');
+      final geminiService = GeminiService();
+      
+      if (!geminiService.isConfigured) {
+        print('⚠️ EVENT DETECTION: Gemini not configured');
+        return null;
+      }
+      
+      final result = await geminiService.detectEventFromText(text);
+      if (result != null) {
+        print('📅 EVENT DETECTION: AI found event - ${result.startDateTime} to ${result.endDateTime}');
+        // Try to enrich with Ticketmaster information
+        final enrichedResult = await _searchTicketmasterForEvent(result);
+        return enrichedResult;
+      } else {
+        print('📅 EVENT DETECTION: AI did not detect an event');
+      }
+      return result;
+    } catch (e) {
+      print('❌ EVENT DETECTION: AI error - $e');
+      return null;
+    }
+  }
+  
+  /// Search Ticketmaster for a matching event and enrich the event info with URL
+  Future<ExtractedEventInfo> _searchTicketmasterForEvent(ExtractedEventInfo eventInfo) async {
+    // Only search if we have an event name
+    if (eventInfo.eventName == null || eventInfo.eventName!.isEmpty) {
+      print('🎫 TICKETMASTER: No event name to search for');
+      return eventInfo;
+    }
+    
+    try {
+      print('🎫 TICKETMASTER: Searching for "${eventInfo.eventName}"...');
+      
+      // Track the search term that found results
+      String? successfulSearchTerm;
+      
+      // Try full event name first
+      var ticketmasterResult = await _ticketmasterService.findEventByNameAndDate(
+        eventName: eventInfo.eventName!,
+        eventDate: eventInfo.startDateTime,
+      );
+      
+      if (ticketmasterResult != null && ticketmasterResult.url != null) {
+        successfulSearchTerm = eventInfo.eventName;
+      } else {
+        // If no results, try simplified searches
+        // Try extracting just the artist/main name (before " - " or " Live")
+        final simplifiedName = _simplifyEventName(eventInfo.eventName!);
+        if (simplifiedName != eventInfo.eventName) {
+          print('🎫 TICKETMASTER: Trying simplified name: "$simplifiedName"');
+          ticketmasterResult = await _ticketmasterService.findEventByNameAndDate(
+            eventName: simplifiedName,
+            eventDate: eventInfo.startDateTime,
+          );
+          if (ticketmasterResult != null && ticketmasterResult.url != null) {
+            successfulSearchTerm = simplifiedName;
+          }
+        }
+      }
+      
+      if (ticketmasterResult != null && ticketmasterResult.url != null && successfulSearchTerm != null) {
+        print('🎫 TICKETMASTER: Found match - ${ticketmasterResult.name}');
+        print('🎫 TICKETMASTER: URL - ${ticketmasterResult.url}');
+        print('🎫 TICKETMASTER: Search term that worked: "$successfulSearchTerm"');
+        
+        // Return enriched event info with Ticketmaster URL and the search term that worked
+        return eventInfo.copyWith(
+          ticketmasterUrl: ticketmasterResult.url,
+          ticketmasterId: ticketmasterResult.id,
+          ticketmasterSearchTerm: successfulSearchTerm,
+        );
+      } else {
+        print('🎫 TICKETMASTER: No matching event found');
+      }
+    } catch (e) {
+      print('🎫 TICKETMASTER: Search error - $e');
+    }
+    
+    return eventInfo;
+  }
+  
+  /// Simplify event name for better Ticketmaster search results
+  String _simplifyEventName(String eventName) {
+    // Remove common suffixes like " - The Mountain Live", " Live", " Tour", etc.
+    var simplified = eventName
+        .replaceAll(RegExp(r'\s*-\s*(The\s+)?\w+\s+(Live|Tour|Concert|Show|Festival).*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\s+(Live|Tour|Concert|Show|Festival)$', caseSensitive: false), '')
+        .trim();
+    
+    // If we stripped too much, use the first part before " - "
+    if (simplified.isEmpty || simplified.length < 3) {
+      final parts = eventName.split(' - ');
+      simplified = parts.first.trim();
+    }
+    
+    return simplified;
+  }
+  
+  /// Quick regex-based event detection for explicit date/time patterns
+  /// This looks for patterns like:
+  /// - "December 31, 2024 at 8:00 PM"
+  /// - "Saturday, Jan 15 from 6pm-10pm"
+  /// - "Happening on 1/15/2025"
+  /// - ISO date formats, etc.
+  ExtractedEventInfo? _detectEventFromTextRegex(String text) {
+    // Pattern 1: "Month Day, Year at Time" (e.g., "December 31, 2024 at 8:00 PM")
+    final monthDayYearTimePattern = RegExp(
+      r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+'
+      r'(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+'
+      r'(?:at|@)\s*(\d{1,2}):?(\d{2})?\s*(am|pm|AM|PM)?',
+      caseSensitive: false,
+    );
+    
+    // Pattern 2: "MM/DD/YYYY" or "MM-DD-YYYY" with optional time
+    final slashDatePattern = RegExp(
+      r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s*(?:(?:at|@)\s*(\d{1,2}):?(\d{2})?\s*(am|pm|AM|PM)?)?',
+    );
+    
+    // Pattern 3: ISO format "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM"
+    final isoPattern = RegExp(
+      r'(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?',
+    );
+    
+    // Try to find a date pattern
+    DateTime? startDateTime;
+    String? rawMatch;
+    
+    // Try Pattern 1
+    final monthMatch = monthDayYearTimePattern.firstMatch(text);
+    if (monthMatch != null) {
+      rawMatch = monthMatch.group(0);
+      final monthNames = {
+        'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+        'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+      };
+      final month = monthNames[monthMatch.group(1)!.toLowerCase()] ?? 1;
+      final day = int.tryParse(monthMatch.group(2)!) ?? 1;
+      final year = int.tryParse(monthMatch.group(3)!) ?? DateTime.now().year;
+      var hour = int.tryParse(monthMatch.group(4) ?? '12') ?? 12;
+      final minute = int.tryParse(monthMatch.group(5) ?? '0') ?? 0;
+      final ampm = monthMatch.group(6)?.toLowerCase() ?? 'pm';
+      
+      if (ampm == 'pm' && hour != 12) hour += 12;
+      if (ampm == 'am' && hour == 12) hour = 0;
+      
+      startDateTime = DateTime(year, month, day, hour, minute);
+    }
+    
+    // Try Pattern 2 if Pattern 1 didn't match
+    if (startDateTime == null) {
+      final slashMatch = slashDatePattern.firstMatch(text);
+      if (slashMatch != null) {
+        rawMatch = slashMatch.group(0);
+        final month = int.tryParse(slashMatch.group(1)!) ?? 1;
+        final day = int.tryParse(slashMatch.group(2)!) ?? 1;
+        var year = int.tryParse(slashMatch.group(3)!) ?? DateTime.now().year;
+        if (year < 100) year += 2000; // Convert 2-digit year
+        
+        var hour = int.tryParse(slashMatch.group(4) ?? '12') ?? 12;
+        final minute = int.tryParse(slashMatch.group(5) ?? '0') ?? 0;
+        final ampm = slashMatch.group(6)?.toLowerCase();
+        
+        if (ampm == 'pm' && hour != 12) hour += 12;
+        if (ampm == 'am' && hour == 12) hour = 0;
+        
+        startDateTime = DateTime(year, month, day, hour, minute);
+      }
+    }
+    
+    // Try Pattern 3 (ISO format)
+    if (startDateTime == null) {
+      final isoMatch = isoPattern.firstMatch(text);
+      if (isoMatch != null) {
+        rawMatch = isoMatch.group(0);
+        final year = int.tryParse(isoMatch.group(1)!) ?? DateTime.now().year;
+        final month = int.tryParse(isoMatch.group(2)!) ?? 1;
+        final day = int.tryParse(isoMatch.group(3)!) ?? 1;
+        final hour = int.tryParse(isoMatch.group(4) ?? '12') ?? 12;
+        final minute = int.tryParse(isoMatch.group(5) ?? '0') ?? 0;
+        
+        startDateTime = DateTime(year, month, day, hour, minute);
+      }
+    }
+    
+    // If we found a date, create event info
+    if (startDateTime != null) {
+      // Check if the date is in the future or recent past (within last 7 days)
+      final now = DateTime.now();
+      final weekAgo = now.subtract(const Duration(days: 7));
+      
+      if (startDateTime.isAfter(weekAgo)) {
+        // Default end time is 2 hours after start
+        final endDateTime = startDateTime.add(const Duration(hours: 2));
+        
+        return ExtractedEventInfo(
+          startDateTime: startDateTime,
+          endDateTime: endDateTime,
+          confidence: 0.7,
+          rawText: rawMatch,
+        );
+      }
+    }
+    
+    return null;
+  }
 }
 
 class InstagramPreviewWrapper extends StatefulWidget {
@@ -9046,21 +9776,28 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 class _MultiLocationSelectionResult {
   final List<ExtractedLocationData> selectedLocations;
   final Map<ExtractedLocationData, Experience> selectedDuplicates;
+  /// Event info if detected (passed through for post-save handling)
+  final ExtractedEventInfo? eventInfo;
 
   _MultiLocationSelectionResult({
     required this.selectedLocations,
     required this.selectedDuplicates,
+    this.eventInfo,
   });
 }
 
 /// Dialog for selecting multiple locations from AI extraction results
+/// If event info is provided, shows a second page for event designation
 class _MultiLocationSelectionDialog extends StatefulWidget {
   final List<ExtractedLocationData> locations;
   final Map<int, Experience> duplicates; // index -> existing Experience
+  /// Optional event info detected from the content
+  final ExtractedEventInfo? detectedEventInfo;
 
   const _MultiLocationSelectionDialog({
     required this.locations,
     this.duplicates = const {},
+    this.detectedEventInfo,
   });
 
   @override
@@ -9084,6 +9821,8 @@ class _MultiLocationSelectionDialogState
     _selectedIndices =
         Set<int>.from(List.generate(widget.locations.length, (i) => i));
   }
+  
+  bool get _hasEventInfo => widget.detectedEventInfo != null;
 
   bool get _allSelected => _selectedIndices.length == widget.locations.length;
   bool get _noneSelected => _selectedIndices.isEmpty;
@@ -9126,364 +9865,433 @@ class _MultiLocationSelectionDialogState
       }
     });
   }
+  
+  void _finishSelection() {
+    // Sort indices and map to locations
+    final sortedIndices = _selectedIndices.toList()..sort();
+    final selectedLocations =
+        sortedIndices.map((i) => widget.locations[i]).toList();
+
+    // Build map of selected locations that are duplicates
+    final selectedDuplicates =
+        <ExtractedLocationData, Experience>{};
+    for (final index in sortedIndices) {
+      if (widget.duplicates.containsKey(index)) {
+        selectedDuplicates[widget.locations[index]] =
+            widget.duplicates[index]!;
+      }
+    }
+
+    Navigator.pop(
+        context,
+        _MultiLocationSelectionResult(
+          selectedLocations: selectedLocations,
+          selectedDuplicates: selectedDuplicates,
+          // Pass through event info for post-save handling
+          eventInfo: widget.detectedEventInfo,
+        ));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final primaryColor = Theme.of(context).primaryColor;
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16),
       backgroundColor: AppColors.backgroundColor,
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      title: _buildLocationTitle(),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: _buildLocationSelectionPage(),
+      ),
+      actions: _buildLocationActions(),
+    );
+  }
+  
+  Widget _buildLocationTitle() {
+    final primaryColor = Theme.of(context).primaryColor;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.location_on, color: AppColors.sage),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.locations.length == 1
+                    ? '1 Location Found'
+                    : '${widget.locations.length} Locations Found',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        if (_lowConfidenceCount > 0) ...[
+          const SizedBox(height: 4),
           Row(
             children: [
-              const Icon(Icons.location_on, color: AppColors.sage),
-              const SizedBox(width: 8),
+              Icon(Icons.info_outline, size: 14, color: primaryColor),
+              const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  widget.locations.length == 1
-                      ? '1 Location Found'
-                      : '${widget.locations.length} Locations Found',
-                  overflow: TextOverflow.ellipsis,
+                  '$_lowConfidenceCount location${_lowConfidenceCount == 1 ? '' : 's'} may need verification',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.normal,
+                    color: primaryColor,
+                  ),
                 ),
               ),
             ],
           ),
-          if (_lowConfidenceCount > 0) ...[
-            const SizedBox(height: 4),
-            Row(
+        ],
+        // Show event detected indicator
+        if (_hasEventInfo) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withOpacity(0.35)),
+            ),
+            child: Row(
               children: [
-                Icon(Icons.info_outline, size: 14, color: primaryColor),
-                const SizedBox(width: 4),
-                Expanded(
+                const Icon(Icons.event, size: 16, color: Colors.orange),
+                const SizedBox(width: 6),
+                const Expanded(
                   child: Text(
-                    '$_lowConfidenceCount location${_lowConfidenceCount == 1 ? '' : 's'} may need verification',
+                    'Event detected! You can save it after adding these locations.',
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: FontWeight.normal,
-                      color: primaryColor,
+                      color: Colors.orange,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
               ],
             ),
-          ],
+          ),
         ],
-      ),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Select which locations to add:',
-              style: TextStyle(fontWeight: FontWeight.w500),
-            ),
-            // Show duplicate notice if any duplicates found
-            if (_duplicateCount > 0) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppColors.teal.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.teal.withOpacity(0.35)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.bookmark, size: 16, color: AppColors.teal),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '$_duplicateCount already saved',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.teal,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            // Select All / Deselect All row
-            InkWell(
-              onTap: withHeavyTap(_toggleAll),
+      ],
+    );
+  }
+  
+  Widget _buildLocationSelectionPage() {
+    final primaryColor = Theme.of(context).primaryColor;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Select which locations to add:',
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        // Show duplicate notice if any duplicates found
+        if (_duplicateCount > 0) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.teal.withOpacity(0.12),
               borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Checkbox(
-                      value: _allSelected,
-                      tristate: true,
-                      onChanged: (_) => _toggleAll(),
-                      activeColor: AppColors.sage,
-                    ),
-                    Text(
-                      _allSelected ? 'Deselect All' : 'Select All',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.sage,
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.sage.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '${_selectedIndices.length}/${widget.locations.length}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.sage,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              border: Border.all(color: AppColors.teal.withOpacity(0.35)),
             ),
-            const Divider(height: 1),
-            const SizedBox(height: 8),
-            // Scrollable list of locations
-            Flexible(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.4,
+            child: Row(
+              children: [
+                Icon(Icons.bookmark, size: 16, color: AppColors.teal),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$_duplicateCount already saved',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.teal,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: widget.locations.length,
-                  itemBuilder: (context, index) {
-                    final location = widget.locations[index];
-                    final isSelected = _selectedIndices.contains(index);
-                    final isDuplicate = widget.duplicates.containsKey(index);
-                    final existingExp = widget.duplicates[index];
-                    final isLowConfidence = _isLowConfidence(location);
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        // Select All / Deselect All row
+        InkWell(
+          onTap: withHeavyTap(_toggleAll),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: _allSelected,
+                  tristate: true,
+                  onChanged: (_) => _toggleAll(),
+                  activeColor: AppColors.sage,
+                ),
+                Text(
+                  _allSelected ? 'Deselect All' : 'Select All',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.sage,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.sage.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_selectedIndices.length}/${widget.locations.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.sage,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        // Scrollable list of locations
+        Flexible(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.35,
+            ),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: widget.locations.length,
+              itemBuilder: (context, index) {
+                final location = widget.locations[index];
+                final isSelected = _selectedIndices.contains(index);
+                final isDuplicate = widget.duplicates.containsKey(index);
+                final existingExp = widget.duplicates[index];
+                final isLowConfidence = _isLowConfidence(location);
 
-                    return InkWell(
-                      onTap: withHeavyTap(() => _toggleLocation(index)),
+                return InkWell(
+                  onTap: withHeavyTap(() => _toggleLocation(index)),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    decoration: BoxDecoration(
+                      // Low confidence takes priority for background color
+                      color: isSelected
+                          ? (isLowConfidence
+                              ? primaryColor.withOpacity(0.05)
+                              : isDuplicate
+                                  ? AppColors.teal.withOpacity(0.12)
+                                  : AppColors.sage.withOpacity(0.08))
+                          : null,
                       borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        decoration: BoxDecoration(
-                          // Low confidence takes priority for background color
-                          color: isSelected
-                              ? (isLowConfidence
-                                  ? primaryColor.withOpacity(0.05)
-                                  : isDuplicate
-                                      ? AppColors.teal.withOpacity(0.12)
-                                      : AppColors.sage.withOpacity(0.08))
-                              : null,
-                          borderRadius: BorderRadius.circular(8),
-                          border: isLowConfidence && isSelected
-                              ? Border.all(
-                                  color: primaryColor.withOpacity(0.3),
-                                  width: 1)
-                              : null,
+                      border: isLowConfidence && isSelected
+                          ? Border.all(
+                              color: primaryColor.withOpacity(0.3),
+                              width: 1)
+                          : null,
+                    ),
+                    child: Row(
+                      children: [
+                        Checkbox(
+                          value: isSelected,
+                          onChanged: (_) => _toggleLocation(index),
+                          // Low confidence takes priority (even if duplicate)
+                          activeColor: isLowConfidence
+                              ? primaryColor
+                              : isDuplicate
+                                  ? AppColors.teal
+                                  : AppColors.sage,
                         ),
-                        child: Row(
-                          children: [
-                            Checkbox(
-                              value: isSelected,
-                              onChanged: (_) => _toggleLocation(index),
-                              // Low confidence takes priority (even if duplicate)
-                              activeColor: isLowConfidence
-                                  ? primaryColor
-                                  : isDuplicate
-                                      ? AppColors.teal
-                                      : AppColors.sage,
-                            ),
-                            Icon(
-                              // Low confidence takes priority for icon (even if duplicate)
-                              isLowConfidence
-                                  ? Icons.help_outline
-                                  : isDuplicate
-                                      ? Icons.bookmark
-                                      : Icons.place,
-                              size: 18,
-                              color: isLowConfidence
-                                  ? primaryColor
-                                  : isDuplicate
-                                      ? AppColors.teal
-                                      : Colors.grey,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                        Icon(
+                          // Low confidence takes priority for icon (even if duplicate)
+                          isLowConfidence
+                              ? Icons.help_outline
+                              : isDuplicate
+                                  ? Icons.bookmark
+                                  : Icons.place,
+                          size: 18,
+                          color: isLowConfidence
+                              ? primaryColor
+                              : isDuplicate
+                                  ? AppColors.teal
+                                  : Colors.grey,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
                                 children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          location.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w500,
-                                            color: isSelected
-                                                ? Colors.black
-                                                : Colors.grey[700],
-                                          ),
+                                  Expanded(
+                                    child: Text(
+                                      location.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                        color: isSelected
+                                            ? Colors.black
+                                            : Colors.grey[700],
+                                      ),
+                                    ),
+                                  ),
+                                  if (isDuplicate)
+                                    Container(
+                                      margin:
+                                          const EdgeInsets.only(left: 4),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.teal
+                                            .withOpacity(0.18),
+                                        borderRadius:
+                                            BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        'Saved',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.teal,
                                         ),
                                       ),
-                                      if (isDuplicate)
-                                        Container(
-                                          margin:
-                                              const EdgeInsets.only(left: 4),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.teal
-                                                .withOpacity(0.18),
-                                            borderRadius:
-                                                BorderRadius.circular(4),
+                                    ),
+                                  // Show verify badge for low confidence locations (even if also a duplicate)
+                                  if (isLowConfidence)
+                                    Container(
+                                      margin:
+                                          const EdgeInsets.only(left: 4),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            primaryColor.withOpacity(0.12),
+                                        borderRadius:
+                                            BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color:
+                                              primaryColor.withOpacity(0.35),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.warning_amber_rounded,
+                                            size: 10,
+                                            color: primaryColor,
                                           ),
-                                          child: Text(
-                                            'Saved',
+                                          const SizedBox(width: 2),
+                                          Text(
+                                            'Verify',
                                             style: TextStyle(
                                               fontSize: 10,
                                               fontWeight: FontWeight.w600,
-                                              color: AppColors.teal,
+                                              color: primaryColor,
                                             ),
                                           ),
-                                        ),
-                                      // Show verify badge for low confidence locations (even if also a duplicate)
-                                      if (isLowConfidence)
-                                        Container(
-                                          margin:
-                                              const EdgeInsets.only(left: 4),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color:
-                                                primaryColor.withOpacity(0.12),
-                                            borderRadius:
-                                                BorderRadius.circular(4),
-                                            border: Border.all(
-                                              color:
-                                                  primaryColor.withOpacity(0.35),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                Icons.warning_amber_rounded,
-                                                size: 10,
-                                                color: primaryColor,
-                                              ),
-                                              const SizedBox(width: 2),
-                                              Text(
-                                                'Verify',
-                                                style: TextStyle(
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: primaryColor,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  if (location.address != null &&
-                                      location.address!.isNotEmpty)
-                                    Text(
-                                      location.address!,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                  if (isDuplicate && existingExp != null)
-                                    Text(
-                                      'Address already saved as: "${existingExp.name}"',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontStyle: FontStyle.italic,
-                                        color: AppColors.teal,
-                                      ),
-                                    ),
-                                  if (isLowConfidence && !isDuplicate)
-                                    Text(
-                                      'Please verify this location is correct',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontStyle: FontStyle.italic,
-                                        color: primaryColor,
+                                        ],
                                       ),
                                     ),
                                 ],
                               ),
-                            ),
-                          ],
+                              if (location.address != null &&
+                                  location.address!.isNotEmpty)
+                                Text(
+                                  location.address!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              // Show original scanned text if different from resolved name
+                              if (location.originalQuery != null &&
+                                  location.originalQuery!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.search,
+                                        size: 11,
+                                        color: Colors.grey[500],
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Expanded(
+                                        child: Text(
+                                          'From: "${location.originalQuery}"',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontStyle: FontStyle.italic,
+                                            color: Colors.grey[500],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (isDuplicate && existingExp != null)
+                                Text(
+                                  'Address already saved as: "${existingExp.name}"',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontStyle: FontStyle.italic,
+                                    color: AppColors.teal,
+                                  ),
+                                ),
+                              if (isLowConfidence && !isDuplicate)
+                                Text(
+                                  'Please verify this location is correct',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontStyle: FontStyle.italic,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, null),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _noneSelected
-              ? null
-              : () {
-                  // Sort indices and map to locations
-                  final sortedIndices = _selectedIndices.toList()..sort();
-                  final selectedLocations =
-                      sortedIndices.map((i) => widget.locations[i]).toList();
-
-                  // Build map of selected locations that are duplicates
-                  final selectedDuplicates =
-                      <ExtractedLocationData, Experience>{};
-                  for (final index in sortedIndices) {
-                    if (widget.duplicates.containsKey(index)) {
-                      selectedDuplicates[widget.locations[index]] =
-                          widget.duplicates[index]!;
-                    }
-                  }
-
-                  Navigator.pop(
-                      context,
-                      _MultiLocationSelectionResult(
-                        selectedLocations: selectedLocations,
-                        selectedDuplicates: selectedDuplicates,
-                      ));
-                },
-          child: Text(
-            _buildButtonText(),
           ),
         ),
       ],
     );
+  }
+  
+  List<Widget> _buildLocationActions() {
+    return [
+      TextButton(
+        onPressed: () => Navigator.pop(context, null),
+        child: const Text('Cancel'),
+      ),
+      ElevatedButton(
+        onPressed: _noneSelected ? null : _finishSelection,
+        child: Text(_buildButtonText()),
+      ),
+    ];
   }
 
   String _buildButtonText() {

@@ -2808,7 +2808,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        url,
+                                        item.caption ?? url,
                                         style: const TextStyle(
                                           color: Colors.white,
                                         ),

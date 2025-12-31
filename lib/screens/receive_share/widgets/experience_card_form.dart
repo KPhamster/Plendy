@@ -1245,8 +1245,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           ),
                         ),
                       ),
-                      SizedBox(height: 12),
-
                       // Location selection with preview
                       ValueListenableBuilder<bool>(
                         valueListenable: widget.cardData.locationEnabled,
@@ -1964,6 +1962,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       ),
     );
   }
+
 }
 
 // --- ADDED: Dialog for selecting 'Other' categories ---

@@ -9025,7 +9025,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          mediaPath,
+                          mediaItem.caption ?? mediaPath,
                           style: const TextStyle(color: Colors.white),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

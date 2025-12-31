@@ -151,6 +151,12 @@ class LinkLocationExtractionService {
     print('🎬 CAPTION EXTRACTION: Analyzing $platform caption...');
     print('📝 Caption preview: ${caption.length > 100 ? "${caption.substring(0, 100)}..." : caption}');
     
+    // Extract mentions (@handles) from caption for tracking original sources
+    final mentions = _extractMentionsFromCaption(caption);
+    if (mentions.isNotEmpty) {
+      print('📸 CAPTION EXTRACTION: Found ${mentions.length} mention(s): ${mentions.take(5).join(", ")}');
+    }
+    
     List<ExtractedLocationData> results = [];
 
     try {
@@ -244,6 +250,13 @@ class LinkLocationExtractionService {
             
             // Location has valid coordinates and Place ID from grounding
             print('📍 CAPTION: "${location.name}" has valid coords from grounding');
+            
+            // Check if this location name came from a mention
+            final matchingMention = _findMatchingMention(location.name, mentions);
+            if (matchingMention != null) {
+              print('📸 CAPTION: Location "${location.name}" matched mention: $matchingMention');
+            }
+            
             results.add(ExtractedLocationData(
               placeId: location.placeId,
               name: location.name,
@@ -254,6 +267,7 @@ class LinkLocationExtractionService {
               confidence: 0.9,
               googleMapsUri: location.uri,
               placeTypes: location.types,
+              originalQuery: matchingMention,
             ));
           } else {
             // Location needs Places API lookup for coordinates
@@ -266,6 +280,12 @@ class LinkLocationExtractionService {
               userLocation: userLocation,
             );
             
+            // Check if this location name came from a mention
+            final matchingMention = _findMatchingMention(location.name, mentions);
+            if (matchingMention != null) {
+              print('📸 CAPTION: Location "${location.name}" matched mention: $matchingMention');
+            }
+            
             if (resolvedLocation != null) {
               // Skip if we've already added this Place ID
               if (resolvedLocation.placeId != null && seenPlaceIds.contains(resolvedLocation.placeId)) {
@@ -277,7 +297,10 @@ class LinkLocationExtractionService {
               }
               
               print('✅ CAPTION: Resolved "${location.name}" via Places API');
-              results.add(resolvedLocation);
+              // Add with mention as originalQuery if found, otherwise use whatever originalQuery the resolver set
+              results.add(resolvedLocation.copyWith(
+                originalQuery: matchingMention ?? resolvedLocation.originalQuery,
+              ));
             } else {
               // Still add the location even without coords - user can manually set
               print('⚠️ CAPTION: Could not resolve "${location.name}", adding without coords');
@@ -290,6 +313,7 @@ class LinkLocationExtractionService {
                 source: ExtractionSource.geminiGrounding,
                 confidence: 0.5, // Lower confidence without coords
                 placeTypes: location.types,
+                originalQuery: matchingMention,
               ));
             }
           }
@@ -397,6 +421,12 @@ class LinkLocationExtractionService {
               userLocation: userLocation,
             );
             
+            // Check if this location name came from a mention
+            final matchingMention = _findMatchingMention(name, mentions);
+            if (matchingMention != null) {
+              print('📸 CAPTION: Location "$name" matched mention: $matchingMention');
+            }
+            
             if (resolvedLocation != null) {
               // Skip if we've already added this Place ID
               if (resolvedLocation.placeId != null && seenPlaceIds.contains(resolvedLocation.placeId)) {
@@ -408,7 +438,10 @@ class LinkLocationExtractionService {
               }
               
               print('✅ CAPTION: Resolved "$name" via Places API');
-              results.add(resolvedLocation);
+              // Add with mention as originalQuery if found
+              results.add(resolvedLocation.copyWith(
+                originalQuery: matchingMention ?? resolvedLocation.originalQuery,
+              ));
             } else {
               // Add location without coordinates - user can manually set
               print('⚠️ CAPTION: Could not resolve "$name", adding without coords');
@@ -420,6 +453,7 @@ class LinkLocationExtractionService {
                 type: PlaceType.unknown,
                 source: ExtractionSource.geminiGrounding, // From Gemini, even though grounding chunks were empty
                 confidence: 0.5,
+                originalQuery: matchingMention,
               ));
             }
           }
@@ -841,6 +875,9 @@ class LinkLocationExtractionService {
       }
       
       print('✅ PLACES RESOLVE: Final result "$resolvedName" at $coords');
+      
+      // Store original query only if it's different from the resolved name
+      final originalQueryText = (resolvedName != null && resolvedName != locationName) ? locationName : null;
 
       return ExtractedLocationData(
         placeId: placeId,
@@ -853,6 +890,7 @@ class LinkLocationExtractionService {
         metadata: {'original_query': locationName, 'location_context': locationContext},
         website: website,
         needsConfirmation: needsConfirmation,
+        originalQuery: originalQueryText,
         placeTypes: placeTypes,
       );
     } catch (e) {
@@ -880,6 +918,44 @@ class LinkLocationExtractionService {
     }
     
     return buffer.toString();
+  }
+
+  /// Extract @mentions from caption text
+  /// Returns list of mentions without the @ symbol
+  List<String> _extractMentionsFromCaption(String caption) {
+    final mentionRegex = RegExp(r'@([a-zA-Z0-9_.]+)');
+    final matches = mentionRegex.allMatches(caption);
+    return matches.map((m) => m.group(1)!.toLowerCase()).toList();
+  }
+
+  /// Find a matching mention for a location name
+  /// Returns the original mention (with @) if found, null otherwise
+  String? _findMatchingMention(String locationName, List<String> mentions) {
+    if (mentions.isEmpty) return null;
+    
+    final nameLower = locationName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    
+    for (final mention in mentions) {
+      // Clean the mention for comparison
+      final mentionClean = mention.replaceAll(RegExp(r'[^a-z0-9]'), '');
+      
+      // Check if mention contains the name or vice versa
+      // "origenorigenorigen" contains "origen" -> match
+      // "origen" is contained in "origenorigenorigen" -> match
+      if (mentionClean.contains(nameLower) || nameLower.contains(mentionClean)) {
+        return '@$mention';
+      }
+      
+      // Also check if words from the name appear in the mention
+      final nameWords = locationName.toLowerCase().split(RegExp(r'[^a-z0-9]+'));
+      for (final word in nameWords) {
+        if (word.length >= 3 && mentionClean.contains(word)) {
+          return '@$mention';
+        }
+      }
+    }
+    
+    return null;
   }
 
   // ============ EXTRACTION STRATEGIES ============
@@ -1815,6 +1891,9 @@ class LinkLocationExtractionService {
             }
           }
           
+          // Store original query only if it's different from the resolved name
+          final originalQueryText = locationInfo.name != name ? locationInfo.name : null;
+          
           final extractedData = ExtractedLocationData(
             placeId: placeId,
             name: name,
@@ -1826,6 +1905,7 @@ class LinkLocationExtractionService {
             placeTypes: (finalPlaceResult['types'] as List?)?.cast<String>(),
             website: website,
             needsConfirmation: needsConfirmation,
+            originalQuery: originalQueryText,
           );
           
           // Avoid duplicates
@@ -1879,8 +1959,8 @@ class LinkLocationExtractionService {
   /// [userLocation] - Optional user location for better Places API results
   /// [onProgress] - Optional callback for progress updates during location verification
   /// 
-  /// Returns extracted locations with combined region context
-  Future<({List<ExtractedLocationData> locations, String? regionContext})> extractLocationsFromMultipleImages(
+  /// Returns extracted locations with combined region context and extracted text
+  Future<({List<ExtractedLocationData> locations, String? regionContext, String? extractedText})> extractLocationsFromMultipleImages(
     List<({Uint8List bytes, String mimeType})> images, {
     LatLng? userLocation,
     ExtractionProgressCallback? onProgress,
@@ -1894,7 +1974,7 @@ class LinkLocationExtractionService {
       
       if (geminiResult.locations.isEmpty) {
         print('⚠️ MULTI-IMAGE EXTRACTION: No locations found in combined analysis');
-        return (locations: <ExtractedLocationData>[], regionContext: geminiResult.regionContext);
+        return (locations: <ExtractedLocationData>[], regionContext: geminiResult.regionContext, extractedText: geminiResult.extractedText);
       }
 
       print('📷 MULTI-IMAGE EXTRACTION: Gemini found ${geminiResult.locations.length} location(s)');
@@ -2217,6 +2297,9 @@ class LinkLocationExtractionService {
             }
           }
           
+          // Store original query only if it's different from the resolved name
+          final originalQueryText = locationInfo.name != name ? locationInfo.name : null;
+          
           final extractedData = ExtractedLocationData(
             placeId: placeId,
             name: name,
@@ -2228,6 +2311,7 @@ class LinkLocationExtractionService {
             placeTypes: (finalPlaceResult['types'] as List?)?.cast<String>(),
             website: website,
             needsConfirmation: needsConfirmation,
+            originalQuery: originalQueryText,
           );
           
           if (!_isDuplicate(extractedData, results)) {
@@ -2242,11 +2326,11 @@ class LinkLocationExtractionService {
       }
 
       print('📷 MULTI-IMAGE EXTRACTION: Final result - ${results.length} verified location(s)');
-      return (locations: results, regionContext: geminiResult.regionContext);
+      return (locations: results, regionContext: geminiResult.regionContext, extractedText: geminiResult.extractedText);
     } catch (e, stackTrace) {
       print('❌ MULTI-IMAGE EXTRACTION ERROR: $e');
       print('Stack trace: $stackTrace');
-      return (locations: <ExtractedLocationData>[], regionContext: null);
+      return (locations: <ExtractedLocationData>[], regionContext: null, extractedText: null);
     }
   }
 
@@ -2876,6 +2960,9 @@ class LinkLocationExtractionService {
             print('🤖 IMAGE EXTRACTION: AI reranking result - confidence: ${(finalConfidence * 100).toInt()}%');
           }
           
+          // Store original query only if it's different from the resolved name
+          final originalQueryText = locationInfo.name != name ? locationInfo.name : null;
+          
           final extractedData = ExtractedLocationData(
             placeId: placeId,
             name: name,
@@ -2887,6 +2974,7 @@ class LinkLocationExtractionService {
             placeTypes: (finalPlaceResult['types'] as List?)?.cast<String>(),
             website: website,
             needsConfirmation: needsConfirmation,
+            originalQuery: originalQueryText,
           );
           
           if (!_isDuplicate(extractedData, results)) {

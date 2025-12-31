@@ -11,6 +11,7 @@ class SharedMediaItem extends Equatable {
       experienceIds; // List of Experience IDs this media belongs to
   final bool? isTiktokPhoto; // Whether this TikTok URL is a photo carousel (null for non-TikTok items)
   final bool isPrivate;
+  final String? caption; // Caption text extracted from social media posts (Instagram, TikTok, Facebook)
   // Add other potential metadata if needed (e.g., mediaType, thumbnail?)
 
   const SharedMediaItem({
@@ -21,11 +22,12 @@ class SharedMediaItem extends Equatable {
     required this.experienceIds,
     this.isTiktokPhoto,
     this.isPrivate = false,
+    this.caption,
   });
 
   @override
   List<Object?> get props =>
-      [id, path, createdAt, ownerUserId, experienceIds, isTiktokPhoto, isPrivate];
+      [id, path, createdAt, ownerUserId, experienceIds, isTiktokPhoto, isPrivate, caption];
 
   /// Creates a SharedMediaItem from a Firestore document
   factory SharedMediaItem.fromFirestore(DocumentSnapshot doc) {
@@ -39,6 +41,7 @@ class SharedMediaItem extends Equatable {
       experienceIds: List<String>.from(data['experienceIds'] ?? []),
       isTiktokPhoto: data['isTiktokPhoto'] as bool?,
       isPrivate: data['isPrivate'] == true,
+      caption: data['caption'] as String?,
     );
   }
 
@@ -51,6 +54,7 @@ class SharedMediaItem extends Equatable {
       'experienceIds': experienceIds,
       if (isTiktokPhoto != null) 'isTiktokPhoto': isTiktokPhoto,
       'isPrivate': isPrivate,
+      if (caption != null) 'caption': caption,
       // Note: 'id' is the document ID, not stored as a field within the document
     };
   }
@@ -73,6 +77,7 @@ class SharedMediaItem extends Equatable {
     List<String>? experienceIds,
     bool? isTiktokPhoto,
     bool? isPrivate,
+    String? caption,
   }) {
     return SharedMediaItem(
       id: id ?? this.id,
@@ -82,6 +87,7 @@ class SharedMediaItem extends Equatable {
       experienceIds: experienceIds ?? this.experienceIds,
       isTiktokPhoto: isTiktokPhoto ?? this.isTiktokPhoto,
       isPrivate: isPrivate ?? this.isPrivate,
+      caption: caption ?? this.caption,
     );
   }
 }
