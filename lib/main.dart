@@ -110,9 +110,9 @@ Future<void> _checkForSharedData() async {
         ((initial.content?.isNotEmpty ?? false) ||
             (initial.attachments?.isNotEmpty ?? false))) {
       final files = _convertSharedMedia(initial);
-      print("🎯 DEBUG: Found INITIAL shared data: ${files.length} items");
+      //print("🎯 DEBUG: Found INITIAL shared data: ${files.length} items");
       for (var item in files) {
-        print("🎯 DEBUG: ${item.type}: ${item.path}");
+        //print("🎯 DEBUG: ${item.type}: ${item.path}");
       }
       // Shared content received - no toast needed
     }
@@ -123,9 +123,9 @@ Future<void> _checkForSharedData() async {
     ShareHandlerPlatform.instance.sharedMediaStream.listen((media) {
       final value = _convertSharedMedia(media);
       if (value.isNotEmpty) {
-        print("🎯 DEBUG: Found STREAM shared data: ${value.length} items");
+        //print("🎯 DEBUG: Found STREAM shared data: ${value.length} items");
         for (var item in value) {
-          print("🎯 DEBUG: ${item.type}: ${item.path}");
+          //print("🎯 DEBUG: ${item.type}: ${item.path}");
         }
         // Stream shared content received - no toast needed
       }

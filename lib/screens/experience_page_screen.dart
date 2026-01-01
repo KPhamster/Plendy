@@ -22,6 +22,7 @@ import '../services/experience_service.dart'; // For fetching reviews
 // RE-ADDED: Import Instagram Preview Widget
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import '../services/instagram_settings_service.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
@@ -190,6 +191,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _isMediaPreviewHeightExpanded = false;
   static const double _contentPreviewDefaultHeight = 640.0;
   static const double _contentPreviewMaxExpandedHeight = 830.0;
+  /// Local override for display mode. null = use settings, true = web view, false = default
+  bool? _localModeOverride;
+  /// Cached settings value (loaded once on init)
+  bool _settingsWebViewMode = false;
   // --- END ADDED ---
   bool _isMediaShareInProgress = false;
   bool _isSaveSheetOpen = false;
@@ -348,7 +353,32 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     // Fetch matching event for banner
     _fetchMatchingEvent();
+
+    _loadInitialMode();
   }
+
+  Future<void> _loadInitialMode() async {
+    final settingsService = InstagramSettingsService.instance;
+    final isWebView = await settingsService.isWebViewMode();
+    if (mounted) {
+      setState(() {
+        _settingsWebViewMode = isWebView;
+      });
+    }
+  }
+
+  void _toggleDisplayMode() {
+    if (!mounted) return;
+    setState(() {
+      // Get current effective mode
+      final currentMode = _localModeOverride ?? _settingsWebViewMode;
+      // Toggle to the opposite
+      _localModeOverride = !currentMode;
+    });
+  }
+
+  /// Get current effective mode for display purposes
+  bool get _isWebViewMode => _localModeOverride ?? _settingsWebViewMode;
 
   void _navigateToMainScreen() {
     Navigator.of(context).pushAndRemoveUntil(
@@ -2515,6 +2545,54 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ),
             ),
           ),
+          SliverPadding(
+            padding: const EdgeInsets.only(top: 8.0, right: 16.0),
+            sliver: SliverToBoxAdapter(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: _toggleDisplayMode,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _isWebViewMode
+                          ? AppColors.teal.withOpacity(0.15)
+                          : AppColors.sage.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _isWebViewMode
+                            ? AppColors.teal.withOpacity(0.5)
+                            : AppColors.sage.withOpacity(0.5),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _isWebViewMode ? Icons.language : Icons.code,
+                          size: 14,
+                          color:
+                              _isWebViewMode ? AppColors.teal : AppColors.sage,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _isWebViewMode ? 'Web view' : 'Default view',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: _isWebViewMode
+                                ? AppColors.teal
+                                : AppColors.sage,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           // --- END MOVED Button ---
 
           // Media list rendered as a sliver so it can flex with available height
@@ -2613,6 +2691,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                               _inAppWebViewControllers[url] = controller;
                             },
                             onPageFinished: (_) {},
+                            overrideWebViewMode: _localModeOverride,
                           );
                   } else if (isFacebookUrl) {
                     // Use taller height for Facebook Reels
