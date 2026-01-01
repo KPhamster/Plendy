@@ -9779,11 +9779,21 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   bool _isExpanded = false;
   bool _isDisposed = false;
   inapp.InAppWebViewController? _controller;
+  /// Display mode: true = web view, false = default (oEmbed HTML)
+  /// Always starts as false (default/oEmbed) regardless of user's global settings
+  bool _isWebViewMode = false;
 
   @override
   void dispose() {
     _isDisposed = true;
     super.dispose();
+  }
+
+  void _toggleDisplayMode() {
+    _safeSetState(() {
+      // Toggle between default (oEmbed) and web view modes
+      _isWebViewMode = !_isWebViewMode;
+    });
   }
 
   // Safe setState that checks if the widget is still mounted
@@ -9901,8 +9911,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
     // Use a consistent key to prevent widget recreation across rebuilds
     final widgetKey = ValueKey('instagram_preview_${widget.url}');
 
-    // Let InstagramWebView handle all settings and mode switching internally
-    // This avoids duplicate settings loading and race conditions
+    // Pass local mode override to InstagramWebView
+    // When null, widget uses settings; when set, overrides settings temporarily
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -9913,6 +9923,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           launchUrlCallback: _handleUrlLaunch,
           onWebViewCreated: _handleWebViewCreated,
           onPageFinished: _handlePageFinished,
+          overrideWebViewMode: _isWebViewMode,
         ),
         Container(height: 8, color: AppColors.backgroundColor),
         _buildBottomControls(),
@@ -9924,10 +9935,52 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   Widget _buildBottomControls() {
     return Container(
       color: AppColors.backgroundColor,
+      height: 48,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const SizedBox(width: 48),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: GestureDetector(
+                onTap: _toggleDisplayMode,
+                child: Container(
+                  margin: const EdgeInsets.only(left: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _isWebViewMode
+                        ? AppColors.teal.withOpacity(0.15)
+                        : AppColors.sage.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _isWebViewMode
+                          ? AppColors.teal.withOpacity(0.5)
+                          : AppColors.sage.withOpacity(0.5),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isWebViewMode ? Icons.language : Icons.code,
+                        size: 14,
+                        color: _isWebViewMode ? AppColors.teal : AppColors.sage,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isWebViewMode ? 'Web view' : 'Default view',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: _isWebViewMode ? AppColors.teal : AppColors.sage,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(FontAwesomeIcons.instagram),
             color: const Color(0xFFE1306C),
@@ -9937,19 +9990,24 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
             padding: EdgeInsets.zero,
             onPressed: () => _handleUrlLaunch(widget.url),
           ),
-          IconButton(
-            icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-            iconSize: 24,
-            color: AppColors.teal,
-            tooltip: _isExpanded ? 'Collapse' : 'Expand',
-            constraints: const BoxConstraints(),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            onPressed: () {
-              _safeSetState(() {
-                _isExpanded = !_isExpanded;
-                widget.onExpansionChanged?.call(_isExpanded, widget.url);
-              });
-            },
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                iconSize: 24,
+                color: AppColors.teal,
+                tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                onPressed: () {
+                  _safeSetState(() {
+                    _isExpanded = !_isExpanded;
+                    widget.onExpansionChanged?.call(_isExpanded, widget.url);
+                  });
+                },
+              ),
+            ),
           ),
         ],
       ),

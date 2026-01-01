@@ -24,6 +24,9 @@ class InstagramWebView extends StatefulWidget {
   final Function(String)? onPageFinished;
   final Function(double)? onContentHeightChanged; // Callback when content height is measured
   final double topPadding;
+  /// Optional override for display mode. When provided, bypasses user settings.
+  /// true = Web View mode, false = Default mode, null = use settings
+  final bool? overrideWebViewMode;
 
   const InstagramWebView({
     super.key,
@@ -34,6 +37,7 @@ class InstagramWebView extends StatefulWidget {
     this.onPageFinished,
     this.onContentHeightChanged,
     this.topPadding = 0,
+    this.overrideWebViewMode,
   });
 
   @override
@@ -72,6 +76,15 @@ class InstagramWebViewState extends State<InstagramWebView> {
     InstagramSettingsService.instance.removeListener(_onSettingsChanged);
     super.dispose();
   }
+
+  @override
+  void didUpdateWidget(covariant InstagramWebView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reinitialize if override mode changed
+    if (oldWidget.overrideWebViewMode != widget.overrideWebViewMode) {
+      _loadSettingsAndInitialize();
+    }
+  }
   
   /// Called when Instagram display settings change
   void _onSettingsChanged() {
@@ -83,13 +96,18 @@ class InstagramWebViewState extends State<InstagramWebView> {
 
   /// Load user settings and initialize
   Future<void> _loadSettingsAndInitialize() async {
-    // Load the user's display preference
-    final settingsService = InstagramSettingsService.instance;
-    final isWebViewMode = await settingsService.isWebViewMode();
+    // Check for override first, otherwise load user's display preference
+    final bool isWebViewMode;
+    if (widget.overrideWebViewMode != null) {
+      isWebViewMode = widget.overrideWebViewMode!;
+      print('🔧 INSTAGRAM: Using override mode - isWebViewMode: $isWebViewMode');
+    } else {
+      final settingsService = InstagramSettingsService.instance;
+      isWebViewMode = await settingsService.isWebViewMode();
+      print('🔧 INSTAGRAM: Loading settings - isWebViewMode: $isWebViewMode');
+    }
     
     if (!mounted || _isDisposed) return;
-    
-    print('🔧 INSTAGRAM: Loading settings - isWebViewMode: $isWebViewMode');
     
     // Reset state for reinitialization
     setState(() {

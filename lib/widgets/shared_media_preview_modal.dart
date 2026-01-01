@@ -18,6 +18,7 @@ import '../screens/receive_share/widgets/generic_url_preview_widget.dart';
 import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../screens/receive_share/widgets/yelp_preview_widget.dart';
 import '../services/google_maps_service.dart';
+import '../services/instagram_settings_service.dart';
 import '../services/experience_share_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../screens/experience_page_screen.dart';
@@ -87,11 +88,17 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     'Oct',
     'Nov',
     'Dec',
-  ];
+    ''];
+
+  /// Local override for display mode. null = use settings, true = web view, false = default
+  bool? _localModeOverride;
+  /// Cached settings value (loaded once on init)
+  bool _settingsWebViewMode = false;
 
   @override
   void initState() {
     super.initState();
+    _loadInitialMode();
     // Initialize current index based on provided mediaItem
     final initialIdx =
         widget.mediaItems.indexWhere((it) => it.id == widget.mediaItem.id);
@@ -107,6 +114,29 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     _pageController.dispose();
     super.dispose();
   }
+
+  Future<void> _loadInitialMode() async {
+    final settingsService = InstagramSettingsService.instance;
+    final isWebView = await settingsService.isWebViewMode();
+    if (mounted) {
+      setState(() {
+        _settingsWebViewMode = isWebView;
+      });
+    }
+  }
+
+  void _toggleDisplayMode() {
+    if (!mounted) return;
+    setState(() {
+      // Get current effective mode
+      final currentMode = _localModeOverride ?? _settingsWebViewMode;
+      // Toggle to the opposite
+      _localModeOverride = !currentMode;
+    });
+  }
+
+  /// Get current effective mode for display purposes
+  bool get _isWebViewMode => _localModeOverride ?? _settingsWebViewMode;
 
   String _formatFullTimestamp(DateTime timestamp) {
     final local = timestamp.toLocal();
@@ -510,6 +540,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
               launchUrlCallback: widget.onLaunchUrl,
               onWebViewCreated: (_) {},
               onPageFinished: (_) {},
+              overrideWebViewMode: _localModeOverride,
             );
 
       return instagramWidget;
@@ -977,6 +1008,49 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       child: Stack(
         alignment: Alignment.center,
         children: [
+          if (type == _MediaType.instagram)
+            Positioned(
+              left: 0,
+              child: GestureDetector(
+                onTap: _toggleDisplayMode,
+                child: Container(
+                  margin: const EdgeInsets.only(left: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _isWebViewMode
+                        ? AppColors.teal.withOpacity(0.15)
+                        : AppColors.sage.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _isWebViewMode
+                          ? AppColors.teal.withOpacity(0.5)
+                          : AppColors.sage.withOpacity(0.5),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isWebViewMode ? Icons.language : Icons.code,
+                        size: 14,
+                        color: _isWebViewMode ? AppColors.teal : AppColors.sage,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isWebViewMode ? 'Web view' : 'Default view',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color:
+                              _isWebViewMode ? AppColors.teal : AppColors.sage,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Center(child: socialButton),
           Align(
             alignment: Alignment.centerRight,
