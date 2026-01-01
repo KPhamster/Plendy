@@ -23,6 +23,9 @@ class ExtractedEventInfo {
   
   /// The search term that found results on Ticketmaster (use this for search URL)
   final String? ticketmasterSearchTerm;
+  
+  /// Ticketmaster event image URL (for cover image)
+  final String? ticketmasterImageUrl;
 
   const ExtractedEventInfo({
     this.eventName,
@@ -33,6 +36,7 @@ class ExtractedEventInfo {
     this.ticketmasterUrl,
     this.ticketmasterId,
     this.ticketmasterSearchTerm,
+    this.ticketmasterImageUrl,
   });
 
   /// Create from a map (for JSON deserialization)
@@ -46,6 +50,7 @@ class ExtractedEventInfo {
       ticketmasterUrl: map['ticketmaster_url'] as String?,
       ticketmasterId: map['ticketmaster_id'] as String?,
       ticketmasterSearchTerm: map['ticketmaster_search_term'] as String?,
+      ticketmasterImageUrl: map['ticketmaster_image_url'] as String?,
     );
   }
 
@@ -60,6 +65,7 @@ class ExtractedEventInfo {
       'ticketmaster_url': ticketmasterUrl,
       'ticketmaster_id': ticketmasterId,
       'ticketmaster_search_term': ticketmasterSearchTerm,
+      'ticketmaster_image_url': ticketmasterImageUrl,
     };
   }
 
@@ -73,6 +79,7 @@ class ExtractedEventInfo {
     String? ticketmasterUrl,
     String? ticketmasterId,
     String? ticketmasterSearchTerm,
+    String? ticketmasterImageUrl,
   }) {
     return ExtractedEventInfo(
       eventName: eventName ?? this.eventName,
@@ -83,6 +90,7 @@ class ExtractedEventInfo {
       ticketmasterUrl: ticketmasterUrl ?? this.ticketmasterUrl,
       ticketmasterId: ticketmasterId ?? this.ticketmasterId,
       ticketmasterSearchTerm: ticketmasterSearchTerm ?? this.ticketmasterSearchTerm,
+      ticketmasterImageUrl: ticketmasterImageUrl ?? this.ticketmasterImageUrl,
     );
   }
 

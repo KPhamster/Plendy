@@ -958,7 +958,9 @@ List<SharedMediaFile> _convertSharedMedia(SharedMedia media) {
   if (content != null && content.trim().isNotEmpty) {
     final url = _extractFirstUrl(content);
     out.add(SharedMediaFile(
-      path: content,
+      // Use the extracted URL if found, otherwise use the full content
+      // This handles cases like "Share the event! https://..." where we only want the URL
+      path: url ?? content,
       thumbnail: null,
       duration: null,
       type: url != null ? SharedMediaType.url : SharedMediaType.text,

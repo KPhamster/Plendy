@@ -30,6 +30,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/yelp_preview_widget.dart';
+import 'receive_share/widgets/ticketmaster_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -40,6 +41,7 @@ import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 // ADDED: Import AuthService (adjust path if necessary)
 import '../services/auth_service.dart';
+import '../services/ticketmaster_service.dart';
 // ADDED: Import the new edit modal (we will create this file next)
 import '../widgets/edit_experience_modal.dart';
 import '../widgets/cached_profile_avatar.dart';
@@ -169,6 +171,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   final _experienceService = ExperienceService(); // ADDED
   final ExperienceShareService _experienceShareService =
       ExperienceShareService();
+  final TicketmasterService _ticketmasterService = TicketmasterService();
   // ADDED: AuthService instance
   final _authService = AuthService();
   final ReportService _reportService = ReportService();
@@ -200,6 +203,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _isSaveSheetOpen = false;
   // --- ADDED: Maps preview futures cache for content tab ---
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  // Ticketmaster event details cache for content tab
+  final Map<String, TicketmasterEventDetails?> _ticketmasterEventDetails = {};
+  final Set<String> _ticketmasterUrlsLoading = {};
   // --- END ADDED ---
   // --- ADDED: Webview controllers for refresh ---
   final Map<String, WebViewController> _webViewControllers = {};
@@ -2430,6 +2436,43 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return clampedHeight.toDouble();
   }
 
+  bool _isTicketmasterUrl(String url) {
+    return TicketmasterService.isTicketmasterUrl(url);
+  }
+
+  void _queueTicketmasterDetailsLoad(String url) {
+    if (_ticketmasterEventDetails.containsKey(url) ||
+        _ticketmasterUrlsLoading.contains(url)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadTicketmasterEventDetails(url);
+      }
+    });
+  }
+
+  Future<void> _loadTicketmasterEventDetails(String url) async {
+    if (_ticketmasterUrlsLoading.contains(url) ||
+        _ticketmasterEventDetails.containsKey(url)) {
+      return;
+    }
+    setState(() {
+      _ticketmasterUrlsLoading.add(url);
+    });
+    TicketmasterEventDetails? details;
+    try {
+      details = await _ticketmasterService.getEventFromUrl(url);
+    } catch (_) {
+      details = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _ticketmasterEventDetails[url] = details;
+      _ticketmasterUrlsLoading.remove(url);
+    });
+  }
+
   Widget _buildMediaPreviewToggleButton({
     required String mediaPath,
     required bool isExpanded,
@@ -2630,6 +2673,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         url.toLowerCase().contains('goo.gl/maps') ||
                         url.toLowerCase().contains('g.co/kgs/') ||
                         url.toLowerCase().contains('share.google/');
+                final bool isTicketmasterUrl = _isTicketmasterUrl(url);
                 final bool isNetworkUrl =
                     url.startsWith('http') || url.startsWith('https');
                 final bool isGenericUrl = !isTikTokUrl &&
@@ -2735,6 +2779,29 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                               _inAppWebViewControllers[url] = controller;
                             },
                           );
+                  } else if (isTicketmasterUrl) {
+                    // First check if we have cached data in the SharedMediaItem
+                    final hasCachedData = item.ticketmasterEventName != null || 
+                                          item.ticketmasterImageUrl != null;
+                    
+                    // Only load from API if we don't have cached data
+                    if (!hasCachedData) {
+                      _queueTicketmasterDetailsLoad(url);
+                    }
+                    
+                    final details = _ticketmasterEventDetails[url];
+                    final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(url);
+                    
+                    // Prefer cached data from SharedMediaItem, fall back to API data
+                    mediaWidget = TicketmasterPreviewWidget(
+                      ticketmasterUrl: url,
+                      launchUrlCallback: _launchUrl,
+                      isLoading: isLoading,
+                      eventName: item.ticketmasterEventName ?? details?.name,
+                      venueName: item.ticketmasterVenueName ?? details?.venue?.name,
+                      eventDate: item.ticketmasterEventDate ?? details?.startDateTime,
+                      imageUrl: item.ticketmasterImageUrl ?? details?.imageUrl,
+                    );
                   } else if (isNetworkUrl) {
                     final lowerUrl = url.toLowerCase();
                     if (lowerUrl.endsWith('.jpg') ||
@@ -3111,58 +3178,76 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                   : () => _handleMediaShareButtonPressed(item),
                             ),
                             // Open in App button
-                            IconButton(
-                              icon: Icon(
-                                isInstagramUrl
-                                    ? FontAwesomeIcons.instagram
-                                    : isFacebookUrl
-                                        ? FontAwesomeIcons.facebook
-                                        : isTikTokUrl
-                                            ? FontAwesomeIcons.tiktok
-                                            : isYouTubeUrl
-                                                ? FontAwesomeIcons.youtube
-                                                : isMapsUrl
-                                                    ? FontAwesomeIcons.google
-                                                    : Icons.open_in_new,
+                            isTicketmasterUrl
+                                ? ActionChip(
+                                    avatar: Image.asset(
+                                      'assets/icon/misc/ticketmaster_logo.png',
+                                      height: 18,
+                                    ),
+                                    label: const SizedBox.shrink(),
+                                    labelPadding: EdgeInsets.zero,
+                                    onPressed: () => _launchUrl(url),
+                                    tooltip: 'Open in Ticketmaster',
+                                    backgroundColor: const Color(0xFF026CDF),
+                                    shape: StadiumBorder(
+                                      side: BorderSide(color: Colors.grey.shade300),
+                                    ),
+                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    padding: const EdgeInsets.all(4),
+                                  )
+                                : IconButton(
+                                    icon: Icon(
+                                      isInstagramUrl
+                                          ? FontAwesomeIcons.instagram
+                                          : isFacebookUrl
+                                              ? FontAwesomeIcons.facebook
+                                              : isTikTokUrl
+                                                  ? FontAwesomeIcons.tiktok
+                                                  : isYouTubeUrl
+                                                      ? FontAwesomeIcons.youtube
+                                                      : isMapsUrl
+                                                          ? FontAwesomeIcons.google
+                                                          : Icons.open_in_new,
+                                    ),
+                                    color: isInstagramUrl
+                                        ? const Color(0xFFE1306C)
+                                        : isFacebookUrl
+                                            ? const Color(0xFF1877F2)
+                                            : isTikTokUrl
+                                                ? Colors.black
+                                                : isYouTubeUrl
+                                                    ? Colors.red
+                                                    : isMapsUrl
+                                                        ? const Color(0xFF4285F4)
+                                                        : Theme.of(context)
+                                                            .primaryColor,
+                                    iconSize: 32,
+                                    tooltip: isInstagramUrl
+                                        ? 'Open in Instagram'
+                                        : isFacebookUrl
+                                            ? 'Open in Facebook'
+                                            : isTikTokUrl
+                                                ? 'Open in TikTok'
+                                                : isYouTubeUrl
+                                                    ? 'Open in YouTube'
+                                                    : isMapsUrl
+                                                ? 'Open in Google Maps'
+                                                : 'Open URL',
+                                    onPressed: () => _launchUrl(url),
+                                  ),
+                            // Preview height toggle (not shown for Ticketmaster)
+                            if (!isTicketmasterUrl)
+                              IconButton(
+                                icon: Icon(isPreviewHeightExpanded
+                                    ? Icons.fullscreen_exit
+                                    : Icons.fullscreen),
+                                iconSize: 24,
+                                color: Colors.blue,
+                                tooltip: isPreviewHeightExpanded
+                                    ? 'Collapse preview'
+                                    : 'Expand preview',
+                                onPressed: () => _toggleMediaPreviewHeight(url),
                               ),
-                              color: isInstagramUrl
-                                  ? const Color(0xFFE1306C)
-                                  : isFacebookUrl
-                                      ? const Color(0xFF1877F2)
-                                      : isTikTokUrl
-                                          ? Colors.black
-                                          : isYouTubeUrl
-                                              ? Colors.red
-                                              : isMapsUrl
-                                                  ? const Color(0xFF4285F4)
-                                                  : Theme.of(context)
-                                                      .primaryColor,
-                              iconSize: 32,
-                              tooltip: isInstagramUrl
-                                  ? 'Open in Instagram'
-                                  : isFacebookUrl
-                                      ? 'Open in Facebook'
-                                      : isTikTokUrl
-                                          ? 'Open in TikTok'
-                                          : isYouTubeUrl
-                                              ? 'Open in YouTube'
-                                              : isMapsUrl
-                                                  ? 'Open in Google Maps'
-                                                  : 'Open URL',
-                              onPressed: () => _launchUrl(url),
-                            ),
-                            // Preview height toggle
-                            IconButton(
-                              icon: Icon(isPreviewHeightExpanded
-                                  ? Icons.fullscreen_exit
-                                  : Icons.fullscreen),
-                              iconSize: 24,
-                              color: Colors.blue,
-                              tooltip: isPreviewHeightExpanded
-                                  ? 'Collapse preview'
-                                  : 'Expand preview',
-                              onPressed: () => _toggleMediaPreviewHeight(url),
-                            ),
                             if (!widget.readOnlyPreview && !isPublicView)
                               IconButton(
                                 icon: const Icon(Icons.delete_outline),

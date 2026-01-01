@@ -4,7 +4,6 @@ import '../services/ai_settings_service.dart';
 import '../services/instagram_settings_service.dart';
 
 enum InstagramDisplayOption { defaultView, webView }
-enum AiUseOption { manual, semiAuto }
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -16,7 +15,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   InstagramDisplayOption _instagramDisplay =
       InstagramDisplayOption.defaultView;
-  AiUseOption _aiUseOption = AiUseOption.semiAuto;
   bool _autoExtractLocations = true;
   bool _autoSetCategories = true;
   bool _isLoading = true;
@@ -33,24 +31,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     final results = await Future.wait([
       instagramSettingsService.getDisplayOption(),
-      aiSettingsService.getAiUseOption(),
       aiSettingsService.getAutoExtractLocations(),
       aiSettingsService.getAutoSetCategories(),
     ]);
 
     final instagramOption = results[0] as String;
-    final aiUseOption = results[1] as String;
-    final autoExtractLocations = results[2] as bool;
-    final autoSetCategories = results[3] as bool;
+    final autoExtractLocations = results[1] as bool;
+    final autoSetCategories = results[2] as bool;
 
     if (!mounted) return;
     setState(() {
       _instagramDisplay = instagramOption == 'webview'
           ? InstagramDisplayOption.webView
           : InstagramDisplayOption.defaultView;
-      _aiUseOption = aiUseOption == AiSettingsService.aiUseManual
-          ? AiUseOption.manual
-          : AiUseOption.semiAuto;
       _autoExtractLocations = autoExtractLocations;
       _autoSetCategories = autoSetCategories;
       _isLoading = false;
@@ -127,67 +120,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
-                RadioListTile<AiUseOption>(
-                  title: const Text('Manual'),
-                  value: AiUseOption.manual,
-                  groupValue: _aiUseOption,
+                Text(
+                  'Control automatic AI-powered features.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  title: const Text('Automatically extract locations and events'),
+                  subtitle: const Text(
+                    'Use AI to automatically detect and suggest locations from shared content.',
+                  ),
+                  value: _autoExtractLocations,
+                  controlAffinity: ListTileControlAffinity.leading,
                   onChanged: (value) {
                     if (value == null) return;
                     setState(() {
-                      _aiUseOption = value;
+                      _autoExtractLocations = value;
                     });
-                    AiSettingsService.instance
-                        .setAiUseOption(AiSettingsService.aiUseManual);
+                    AiSettingsService.instance.setAutoExtractLocations(value);
                   },
                 ),
-                RadioListTile<AiUseOption>(
-                  title: const Text('Semi-Auto'),
-                  value: AiUseOption.semiAuto,
-                  groupValue: _aiUseOption,
+                CheckboxListTile(
+                  title: const Text('Automatically set categories'),
+                  subtitle: const Text(
+                    'Automatically assign a category after selecting a location.',
+                  ),
+                  value: _autoSetCategories,
+                  controlAffinity: ListTileControlAffinity.leading,
                   onChanged: (value) {
                     if (value == null) return;
                     setState(() {
-                      _aiUseOption = value;
+                      _autoSetCategories = value;
                     });
-                    AiSettingsService.instance
-                        .setAiUseOption(AiSettingsService.aiUseSemiAuto);
+                    AiSettingsService.instance.setAutoSetCategories(value);
                   },
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(left: 32),
-                  child: CheckboxListTile(
-                    title: const Text('Automatically extract locations'),
-                    value: _autoExtractLocations,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    onChanged: _aiUseOption == AiUseOption.semiAuto
-                        ? (value) {
-                            if (value == null) return;
-                            setState(() {
-                              _autoExtractLocations = value;
-                            });
-                            AiSettingsService.instance
-                                .setAutoExtractLocations(value);
-                          }
-                        : null,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(left: 32),
-                  child: CheckboxListTile(
-                    title: const Text('Automatically set categories'),
-                    value: _autoSetCategories,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    onChanged: _aiUseOption == AiUseOption.semiAuto
-                        ? (value) {
-                            if (value == null) return;
-                            setState(() {
-                              _autoSetCategories = value;
-                            });
-                            AiSettingsService.instance
-                                .setAutoSetCategories(value);
-                          }
-                        : null,
-                  ),
                 ),
               ],
             ),

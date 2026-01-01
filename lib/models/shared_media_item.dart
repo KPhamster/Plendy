@@ -12,7 +12,13 @@ class SharedMediaItem extends Equatable {
   final bool? isTiktokPhoto; // Whether this TikTok URL is a photo carousel (null for non-TikTok items)
   final bool isPrivate;
   final String? caption; // Caption text extracted from social media posts (Instagram, TikTok, Facebook)
-  // Add other potential metadata if needed (e.g., mediaType, thumbnail?)
+  
+  // Ticketmaster event metadata (cached to avoid repeated API calls)
+  final String? ticketmasterEventName;
+  final String? ticketmasterVenueName;
+  final DateTime? ticketmasterEventDate;
+  final String? ticketmasterImageUrl;
+  final String? ticketmasterEventId;
 
   const SharedMediaItem({
     required this.id,
@@ -23,11 +29,29 @@ class SharedMediaItem extends Equatable {
     this.isTiktokPhoto,
     this.isPrivate = false,
     this.caption,
+    this.ticketmasterEventName,
+    this.ticketmasterVenueName,
+    this.ticketmasterEventDate,
+    this.ticketmasterImageUrl,
+    this.ticketmasterEventId,
   });
 
   @override
-  List<Object?> get props =>
-      [id, path, createdAt, ownerUserId, experienceIds, isTiktokPhoto, isPrivate, caption];
+  List<Object?> get props => [
+        id,
+        path,
+        createdAt,
+        ownerUserId,
+        experienceIds,
+        isTiktokPhoto,
+        isPrivate,
+        caption,
+        ticketmasterEventName,
+        ticketmasterVenueName,
+        ticketmasterEventDate,
+        ticketmasterImageUrl,
+        ticketmasterEventId,
+      ];
 
   /// Creates a SharedMediaItem from a Firestore document
   factory SharedMediaItem.fromFirestore(DocumentSnapshot doc) {
@@ -42,6 +66,14 @@ class SharedMediaItem extends Equatable {
       isTiktokPhoto: data['isTiktokPhoto'] as bool?,
       isPrivate: data['isPrivate'] == true,
       caption: data['caption'] as String?,
+      // Ticketmaster metadata
+      ticketmasterEventName: data['ticketmasterEventName'] as String?,
+      ticketmasterVenueName: data['ticketmasterVenueName'] as String?,
+      ticketmasterEventDate: data['ticketmasterEventDate'] != null 
+          ? _parseTimestamp(data['ticketmasterEventDate']) 
+          : null,
+      ticketmasterImageUrl: data['ticketmasterImageUrl'] as String?,
+      ticketmasterEventId: data['ticketmasterEventId'] as String?,
     );
   }
 
@@ -55,6 +87,12 @@ class SharedMediaItem extends Equatable {
       if (isTiktokPhoto != null) 'isTiktokPhoto': isTiktokPhoto,
       'isPrivate': isPrivate,
       if (caption != null) 'caption': caption,
+      // Ticketmaster metadata
+      if (ticketmasterEventName != null) 'ticketmasterEventName': ticketmasterEventName,
+      if (ticketmasterVenueName != null) 'ticketmasterVenueName': ticketmasterVenueName,
+      if (ticketmasterEventDate != null) 'ticketmasterEventDate': Timestamp.fromDate(ticketmasterEventDate!),
+      if (ticketmasterImageUrl != null) 'ticketmasterImageUrl': ticketmasterImageUrl,
+      if (ticketmasterEventId != null) 'ticketmasterEventId': ticketmasterEventId,
       // Note: 'id' is the document ID, not stored as a field within the document
     };
   }
@@ -78,6 +116,11 @@ class SharedMediaItem extends Equatable {
     bool? isTiktokPhoto,
     bool? isPrivate,
     String? caption,
+    String? ticketmasterEventName,
+    String? ticketmasterVenueName,
+    DateTime? ticketmasterEventDate,
+    String? ticketmasterImageUrl,
+    String? ticketmasterEventId,
   }) {
     return SharedMediaItem(
       id: id ?? this.id,
@@ -88,6 +131,11 @@ class SharedMediaItem extends Equatable {
       isTiktokPhoto: isTiktokPhoto ?? this.isTiktokPhoto,
       isPrivate: isPrivate ?? this.isPrivate,
       caption: caption ?? this.caption,
+      ticketmasterEventName: ticketmasterEventName ?? this.ticketmasterEventName,
+      ticketmasterVenueName: ticketmasterVenueName ?? this.ticketmasterVenueName,
+      ticketmasterEventDate: ticketmasterEventDate ?? this.ticketmasterEventDate,
+      ticketmasterImageUrl: ticketmasterImageUrl ?? this.ticketmasterImageUrl,
+      ticketmasterEventId: ticketmasterEventId ?? this.ticketmasterEventId,
     );
   }
 }

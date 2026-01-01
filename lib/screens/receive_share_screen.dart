@@ -45,6 +45,7 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import '../services/facebook_oembed_service.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
+import 'receive_share/widgets/ticketmaster_preview_widget.dart';
 import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
@@ -677,7 +678,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         !_isTikTokUrl(url) &&
         !_isYouTubeUrl(url) &&
         !_isFacebookUrl(url) &&
-        !_isGoogleKnowledgeGraphUrl(url);
+        !_isGoogleKnowledgeGraphUrl(url) &&
+        !_isTicketmasterUrl(url);
   }
 
   /// Build the scan current preview button widget
@@ -685,14 +687,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Hide for generic web URLs (they use "Scan Locations" instead)
     if (_isGenericWebUrl()) return const SizedBox.shrink();
 
+    // Hide for Ticketmaster URLs (event details are loaded automatically via API)
+    final url = _currentSharedFiles.isNotEmpty
+        ? _extractFirstUrl(_currentSharedFiles.first.path)
+        : null;
+    if (url != null && _isTicketmasterUrl(url)) return const SizedBox.shrink();
+
     final isLoading = _isProcessingScreenshot || _isExtractingLocation;
     final hasPreview = _hasActivePreview();
 
     // Determine button text based on URL type
     // Use "Scan Screen" for YouTube and Facebook Reels (where auto-extraction doesn't work well)
-    final url = _currentSharedFiles.isNotEmpty
-        ? _extractFirstUrl(_currentSharedFiles.first.path)
-        : null;
     final isYouTubeUrl = url != null && _isYouTubeUrl(url);
     final isFacebookReel = url != null &&
         (url.contains('facebook.com/reel/') ||
@@ -785,7 +790,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     final isLoading = _isProcessingScreenshot || _isExtractingLocation;
     final hasPreview = _hasActivePreview();
-    // Only show for generic web URLs (not social media)
+    // Only show for generic web URLs (not social media or Ticketmaster)
     final url = _currentSharedFiles.isNotEmpty
         ? _extractFirstUrl(_currentSharedFiles.first.path)
         : null;
@@ -794,7 +799,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         !_isInstagramUrl(url) &&
         !_isTikTokUrl(url) &&
         !_isYouTubeUrl(url) &&
-        !_isFacebookUrl(url);
+        !_isFacebookUrl(url) &&
+        !_isTicketmasterUrl(url);
 
     // Don't show button if not a web URL
     if (!isWebUrl) return const SizedBox.shrink();
@@ -2272,6 +2278,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Track Instagram URLs that have already been processed for oEmbed extraction
   final Set<String> _instagramUrlsProcessed = {};
 
+  // Ticketmaster event details cache - maps URL to event details
+  final Map<String, TicketmasterEventDetails?> _ticketmasterEventDetails = {};
+  // Track Ticketmaster URLs that are currently being loaded
+  final Set<String> _ticketmasterUrlsLoading = {};
+
   // ============================================================================
   // SOCIAL MEDIA CONTENT EXTRACTION (Instagram/Facebook oEmbed)
   // ============================================================================
@@ -3038,6 +3049,975 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         });
       }
     }
+  }
+
+  /// Load Ticketmaster event details and auto-fill experience card
+  Future<void> _loadTicketmasterEventDetails(String url, ExperienceCardData? card) async {
+    // Prevent duplicate loading
+    if (_ticketmasterUrlsLoading.contains(url)) {
+      print('🎫 TICKETMASTER: Already loading $url, skipping');
+      return;
+    }
+    
+    // Mark as loading (both preview and location field)
+    if (mounted) {
+      setState(() {
+        _ticketmasterUrlsLoading.add(url);
+        // Show loading spinner in location field
+        if (card != null) {
+          card.isSelectingLocation = true;
+        }
+      });
+    }
+
+    try {
+      print('🎫 TICKETMASTER: Loading event details from URL: $url');
+      
+      // Extract event ID first to verify URL format
+      final eventId = TicketmasterService.extractEventIdFromUrl(url);
+      if (eventId == null) {
+        print('🎫 TICKETMASTER: Could not extract event ID from URL: $url');
+        if (mounted) {
+          setState(() {
+            _ticketmasterUrlsLoading.remove(url);
+            _ticketmasterEventDetails[url] = null;
+            // Clear location loading state
+            if (card != null) {
+              card.isSelectingLocation = false;
+            }
+          });
+        }
+        return;
+      }
+      
+      print('🎫 TICKETMASTER: Extracted event ID: $eventId');
+      
+      // Step 1: Try direct event ID lookup
+      TicketmasterEventDetails? details = await _ticketmasterService.getEventFromUrl(url);
+      
+      if (!mounted) return;
+      
+      // Step 2: If direct lookup failed, try searching by event name + date + city
+      if (details == null) {
+        print('🎫 TICKETMASTER: Direct ID lookup failed, trying search fallback...');
+        details = await _searchTicketmasterEventFromUrl(url);
+      }
+      
+      print('🎫 TICKETMASTER: Final result: details=${details != null ? "found" : "null"}');
+      
+      setState(() {
+        _ticketmasterEventDetails[url] = details;
+        _ticketmasterUrlsLoading.remove(url);
+      });
+
+      // Auto-fill the experience card if we have details
+      if (details != null) {
+        print('🎫 TICKETMASTER: Event found: ${details.name}');
+        await _autoFillExperienceCardFromTicketmaster(details, url, card);
+      } else {
+        print('🎫 TICKETMASTER: No event details from API or search, using URL fallback');
+        // Fallback: Extract info from URL and still populate card
+        await _autoFillExperienceCardFromTicketmasterUrl(url, card);
+      }
+    } catch (e, stackTrace) {
+      print('🎫 TICKETMASTER: Error loading event details: $e');
+      print('🎫 TICKETMASTER: Stack trace: $stackTrace');
+      if (!mounted) return;
+      setState(() {
+        _ticketmasterUrlsLoading.remove(url);
+        _ticketmasterEventDetails[url] = null;
+        // Clear location loading state on error
+        if (card != null) {
+          card.isSelectingLocation = false;
+        }
+      });
+    }
+  }
+
+  /// Search Ticketmaster API for an event using info extracted from URL
+  /// This is a fallback when direct event ID lookup fails
+  Future<TicketmasterEventDetails?> _searchTicketmasterEventFromUrl(String url) async {
+    try {
+      // Extract event info from URL
+      final urlInfo = _extractTicketmasterUrlInfo(url);
+      if (urlInfo == null) {
+        print('🎫 TICKETMASTER SEARCH: Could not extract info from URL');
+        return null;
+      }
+      
+      final eventName = urlInfo['eventName'] as String?;
+      final city = urlInfo['city'] as String?;
+      final state = urlInfo['state'] as String?;
+      final date = urlInfo['date'] as DateTime?;
+      
+      if (eventName == null || eventName.isEmpty) {
+        print('🎫 TICKETMASTER SEARCH: No event name extracted');
+        return null;
+      }
+      
+      print('🎫 TICKETMASTER SEARCH: Searching for "$eventName" in $city, $state on $date');
+      
+      // Get state code for API (e.g., "California" -> "CA", "Illinois" -> "IL")
+      final stateCode = _getStateCode(state);
+      
+      // Search for the event
+      final searchResults = await _ticketmasterService.searchEvents(
+        keyword: eventName,
+        city: city,
+        stateCode: stateCode,
+        startDateTime: date?.subtract(const Duration(days: 1)),
+        endDateTime: date?.add(const Duration(days: 1)),
+        size: 5,
+      );
+      
+      if (searchResults.isEmpty) {
+        print('🎫 TICKETMASTER SEARCH: No results with date filter, trying without date');
+        // Try again without date filter
+        final fallbackResults = await _ticketmasterService.searchEvents(
+          keyword: eventName,
+          city: city,
+          stateCode: stateCode,
+          size: 5,
+        );
+        
+        if (fallbackResults.isEmpty) {
+          print('🎫 TICKETMASTER SEARCH: No results found');
+          return null;
+        }
+        
+        // Use the first result
+        final bestMatch = fallbackResults.first;
+        print('🎫 TICKETMASTER SEARCH: Found match (no date filter): ${bestMatch.name} at ${bestMatch.venueName}');
+        
+        // Get full details using the event ID from search
+        return await _ticketmasterService.getEventById(bestMatch.id);
+      }
+      
+      // Find best match by date proximity if we have a date
+      TicketmasterEventResult bestMatch = searchResults.first;
+      if (date != null) {
+        Duration? closestDiff;
+        for (final result in searchResults) {
+          if (result.startDateTime != null) {
+            final diff = result.startDateTime!.difference(date).abs();
+            if (closestDiff == null || diff < closestDiff) {
+              closestDiff = diff;
+              bestMatch = result;
+            }
+          }
+        }
+      }
+      
+      print('🎫 TICKETMASTER SEARCH: Found match: ${bestMatch.name} at ${bestMatch.venueName}');
+      
+      // Get full details using the event ID from search
+      final fullDetails = await _ticketmasterService.getEventById(bestMatch.id);
+      
+      if (fullDetails != null) {
+        print('🎫 TICKETMASTER SEARCH: Got full details with venue: ${fullDetails.venue?.name}');
+      }
+      
+      return fullDetails;
+    } catch (e) {
+      print('🎫 TICKETMASTER SEARCH: Error: $e');
+      return null;
+    }
+  }
+
+  /// Extract event info from Ticketmaster URL
+  /// Returns map with eventName, city, state, date
+  Map<String, dynamic>? _extractTicketmasterUrlInfo(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final pathSegments = uri.pathSegments;
+      
+      // Find the segment before "event"
+      for (int i = 0; i < pathSegments.length; i++) {
+        if (pathSegments[i] == 'event' && i > 0) {
+          final slug = pathSegments[i - 1];
+          final parts = slug.split('-');
+          
+          String? eventName;
+          String? city;
+          String? state;
+          DateTime? date;
+          
+          // Try to extract date from the end (MM-DD-YYYY format)
+          if (parts.length >= 3) {
+            try {
+              final yearStr = parts[parts.length - 1];
+              final dayStr = parts[parts.length - 2];
+              final monthStr = parts[parts.length - 3];
+              
+              final year = int.tryParse(yearStr);
+              final day = int.tryParse(dayStr);
+              final month = int.tryParse(monthStr);
+              
+              if (year != null && year > 2000 && year < 2100 &&
+                  month != null && month >= 1 && month <= 12 &&
+                  day != null && day >= 1 && day <= 31) {
+                date = DateTime(year, month, day);
+                
+                // Remove date parts from the list
+                final partsWithoutDate = parts.sublist(0, parts.length - 3);
+                
+                // Extract state (usually the last word before date)
+                if (partsWithoutDate.isNotEmpty) {
+                  final possibleState = partsWithoutDate.last.toLowerCase();
+                  if (_isLikelyUSState(possibleState)) {
+                    state = _capitalizeWord(possibleState);
+                    partsWithoutDate.removeLast();
+                  }
+                }
+                
+                // Extract city (usually the word before state)
+                if (partsWithoutDate.isNotEmpty) {
+                  city = _capitalizeWord(partsWithoutDate.last);
+                  partsWithoutDate.removeLast();
+                }
+                
+                // The rest is the event name
+                if (partsWithoutDate.isNotEmpty) {
+                  eventName = partsWithoutDate
+                      .map((word) => _capitalizeWord(word))
+                      .join(' ');
+                }
+              }
+            } catch (e) {
+              // Date parsing failed
+            }
+          }
+          
+          // Fallback: just use the whole slug as event name
+          if (eventName == null) {
+            eventName = parts
+                .map((word) => _capitalizeWord(word))
+                .join(' ')
+                .replaceAll(RegExp(r'\s+\d{2}\s+\d{2}\s+\d{4}$'), '');
+          }
+          
+          return {
+            'eventName': eventName,
+            'city': city,
+            'state': state,
+            'date': date,
+          };
+        }
+      }
+      return null;
+    } catch (e) {
+      print('🎫 TICKETMASTER: Error extracting URL info: $e');
+      return null;
+    }
+  }
+
+  /// Convert full state name to state code
+  String? _getStateCode(String? stateName) {
+    if (stateName == null) return null;
+    
+    const stateCodeMap = {
+      'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+      'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+      'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+      'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+      'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+      'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
+      'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
+      'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+      'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
+      'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+      'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
+      'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+      'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+    };
+    
+    return stateCodeMap[stateName.toLowerCase()];
+  }
+
+  /// Auto-fill experience card form with Ticketmaster event details
+  Future<void> _autoFillExperienceCardFromTicketmaster(
+    TicketmasterEventDetails details,
+    String url,
+    ExperienceCardData? card,
+  ) async {
+    final provider = context.read<ReceiveShareProvider>();
+    final experienceCards = provider.experienceCards;
+    
+    // Find the target card to update
+    ExperienceCardData? targetCard = card;
+    if (targetCard == null && experienceCards.isNotEmpty) {
+      // Use the first card if no specific card provided
+      targetCard = experienceCards.first;
+    }
+    
+    if (targetCard == null) {
+      print('🎫 TICKETMASTER: No experience card to update');
+      return;
+    }
+
+    print('🎫 TICKETMASTER: Auto-filling experience card with event details');
+    print('🎫 Event: ${details.name}');
+    print('🎫 Venue: ${details.venue?.name}');
+    print('🎫 Date: ${details.startDateTime}');
+
+    // Update title with venue name (not event name - event name goes to the calendar event)
+    if (targetCard.titleController.text.isEmpty) {
+      final venueName = details.venue?.name;
+      if (venueName != null && venueName.isNotEmpty) {
+        targetCard.titleController.text = venueName;
+        print('🎫 TICKETMASTER: Set title to venue: $venueName');
+      }
+    }
+
+    // Update website with Ticketmaster URL
+    if (targetCard.websiteController.text.isEmpty) {
+      targetCard.websiteController.text = details.url ?? url;
+    }
+
+    // Update location if we have venue details
+    if (targetCard.selectedLocation == null && details.venue != null) {
+      final venue = details.venue!;
+      Location? location;
+      String? placeId;
+      
+      // Build search query for Google Places to get the actual place with placeId
+      // We always search Google Places even if Ticketmaster provides coordinates,
+      // because we need the placeId for duplicate detection and photo retrieval
+      String? searchQuery;
+      if (venue.name != null && venue.name!.isNotEmpty) {
+        searchQuery = venue.fullAddress != null 
+            ? '${venue.name}, ${venue.fullAddress}'
+            : venue.city != null 
+                ? '${venue.name}, ${venue.city}'
+                : venue.name;
+      } else if (venue.fullAddress != null && venue.fullAddress!.isNotEmpty) {
+        searchQuery = venue.fullAddress;
+      } else if (venue.city != null) {
+        searchQuery = venue.state != null 
+            ? '${venue.city}, ${venue.state}'
+            : venue.city;
+      }
+      
+      if (searchQuery != null) {
+        print('🎫 TICKETMASTER: Searching Google Places for: $searchQuery');
+        try {
+          final results = await _mapsService.searchPlacesTextSearch(searchQuery);
+          if (results.isNotEmpty) {
+            final firstResult = results.first;
+            placeId = firstResult['placeId'] as String?;
+            
+            // If we got a placeId, fetch full place details for better data
+            if (placeId != null && placeId.isNotEmpty) {
+              print('🎫 TICKETMASTER: Found place ID: $placeId, fetching details...');
+              try {
+                final placeDetails = await _mapsService.getPlaceDetails(placeId);
+                location = placeDetails;
+                print('🎫 TICKETMASTER: Got full place details: ${placeDetails.displayName}');
+                print('🎫 TICKETMASTER: Photo resource: ${placeDetails.photoResourceName}');
+              } catch (e) {
+                print('🎫 TICKETMASTER: Error fetching place details, using search result: $e');
+                // Fallback to search result data
+                final lat = firstResult['latitude'] as double?;
+                final lng = firstResult['longitude'] as double?;
+                if (lat != null && lng != null) {
+                  location = Location(
+                    placeId: placeId,
+                    displayName: venue.name ?? searchQuery,
+                    address: venue.fullAddress ?? firstResult['address'] as String? ?? searchQuery,
+                    city: venue.city,
+                    state: venue.state,
+                    country: venue.country,
+                    zipCode: venue.postalCode,
+                    latitude: lat,
+                    longitude: lng,
+                  );
+                }
+              }
+            } else {
+              // No placeId - use search result coordinates
+              final lat = firstResult['latitude'] as double?;
+              final lng = firstResult['longitude'] as double?;
+              if (lat != null && lng != null) {
+                location = Location(
+                  displayName: venue.name ?? searchQuery,
+                  address: venue.fullAddress ?? firstResult['address'] as String? ?? searchQuery,
+                  city: venue.city,
+                  state: venue.state,
+                  country: venue.country,
+                  zipCode: venue.postalCode,
+                  latitude: lat,
+                  longitude: lng,
+                );
+                print('🎫 TICKETMASTER: Created location from search (no placeId): ${venue.name ?? searchQuery}');
+              }
+            }
+          }
+        } catch (e) {
+          print('🎫 TICKETMASTER: Error searching Google Places: $e');
+        }
+      }
+      
+      // Fallback: If Google Places search failed but Ticketmaster has coordinates,
+      // use those as a last resort (won't have placeId or photos)
+      if (location == null && venue.latitude != null && venue.longitude != null) {
+        print('🎫 TICKETMASTER: Falling back to Ticketmaster coordinates (no Google Place found)');
+        location = Location(
+          displayName: venue.name ?? details.name,
+          address: venue.fullAddress ?? '',
+          city: venue.city,
+          state: venue.state,
+          country: venue.country,
+          zipCode: venue.postalCode,
+          latitude: venue.latitude!,
+          longitude: venue.longitude!,
+        );
+      }
+      
+      // Check for duplicate if we have a location
+      if (location != null && mounted) {
+        final venueName = venue.name ?? location.displayName;
+        final locationPlaceId = location.placeId ?? placeId;
+        
+        // Check by placeId first (use location.placeId which has the Google Place ID)
+        if (locationPlaceId != null && locationPlaceId.isNotEmpty) {
+          final existingByPlaceId = await _checkForDuplicateExperienceDialog(
+            context: context,
+            card: targetCard,
+            placeIdToCheck: locationPlaceId,
+          );
+          
+          if (existingByPlaceId != null) {
+            provider.updateCardWithExistingExperience(targetCard.id, existingByPlaceId);
+            print('🎫 TICKETMASTER: Using existing experience by placeId: ${existingByPlaceId.name}');
+            // Clear location loading state and set event info for calendar
+            targetCard.isSelectingLocation = false;
+            if (mounted) setState(() {});
+            _setTicketmasterEventInfo(details, url);
+            return;
+          }
+        }
+        
+        // Check by venue name
+        if (venueName != null && venueName.isNotEmpty) {
+          final existingByName = await _checkForDuplicateExperienceDialog(
+            context: context,
+            card: targetCard,
+            titleToCheck: venueName,
+          );
+          
+          if (existingByName != null) {
+            provider.updateCardWithExistingExperience(targetCard.id, existingByName);
+            print('🎫 TICKETMASTER: Using existing experience by name: ${existingByName.name}');
+            // Clear location loading state and set event info for calendar
+            targetCard.isSelectingLocation = false;
+            if (mounted) setState(() {});
+            _setTicketmasterEventInfo(details, url);
+            return;
+          }
+        }
+        
+        // No duplicate found - set the location
+        targetCard.selectedLocation = location;
+        targetCard.locationController.text = venueName ?? '';
+        
+        // Also set the title to the venue name
+        if (targetCard.titleController.text.isEmpty && venueName != null) {
+          targetCard.titleController.text = venueName;
+          print('🎫 TICKETMASTER: Set title to venue: $venueName');
+        }
+        
+        print('🎫 TICKETMASTER: Set location with placeId: ${locationPlaceId ?? "none"}');
+        print('🎫 TICKETMASTER: Location: ${venueName ?? location.displayName}');
+      }
+    }
+
+    // Set detected event info for calendar
+    _setTicketmasterEventInfo(details, url);
+
+    // Clear location loading state and trigger UI update
+    if (mounted && targetCard != null) {
+      setState(() {
+        targetCard!.isSelectingLocation = false;
+      });
+      _handleExperienceCardFormUpdate(
+        cardId: targetCard.id,
+        refreshCategories: false,
+      );
+    }
+
+    // Show a toast notification
+    Fluttertoast.showToast(
+      msg: details.startDateTime != null 
+          ? '🎫 Event loaded! Date info will be saved.'
+          : 'Event details loaded from Ticketmaster',
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+    );
+  }
+
+  /// Helper to set detected event info from Ticketmaster details
+  void _setTicketmasterEventInfo(TicketmasterEventDetails details, String url) {
+    if (details.startDateTime != null) {
+      // Determine end time (use endDateTime if available, otherwise default to 2 hours after start)
+      final endTime = details.endDateTime ?? details.startDateTime!.add(const Duration(hours: 2));
+      
+      _detectedEventInfo = ExtractedEventInfo(
+        eventName: details.name,
+        startDateTime: details.startDateTime!,
+        endDateTime: endTime,
+        confidence: 0.95, // High confidence since it's from Ticketmaster API
+        ticketmasterUrl: details.url ?? url,
+        ticketmasterId: details.id,
+        ticketmasterImageUrl: details.imageUrl, // Include image URL for event cover
+      );
+      
+      print('📅 TICKETMASTER EVENT: Detected event "${details.name}" at ${details.startDateTime}');
+      print('📅 TICKETMASTER EVENT: Image URL: ${details.imageUrl}');
+      print('📅 TICKETMASTER EVENT: Event info stored for post-save flow');
+    }
+  }
+
+  /// Fallback: Auto-fill experience card from Ticketmaster URL when API fails
+  /// Extracts event name from the URL slug
+  Future<void> _autoFillExperienceCardFromTicketmasterUrl(
+    String url,
+    ExperienceCardData? card,
+  ) async {
+    final provider = context.read<ReceiveShareProvider>();
+    final experienceCards = provider.experienceCards;
+    
+    // Find the target card to update
+    ExperienceCardData? targetCard = card;
+    if (targetCard == null && experienceCards.isNotEmpty) {
+      targetCard = experienceCards.first;
+    }
+    
+    if (targetCard == null) {
+      print('🎫 TICKETMASTER FALLBACK: No experience card to update');
+      return;
+    }
+
+    print('🎫 TICKETMASTER FALLBACK: Extracting info from URL');
+
+    // Extract event name, city, state, and date from URL slug
+    // URL format: https://www.ticketmaster.com/event-name-city-state-MM-DD-YYYY/event/ID
+    // Example: lady-gaga-the-mayhem-ball-inglewood-california-02-18-2026
+    String? eventName;
+    String? city;
+    String? state;
+    DateTime? eventDate;
+    
+    try {
+      final uri = Uri.parse(url);
+      final pathSegments = uri.pathSegments;
+      
+      // Find the segment before "event"
+      for (int i = 0; i < pathSegments.length; i++) {
+        if (pathSegments[i] == 'event' && i > 0) {
+          // The previous segment is the event slug
+          final slug = pathSegments[i - 1];
+          final parts = slug.split('-');
+          
+          // Try to extract date from the end (MM-DD-YYYY format)
+          if (parts.length >= 3) {
+            try {
+              final yearStr = parts[parts.length - 1];
+              final dayStr = parts[parts.length - 2];
+              final monthStr = parts[parts.length - 3];
+              
+              final year = int.tryParse(yearStr);
+              final day = int.tryParse(dayStr);
+              final month = int.tryParse(monthStr);
+              
+              if (year != null && year > 2000 && year < 2100 &&
+                  month != null && month >= 1 && month <= 12 &&
+                  day != null && day >= 1 && day <= 31) {
+                eventDate = DateTime(year, month, day);
+                print('🎫 TICKETMASTER FALLBACK: Extracted date: $eventDate');
+                
+                // Remove date parts from the list
+                final partsWithoutDate = parts.sublist(0, parts.length - 3);
+                
+                // Try to extract state (usually the last word before date)
+                // Common US state names: california, texas, new-york, florida, etc.
+                if (partsWithoutDate.isNotEmpty) {
+                  final possibleState = partsWithoutDate.last.toLowerCase();
+                  if (_isLikelyUSState(possibleState)) {
+                    state = _capitalizeWord(possibleState);
+                    partsWithoutDate.removeLast();
+                    print('🎫 TICKETMASTER FALLBACK: Extracted state: $state');
+                  }
+                }
+                
+                // Try to extract city (usually the word before state)
+                if (partsWithoutDate.isNotEmpty) {
+                  city = _capitalizeWord(partsWithoutDate.last);
+                  partsWithoutDate.removeLast();
+                  print('🎫 TICKETMASTER FALLBACK: Extracted city: $city');
+                }
+                
+                // The rest is the event name
+                if (partsWithoutDate.isNotEmpty) {
+                  eventName = partsWithoutDate
+                      .map((word) => _capitalizeWord(word))
+                      .join(' ');
+                }
+              }
+            } catch (e) {
+              print('🎫 TICKETMASTER FALLBACK: Error parsing date: $e');
+            }
+          }
+          
+          // Fallback: just convert the whole slug to a readable name
+          if (eventName == null) {
+            eventName = parts
+                .map((word) => _capitalizeWord(word))
+                .join(' ');
+            // Try to clean up: remove date patterns at the end (like "02 22 2026")
+            eventName = eventName.replaceAll(RegExp(r'\s+\d{2}\s+\d{2}\s+\d{4}$'), '');
+          }
+          
+          print('🎫 TICKETMASTER FALLBACK: Extracted event name: $eventName');
+          break;
+        }
+      }
+    } catch (e) {
+      print('🎫 TICKETMASTER FALLBACK: Error parsing URL: $e');
+    }
+
+    // Don't fill title with event name - title will be set to venue/location name after geocoding
+    // Event name will be used for the calendar event instead
+
+    // Update website with Ticketmaster URL
+    if (targetCard.websiteController.text.isEmpty) {
+      targetCard.websiteController.text = url;
+    }
+
+    // Set detected event info if we have a date from the URL
+    if (eventDate != null && eventName != null) {
+      // Default event time to 7:00 PM if no specific time in URL
+      final startTime = DateTime(
+        eventDate.year,
+        eventDate.month,
+        eventDate.day,
+        19, 0, // 7:00 PM
+      );
+      final endTime = startTime.add(const Duration(hours: 3)); // Default 3 hour duration
+      
+      _detectedEventInfo = ExtractedEventInfo(
+        eventName: eventName,
+        startDateTime: startTime,
+        endDateTime: endTime,
+        confidence: 0.7, // Lower confidence since extracted from URL, not API
+        ticketmasterUrl: url,
+      );
+      
+      print('📅 TICKETMASTER FALLBACK EVENT: Detected event "$eventName" on $eventDate');
+      print('📅 TICKETMASTER FALLBACK EVENT: Event info stored for post-save flow');
+    }
+
+    // Geocode and update location if we have city/state
+    if (targetCard != null && targetCard.selectedLocation == null && city != null) {
+      await _geocodeAndSetTicketmasterLocation(targetCard, city, state, eventName: eventName);
+    }
+
+    // Clear location loading state and trigger UI update
+    if (mounted && targetCard != null) {
+      setState(() {
+        targetCard!.isSelectingLocation = false;
+      });
+      _handleExperienceCardFormUpdate(
+        cardId: targetCard.id,
+        refreshCategories: false,
+      );
+    }
+
+    // Show a toast notification
+    Fluttertoast.showToast(
+      msg: eventDate != null 
+          ? '🎫 Event loaded! Date info will be saved.'
+          : city != null 
+              ? '🎫 Ticketmaster event loaded!'
+              : 'Ticketmaster link saved (event details unavailable)',
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+    );
+  }
+
+  /// Helper to capitalize a word
+  String _capitalizeWord(String word) {
+    if (word.isEmpty) return word;
+    return '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}';
+  }
+
+  /// Check if a string looks like a US state name
+  bool _isLikelyUSState(String word) {
+    // Common US state names that appear in Ticketmaster URLs
+    const usStates = {
+      'alabama', 'alaska', 'arizona', 'arkansas', 'california',
+      'colorado', 'connecticut', 'delaware', 'florida', 'georgia',
+      'hawaii', 'idaho', 'illinois', 'indiana', 'iowa',
+      'kansas', 'kentucky', 'louisiana', 'maine', 'maryland',
+      'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri',
+      'montana', 'nebraska', 'nevada', 'hampshire', 'jersey',
+      'mexico', 'york', 'carolina', 'dakota', 'ohio',
+      'oklahoma', 'oregon', 'pennsylvania', 'island', 'tennessee',
+      'texas', 'utah', 'vermont', 'virginia', 'washington',
+      'wisconsin', 'wyoming', 'dc', 'columbia',
+    };
+    return usStates.contains(word.toLowerCase());
+  }
+
+  /// Geocode city/state using Google Places API and set the location on the card
+  /// First tries to find the specific venue by searching event name + city,
+  /// then falls back to just city/state if no venue found
+  Future<void> _geocodeAndSetTicketmasterLocation(
+    ExperienceCardData targetCard,
+    String city,
+    String? state,
+    {String? eventName}
+  ) async {
+    try {
+      // Step 1: Try to find the specific venue by searching "event name city"
+      // This often returns the venue (e.g., "Lady Gaga Inglewood" -> Kia Forum)
+      if (eventName != null && eventName.isNotEmpty) {
+        final venueSearchQuery = '$eventName $city';
+        print('🎫 TICKETMASTER FALLBACK: Searching for venue: $venueSearchQuery');
+        
+        final venueResults = await _mapsService.searchPlacesTextSearch(venueSearchQuery);
+        
+        if (venueResults.isNotEmpty) {
+          final firstResult = venueResults.first;
+          final types = firstResult['types'] as List<String>?;
+          final name = firstResult['name'] as String?;
+          
+          // Check if this is a specific venue/establishment, not just the city
+          final isVenue = types != null && 
+              !types.contains('locality') && 
+              !types.contains('administrative_area_level_1') &&
+              !types.contains('administrative_area_level_2') &&
+              (types.contains('establishment') || 
+               types.contains('point_of_interest') ||
+               types.contains('stadium') ||
+               types.contains('concert_hall') ||
+               types.contains('performing_arts_theater') ||
+               types.contains('night_club') ||
+               types.contains('bar') ||
+               types.contains('restaurant'));
+          
+          if (isVenue && name != null) {
+            final lat = firstResult['latitude'] as double?;
+            final lng = firstResult['longitude'] as double?;
+            final address = firstResult['address'] as String?;
+            final placeId = firstResult['placeId'] as String?;
+            
+            if (lat != null && lng != null) {
+              // Check for duplicates before setting
+              final usedExisting = await _checkAndSetTicketmasterVenue(
+                targetCard: targetCard,
+                name: name,
+                address: address ?? '$name, $city',
+                city: city,
+                state: state,
+                lat: lat,
+                lng: lng,
+                placeId: placeId,
+              );
+              if (usedExisting != null) {
+                print('🎫 TICKETMASTER FALLBACK: Using existing experience: ${usedExisting.name}');
+              } else {
+                print('🎫 TICKETMASTER FALLBACK: Found venue "$name" at $lat, $lng');
+              }
+              return;
+            }
+          } else {
+            print('🎫 TICKETMASTER FALLBACK: Search result is not a venue (types: $types), trying city search');
+          }
+        }
+      }
+      
+      // Step 2: Try searching for "concert venue city" or "arena city"
+      final venueTypeSearches = ['concert venue $city', 'arena $city', 'stadium $city'];
+      for (final searchQuery in venueTypeSearches) {
+        print('🎫 TICKETMASTER FALLBACK: Trying venue type search: $searchQuery');
+        final results = await _mapsService.searchPlacesTextSearch(searchQuery);
+        
+        if (results.isNotEmpty) {
+          final firstResult = results.first;
+          final types = firstResult['types'] as List<String>?;
+          final name = firstResult['name'] as String?;
+          
+          // Check if this is a specific venue
+          final isVenue = types != null && 
+              !types.contains('locality') && 
+              (types.contains('establishment') || 
+               types.contains('point_of_interest') ||
+               types.contains('stadium'));
+          
+          if (isVenue && name != null) {
+            final lat = firstResult['latitude'] as double?;
+            final lng = firstResult['longitude'] as double?;
+            final address = firstResult['address'] as String?;
+            final placeId = firstResult['placeId'] as String?;
+            
+            if (lat != null && lng != null) {
+              // Check for duplicates before setting
+              final usedExisting = await _checkAndSetTicketmasterVenue(
+                targetCard: targetCard,
+                name: name,
+                address: address ?? '$name, $city',
+                city: city,
+                state: state,
+                lat: lat,
+                lng: lng,
+                placeId: placeId,
+              );
+              if (usedExisting != null) {
+                print('🎫 TICKETMASTER FALLBACK: Using existing experience: ${usedExisting.name}');
+              } else {
+                print('🎫 TICKETMASTER FALLBACK: Found venue "$name" via type search at $lat, $lng');
+              }
+              return;
+            }
+          }
+        }
+      }
+      
+      // Step 3: Fall back to just city/state (don't set title - no specific venue found)
+      final citySearchQuery = state != null ? '$city, $state' : city;
+      print('🎫 TICKETMASTER FALLBACK: No venue found, falling back to city: $citySearchQuery');
+      
+      final results = await _mapsService.searchPlacesTextSearch(citySearchQuery);
+      
+      if (results.isNotEmpty) {
+        final firstResult = results.first;
+        final placeId = firstResult['placeId'] as String?;
+        
+        Location? location;
+        
+        // Try to get full place details if we have a placeId
+        if (placeId != null && placeId.isNotEmpty) {
+          try {
+            print('🎫 TICKETMASTER FALLBACK: Fetching place details for city: $placeId');
+            location = await _mapsService.getPlaceDetails(placeId);
+          } catch (e) {
+            print('🎫 TICKETMASTER FALLBACK: Error fetching city place details: $e');
+          }
+        }
+        
+        // Fallback to search result data
+        if (location == null) {
+          final lat = firstResult['latitude'] as double?;
+          final lng = firstResult['longitude'] as double?;
+          final address = firstResult['address'] as String?;
+          
+          if (lat != null && lng != null) {
+            location = Location(
+              placeId: placeId,
+              displayName: citySearchQuery,
+              address: address ?? citySearchQuery,
+              city: city,
+              state: state,
+              latitude: lat,
+              longitude: lng,
+            );
+          }
+        }
+        
+        if (location != null) {
+          targetCard.selectedLocation = location;
+          targetCard.locationController.text = location.displayName ?? citySearchQuery;
+          
+          print('🎫 TICKETMASTER FALLBACK: Set location to city ${location.displayName ?? citySearchQuery}');
+          print('🎫 TICKETMASTER FALLBACK: PlaceId: ${location.placeId ?? "none"}');
+        } else {
+          print('🎫 TICKETMASTER FALLBACK: No coordinates in geocode result');
+        }
+      } else {
+        print('🎫 TICKETMASTER FALLBACK: No geocode results for $citySearchQuery');
+      }
+    } catch (e) {
+      print('🎫 TICKETMASTER FALLBACK: Error geocoding location: $e');
+    }
+  }
+
+  /// Helper to check for duplicates and set venue for Ticketmaster fallback
+  /// Returns the existing Experience if user chose to use it, null otherwise
+  Future<Experience?> _checkAndSetTicketmasterVenue({
+    required ExperienceCardData targetCard,
+    required String name,
+    required String address,
+    required String city,
+    String? state,
+    required double lat,
+    required double lng,
+    String? placeId,
+  }) async {
+    final provider = context.read<ReceiveShareProvider>();
+    
+    // Check for duplicate by placeId
+    if (placeId != null && placeId.isNotEmpty && mounted) {
+      final existingByPlaceId = await _checkForDuplicateExperienceDialog(
+        context: context,
+        card: targetCard,
+        placeIdToCheck: placeId,
+      );
+      
+      if (existingByPlaceId != null) {
+        provider.updateCardWithExistingExperience(targetCard.id, existingByPlaceId);
+        return existingByPlaceId;
+      }
+    }
+    
+    // Check for duplicate by venue name
+    if (mounted) {
+      final existingByName = await _checkForDuplicateExperienceDialog(
+        context: context,
+        card: targetCard,
+        titleToCheck: name,
+      );
+      
+      if (existingByName != null) {
+        provider.updateCardWithExistingExperience(targetCard.id, existingByName);
+        return existingByName;
+      }
+    }
+    
+    // No duplicate found - fetch full place details if we have a placeId
+    Location? location;
+    
+    if (placeId != null && placeId.isNotEmpty) {
+      try {
+        print('🎫 TICKETMASTER FALLBACK: Fetching full place details for $placeId');
+        location = await _mapsService.getPlaceDetails(placeId);
+        print('🎫 TICKETMASTER FALLBACK: Got place details: ${location.displayName}');
+        print('🎫 TICKETMASTER FALLBACK: Photo resource: ${location.photoResourceName}');
+      } catch (e) {
+        print('🎫 TICKETMASTER FALLBACK: Error fetching place details: $e');
+      }
+    }
+    
+    // Fallback to basic location if place details fetch failed
+    location ??= Location(
+      placeId: placeId,
+      displayName: name,
+      address: address,
+      city: city,
+      state: state,
+      latitude: lat,
+      longitude: lng,
+    );
+    
+    targetCard.selectedLocation = location;
+    targetCard.locationController.text = location.displayName ?? name;
+    
+    // Also set the title to the venue name
+    if (targetCard.titleController.text.isEmpty) {
+      targetCard.titleController.text = location.displayName ?? name;
+      print('🎫 TICKETMASTER FALLBACK: Set title to venue: ${location.displayName ?? name}');
+    }
+    
+    return null;
   }
 
   /// Handle TikTok oEmbed data loaded - automatically extract locations from caption
@@ -4306,6 +5286,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
       final String? wantToGoColorCategoryId = wantToGoCategory?.id;
 
+      // Check if auto-set categories is enabled
+      final shouldAutoSetCategories = await _aiSettingsService.shouldAutoSetCategories();
+      
       // Fill existing empty cards with new locations
       for (int i = 0; i < locationsForEmptyCards.length; i++) {
         final locationData = locationsForEmptyCards[i];
@@ -4313,19 +5296,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         
         provider.updateCardWithExtractedLocation(cardId, locationData);
         
-        // Set color category to 'Want to go' for new locations (not from saved experiences)
-        if (wantToGoColorCategoryId != null) {
-          provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
-        }
-        
-        // Determine and set the best primary category based on place types
-        final bestCategoryId = await _determineBestCategoryForLocation(
-          locationData,
-          _userCategories,
-          useAiFallback: true, // Use AI if no direct match found
-        );
-        if (bestCategoryId != null) {
-          provider.updateCardTextCategory(cardId, bestCategoryId);
+        // Auto-set categories only if enabled in settings
+        if (shouldAutoSetCategories) {
+          // Set color category to 'Want to go' for new locations (not from saved experiences)
+          if (wantToGoColorCategoryId != null) {
+            provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
+          }
+          
+          // Determine and set the best primary category based on place types
+          final bestCategoryId = await _determineBestCategoryForLocation(
+            locationData,
+            _userCategories,
+            useAiFallback: true, // Use AI if no direct match found
+          );
+          if (bestCategoryId != null) {
+            provider.updateCardTextCategory(cardId, bestCategoryId);
+          }
         }
         
         print(
@@ -4341,26 +5327,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print(
             '📍 Created ${locationsNeedingNewCards.length} new cards for new locations');
         
-        // Set color category and primary category for all newly created cards
-        for (int i = 0; i < locationsNeedingNewCards.length; i++) {
-          final cardIndex = cardCountBefore + i;
-          if (cardIndex < provider.experienceCards.length) {
-            final cardId = provider.experienceCards[cardIndex].id;
-            final locationData = locationsNeedingNewCards[i];
-            
-            // Set color category to 'Want to go'
-            if (wantToGoColorCategoryId != null) {
-              provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
-            }
-            
-            // Determine and set the best primary category based on place types
-            final bestCategoryId = await _determineBestCategoryForLocation(
-              locationData,
-              _userCategories,
-              useAiFallback: true, // Use AI if no direct match found
-            );
-            if (bestCategoryId != null) {
-              provider.updateCardTextCategory(cardId, bestCategoryId);
+        // Set color category and primary category for all newly created cards (only if enabled)
+        if (shouldAutoSetCategories) {
+          for (int i = 0; i < locationsNeedingNewCards.length; i++) {
+            final cardIndex = cardCountBefore + i;
+            if (cardIndex < provider.experienceCards.length) {
+              final cardId = provider.experienceCards[cardIndex].id;
+              final locationData = locationsNeedingNewCards[i];
+              
+              // Set color category to 'Want to go'
+              if (wantToGoColorCategoryId != null) {
+                provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
+              }
+              
+              // Determine and set the best primary category based on place types
+              final bestCategoryId = await _determineBestCategoryForLocation(
+                locationData,
+                _userCategories,
+                useAiFallback: true, // Use AI if no direct match found
+              );
+              if (bestCategoryId != null) {
+                provider.updateCardTextCategory(cardId, bestCategoryId);
+              }
             }
           }
         }
@@ -4584,9 +5572,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       eventTitle = 'Untitled Event';
     }
     
-    // Automatically set cover image from the first experience in the itinerary
+    // Automatically set cover image
+    // Priority: 1. Ticketmaster image (if available), 2. First experience's photo
     String? coverImageUrl;
-    if (experiences.isNotEmpty) {
+    
+    // For Ticketmaster events, use the event image as the cover
+    if (eventInfo.ticketmasterImageUrl != null && eventInfo.ticketmasterImageUrl!.isNotEmpty) {
+      coverImageUrl = eventInfo.ticketmasterImageUrl;
+      print('📷 EVENT COVER: Using Ticketmaster image: $coverImageUrl');
+    }
+    // Fall back to the first experience's photo
+    else if (experiences.isNotEmpty) {
       final firstExp = experiences.first;
       
       // First try to get photo from existing data
@@ -4682,11 +5678,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// 
   /// Used when selecting a location from LocationPickerScreen or Quick Add dialog.
   /// Delegates to CategoryAutoAssignService for shared logic.
+  /// 
+  /// Respects the "Automatically set categories" user setting.
   Future<void> _autoCategorizeCardForNewLocation(
     String cardId,
     Location location,
     ReceiveShareProvider provider,
   ) async {
+    // Check if auto-set categories is enabled in settings
+    final shouldAutoSetCategories = await _aiSettingsService.shouldAutoSetCategories();
+    if (!shouldAutoSetCategories) {
+      print('🏷️ AUTO-CATEGORIZE: Skipped (disabled in settings)');
+      return;
+    }
+    
     final locationName = location.displayName ?? location.getPlaceName();
     print('🏷️ AUTO-CATEGORIZE: Setting categories for "$locationName"');
     
@@ -4797,6 +5802,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _isGoogleKnowledgeGraphUrl(String url) {
     final lower = url.toLowerCase();
     return lower.contains('g.co/kgs/') || lower.contains('share.google/');
+  }
+
+  /// Check if URL is a Ticketmaster URL
+  bool _isTicketmasterUrl(String url) {
+    return TicketmasterService.isTicketmasterUrl(url);
+  }
+
+  /// Extract Ticketmaster URL from text that may contain other content
+  /// (e.g., "Share the event! https://www.ticketmaster.com/...")
+  String? _extractTicketmasterUrlFromText(String text) {
+    // Pattern to match Ticketmaster URLs
+    final urlPattern = RegExp(
+      r'https?://(?:www\.)?ticketmaster\.[a-z.]+/[^\s]+',
+      caseSensitive: false,
+    );
+    final match = urlPattern.firstMatch(text);
+    return match?.group(0);
   }
 
   // Extract Yelp URL from shared files
@@ -5497,7 +6519,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         mapsPattern.hasMatch(urlLower) ||
         facebookPattern.hasMatch(urlLower) ||
         googleKnowledgePattern.hasMatch(urlLower) ||
-        shareGooglePattern.hasMatch(urlLower)) {
+        shareGooglePattern.hasMatch(urlLower) ||
+        _isTicketmasterUrl(url)) {
       return true;
     }
 
@@ -6750,6 +7773,32 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (path.contains('tiktok.com') || path.contains('vm.tiktok.com')) {
               isTiktokPhoto = _tiktokPhotoStatus[path];
             }
+            
+            // Check if this is a Ticketmaster URL and get cached event details
+            String? ticketmasterEventName;
+            String? ticketmasterVenueName;
+            DateTime? ticketmasterEventDate;
+            String? ticketmasterImageUrl;
+            String? ticketmasterEventId;
+            if (_isTicketmasterUrl(path)) {
+              // Extract the actual URL from the path (it might include prefix text like "Share the event!")
+              final ticketmasterUrl = _extractTicketmasterUrlFromText(path);
+              if (ticketmasterUrl != null) {
+                final details = _ticketmasterEventDetails[ticketmasterUrl];
+                if (details != null) {
+                  ticketmasterEventName = details.name;
+                  ticketmasterVenueName = details.venue?.name;
+                  ticketmasterEventDate = details.startDateTime;
+                  ticketmasterImageUrl = details.imageUrl;
+                  ticketmasterEventId = details.id;
+                  print('🎫 TICKETMASTER SAVE: Caching event details for "${details.name}"');
+                } else {
+                  print('🎫 TICKETMASTER SAVE: No cached details found for URL: $ticketmasterUrl');
+                }
+              } else {
+                print('🎫 TICKETMASTER SAVE: Could not extract URL from path: $path');
+              }
+            }
 
             SharedMediaItem newItem = SharedMediaItem(
               id: '',
@@ -6760,6 +7809,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               isTiktokPhoto: isTiktokPhoto,
               isPrivate: _sharedMediaIsPrivate,
               caption: _extractedCaption,
+              ticketmasterEventName: ticketmasterEventName,
+              ticketmasterVenueName: ticketmasterVenueName,
+              ticketmasterEventDate: ticketmasterEventDate,
+              ticketmasterImageUrl: ticketmasterImageUrl,
+              ticketmasterEventId: ticketmasterEventId,
             );
             String newItemId =
                 await _experienceService.createSharedMediaItem(newItem);
@@ -8388,6 +9442,33 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return YelpPreviewWidget(
         yelpUrl: url,
         launchUrlCallback: _launchUrl,
+      );
+    }
+
+    // Ticketmaster event URLs
+    if (_isTicketmasterUrl(url)) {
+      // Trigger loading event details if not already cached
+      // Use addPostFrameCallback to avoid calling setState during build
+      if (!_ticketmasterEventDetails.containsKey(url) && 
+          !_ticketmasterUrlsLoading.contains(url)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _loadTicketmasterEventDetails(url, card);
+          }
+        });
+      }
+      
+      final details = _ticketmasterEventDetails[url];
+      final isLoading = _ticketmasterUrlsLoading.contains(url);
+      
+      return TicketmasterPreviewWidget(
+        ticketmasterUrl: url,
+        launchUrlCallback: _launchUrl,
+        isLoading: isLoading,
+        eventName: details?.name,
+        venueName: details?.venue?.name,
+        eventDate: details?.startDateTime,
+        imageUrl: details?.imageUrl,
       );
     }
 
