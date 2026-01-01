@@ -676,6 +676,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       // Comments
                       _buildCommentsSection(),
 
+                      // Delete Event
+                      if (!_isReadOnly && _currentEvent.id.isNotEmpty && _canCurrentUserEdit)
+                        _buildDeleteSection(),
+
                       const SizedBox(height: 80),
                     ],
                   ),
@@ -2208,16 +2212,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 Tooltip(
                   message: 'Search on Ticketmaster',
                   child: ActionChip(
-                    avatar: const Icon(
-                      Icons.confirmation_number,
-                      size: 18,
-                      color: Color(0xFF1E65B9), // Ticketmaster blue
+                    avatar: Image.asset(
+                      'assets/icon/misc/ticketmaster_logo.png',
+                      height: 18,
                     ),
                     label: const SizedBox.shrink(),
                     labelPadding: EdgeInsets.zero,
                     onPressed: _openTicketmasterSearch,
                     tooltip: 'Search on Ticketmaster',
-                    backgroundColor: Colors.white,
+                    backgroundColor: const Color(0xFF026CDF),
                     shape: StadiumBorder(
                       side: BorderSide(color: Colors.grey.shade300),
                     ),
@@ -5449,6 +5452,108 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (diff.inHours > 0) return '${diff.inHours}h ago';
     if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
     return 'just now';
+  }
+
+  Widget _buildDeleteSection() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Divider(),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _deleteEvent,
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              label: const Text(
+                'Delete Event',
+                style: TextStyle(color: Colors.red),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.red),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteEvent() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Delete Event'),
+          content: Text(
+            'Are you sure you want to delete "${_titleController.text.trim().isEmpty ? 'this event' : _titleController.text.trim()}"?\n\nThis action cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    // Show loading indicator
+    BuildContext? loadingContext;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        loadingContext = ctx;
+        return const Center(
+          child: CircularProgressIndicator(),
+        );
+      },
+    );
+
+    try {
+      await _eventService.deleteEvent(_currentEvent.id);
+
+      // Close loading dialog
+      if (loadingContext != null && mounted) {
+        Navigator.of(loadingContext!).pop();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Event deleted')),
+        );
+
+        // Navigate to main screen with events tab selected
+        _navigateToMainScreen();
+      }
+    } catch (e) {
+      // Close loading dialog
+      if (loadingContext != null && mounted) {
+        Navigator.of(loadingContext!).pop();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete event: $e')),
+        );
+      }
+    }
   }
 }
 

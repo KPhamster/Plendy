@@ -30,6 +30,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/yelp_preview_widget.dart';
+import 'receive_share/widgets/ticketmaster_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import '../widgets/shared_media_preview_modal.dart';
 import '../models/share_permission.dart'; // ADDED Import for SharePermission
@@ -43,6 +44,7 @@ import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 // ADDED Import for PointerScrollEvent
 // ADDED Import for Scrollable
 import '../services/google_maps_service.dart';
+import '../services/ticketmaster_service.dart';
 import '../services/category_share_service.dart';
 import '../services/sharing_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -191,6 +193,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
   List<ColorCategory> _colorCategories = [];
   bool _showingColorCategories = false; // Flag to toggle view in first tab
   final SharingService _sharingService = SharingService();
+  final TicketmasterService _ticketmasterService = TicketmasterService();
   final Map<String, SharePermission> _sharedCategoryPermissions = {};
   final Map<String, SharePermission> _sharedExperiencePermissions = {};
   final Map<String, String> _shareOwnerNames = {};
@@ -814,6 +817,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
   final Set<String> _photoRefreshAttempts = {};
   // Maps preview futures cache
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  // Ticketmaster event details cache
+  final Map<String, TicketmasterEventDetails?> _ticketmasterEventDetails = {};
+  final Set<String> _ticketmasterUrlsLoading = {};
   // Track filled business data to avoid duplicates but also cache results
   final Map<String, Map<String, dynamic>> _businessDataCache = {};
   // Perf logging toggle
@@ -8486,6 +8492,43 @@ class CollectionsScreenState extends State<CollectionsScreen>
   }
   // --- END ADDED ---
 
+  bool _isTicketmasterUrl(String url) {
+    return TicketmasterService.isTicketmasterUrl(url);
+  }
+
+  void _queueTicketmasterDetailsLoad(String url) {
+    if (_ticketmasterEventDetails.containsKey(url) ||
+        _ticketmasterUrlsLoading.contains(url)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadTicketmasterEventDetails(url);
+      }
+    });
+  }
+
+  Future<void> _loadTicketmasterEventDetails(String url) async {
+    if (_ticketmasterUrlsLoading.contains(url) ||
+        _ticketmasterEventDetails.containsKey(url)) {
+      return;
+    }
+    setState(() {
+      _ticketmasterUrlsLoading.add(url);
+    });
+    TicketmasterEventDetails? details;
+    try {
+      details = await _ticketmasterService.getEventFromUrl(url);
+    } catch (_) {
+      details = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _ticketmasterEventDetails[url] = details;
+      _ticketmasterUrlsLoading.remove(url);
+    });
+  }
+
   // ADDED: Widget builder for a Content Grid Item (for web)
   Widget _buildContentGridItem(GroupedContentItem group, int index) {
     final mediaItem = group.mediaItem;
@@ -8499,6 +8542,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
         mediaPath.toLowerCase().contains('youtu.be') ||
         mediaPath.toLowerCase().contains('youtube.com/shorts');
+    final bool isTicketmasterUrl = _isTicketmasterUrl(mediaPath);
     final bool isNetworkUrl =
         mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
@@ -8572,6 +8616,29 @@ class CollectionsScreenState extends State<CollectionsScreen>
           : YouTubePreviewWidget(
         url: mediaPath,
         launchUrlCallback: _launchUrl,
+      );
+    } else if (isTicketmasterUrl) {
+      // First check if we have cached data in the SharedMediaItem
+      final hasCachedData = mediaItem.ticketmasterEventName != null || 
+                            mediaItem.ticketmasterImageUrl != null;
+      
+      // Only load from API if we don't have cached data
+      if (!hasCachedData) {
+        _queueTicketmasterDetailsLoad(mediaPath);
+      }
+      
+      final details = _ticketmasterEventDetails[mediaPath];
+      final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(mediaPath);
+      
+      // Prefer cached data from SharedMediaItem, fall back to API data
+      mediaDisplayWidget = TicketmasterPreviewWidget(
+        ticketmasterUrl: mediaPath,
+        launchUrlCallback: _launchUrl,
+        isLoading: isLoading,
+        eventName: mediaItem.ticketmasterEventName ?? details?.name,
+        venueName: mediaItem.ticketmasterVenueName ?? details?.venue?.name,
+        eventDate: mediaItem.ticketmasterEventDate ?? details?.startDateTime,
+        imageUrl: mediaItem.ticketmasterImageUrl ?? details?.imageUrl,
       );
     } else if (isNetworkUrl) {
       // Check if it's an image URL
@@ -8702,6 +8769,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final bool isYouTubeUrl = lowerPath.contains('youtube.com') ||
         lowerPath.contains('youtu.be') ||
         lowerPath.contains('youtube.com/shorts');
+    final bool isTicketmasterUrl = _isTicketmasterUrl(mediaPath);
     final bool isNetworkUrl =
         mediaPath.startsWith('http') || mediaPath.startsWith('https');
     final bool isYelpUrl =
@@ -8770,6 +8838,25 @@ class CollectionsScreenState extends State<CollectionsScreen>
           unawaited(_launchUrl(mediaPath));
         } as VoidCallback),
         backgroundColor: const Color(0xFFD32323),
+      );
+    } else if (isTicketmasterUrl) {
+      actionButton = ActionChip(
+        avatar: Image.asset(
+          'assets/icon/misc/ticketmaster_logo.png',
+          height: 16,
+        ),
+        label: const SizedBox.shrink(),
+        labelPadding: EdgeInsets.zero,
+        onPressed: withHeavyTap(() {
+          unawaited(_launchUrl(mediaPath));
+        }),
+        tooltip: 'Open in Ticketmaster',
+        backgroundColor: const Color(0xFF026CDF),
+        shape: StadiumBorder(
+          side: BorderSide(color: Colors.grey.shade300),
+        ),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.all(4),
       );
     } else if (isMapsUrl) {
       actionButton = buildActionAvatar(
@@ -8867,6 +8954,29 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 url: mediaPath,
                 launchUrlCallback: _launchUrl,
               );
+      } else if (isTicketmasterUrl) {
+        // First check if we have cached data in the SharedMediaItem
+        final hasCachedData = mediaItem.ticketmasterEventName != null || 
+                              mediaItem.ticketmasterImageUrl != null;
+        
+        // Only load from API if we don't have cached data
+        if (!hasCachedData) {
+          _queueTicketmasterDetailsLoad(mediaPath);
+        }
+        
+        final details = _ticketmasterEventDetails[mediaPath];
+        final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(mediaPath);
+        
+        // Prefer cached data from SharedMediaItem, fall back to API data
+        mediaWidget = TicketmasterPreviewWidget(
+          ticketmasterUrl: mediaPath,
+          launchUrlCallback: _launchUrl,
+          isLoading: isLoading,
+          eventName: mediaItem.ticketmasterEventName ?? details?.name,
+          venueName: mediaItem.ticketmasterVenueName ?? details?.venue?.name,
+          eventDate: mediaItem.ticketmasterEventDate ?? details?.startDateTime,
+          imageUrl: mediaItem.ticketmasterImageUrl ?? details?.imageUrl,
+        );
       } else if (isNetworkUrl) {
         if (lowerPath.endsWith('.jpg') ||
             lowerPath.endsWith('.jpeg') ||

@@ -415,6 +415,38 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
   // --- END ADDED ---
 
+  // --- ADDED: Method to launch Ticketmaster search ---
+  Future<void> _launchTicketmasterSearch() async {
+    // Get the title to search for
+    String searchTerm = widget.cardData.titleController.text.trim();
+    
+    // If no title, try using location name
+    if (searchTerm.isEmpty && widget.cardData.selectedLocation != null) {
+      searchTerm = widget.cardData.selectedLocation!.displayName ?? '';
+    }
+    
+    String ticketmasterUrl;
+    if (searchTerm.isNotEmpty) {
+      // Search Ticketmaster for the event
+      final searchQuery = Uri.encodeComponent(searchTerm);
+      ticketmasterUrl = 'https://www.ticketmaster.com/search?q=$searchQuery';
+    } else {
+      // Fallback to Ticketmaster homepage
+      ticketmasterUrl = 'https://www.ticketmaster.com';
+    }
+
+    final Uri uri = Uri.parse(ticketmasterUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch Ticketmaster search.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open Ticketmaster.')),
+        );
+      }
+    }
+  }
+  // --- END ADDED ---
+
   // RENAMED: Helper to find icon for selected category
   String _getIconForSelectedCategory() {
     // Use renamed field
@@ -1453,6 +1485,30 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 Icons.map_outlined,
                                 size: 22,
                                 color: const Color(0xFF6D8B74),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: withHeavyTap(_launchTicketmasterSearch),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: Image.asset(
+                                  'assets/icon/misc/ticketmaster_logo.png',
+                                  height: 22,
+                                  width: 22,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Icon(
+                                      Icons.confirmation_number,
+                                      size: 22,
+                                      color: const Color(0xFF026CDF),
+                                    );
+                                  },
+                                ),
                               ),
                             ),
                           ),

@@ -89,13 +89,24 @@ class AiSettingsService extends ChangeNotifier {
   }
 
   bool shouldAutoExtractLocationsSync() {
-    return _aiUseOption == aiUseSemiAuto && _autoExtractLocations;
+    return _autoExtractLocations;
   }
 
   Future<bool> shouldAutoExtractLocations() async {
     if (!_isLoaded) {
       await _load();
     }
-    return shouldAutoExtractLocationsSync();
+    return _autoExtractLocations;
+  }
+
+  bool shouldAutoSetCategoriesSync() {
+    return _autoSetCategories;
+  }
+
+  Future<bool> shouldAutoSetCategories() async {
+    if (!_isLoaded) {
+      await _load();
+    }
+    return _autoSetCategories;
   }
 }

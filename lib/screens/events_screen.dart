@@ -425,8 +425,10 @@ class _EventsScreenState extends State<EventsScreen>
     
     // Calculate which page this week corresponds to
     // Page 52 is the current week, so we calculate the offset
+    // Use midnight for both dates to ensure accurate day difference calculation
     final now = DateTime.now();
-    final currentWeekStart = now.subtract(
+    final todayMidnight = DateTime(now.year, now.month, now.day);
+    final currentWeekStart = todayMidnight.subtract(
       Duration(days: now.weekday % 7),
     );
     
@@ -655,17 +657,39 @@ class _EventsScreenState extends State<EventsScreen>
               weekendTextStyle: TextStyle(
                 color: isDark ? Colors.white70 : Colors.black87,
               ),
-              // Event markers
+              // Event markers - custom builder will override default styling
               markersMaxCount: 3,
-              markerDecoration: BoxDecoration(
-                color: theme.colorScheme.primary,
-                shape: BoxShape.circle,
-              ),
               markerSize: 6,
               markersAlignment: Alignment.bottomCenter,
               // Rounded corners feel
               cellMargin: const EdgeInsets.all(4),
               cellPadding: const EdgeInsets.all(0),
+            ),
+            calendarBuilders: CalendarBuilders(
+              markerBuilder: (context, date, events) {
+                if (events.isEmpty) return const SizedBox.shrink();
+                
+                // Get events for this day and limit to 3 markers
+                final dayEvents = _getEventsForDay(date);
+                final displayEvents = dayEvents.take(3).toList();
+                
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: displayEvents.map((event) {
+                    final eventColor = _getEventColor(event);
+                    return Container(
+                      width: 6,
+                      height: 6,
+                      margin: const EdgeInsets.symmetric(horizontal: 1),
+                      decoration: BoxDecoration(
+                        color: eventColor,
+                        shape: BoxShape.circle,
+                      ),
+                    );
+                  }).toList(),
+                );
+              },
             ),
             headerStyle: HeaderStyle(
               formatButtonVisible: false,
@@ -956,9 +980,9 @@ class _EventsScreenState extends State<EventsScreen>
       child: Column(
         children: List.generate(24, (hour) {
           return Container(
-            height: 60,
+            height: 30,
             alignment: Alignment.topRight,
-            padding: const EdgeInsets.only(right: 8, top: 4),
+            padding: const EdgeInsets.only(right: 8, top: 2),
             child: Text(
               hour == 0
                   ? '12 AM'
@@ -990,22 +1014,22 @@ class _EventsScreenState extends State<EventsScreen>
       ),
       child: Stack(
         children: [
-          // Hour grid lines
-          Column(
-            children: List.generate(24, (hour) {
-              return Container(
-                height: 60,
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: isDark ? Colors.white12 : Colors.black12,
-                      width: 0.5,
-                    ),
+        // Hour grid lines
+        Column(
+          children: List.generate(24, (hour) {
+            return Container(
+              height: 30,
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: isDark ? Colors.white12 : Colors.black12,
+                    width: 0.5,
                   ),
                 ),
-              );
-            }),
-          ),
+              ),
+            );
+          }),
+        ),
           // Events positioned by time
           ...events.map((event) => _buildWeekEventCard(event, theme, isDark)),
         ],
@@ -1017,10 +1041,10 @@ class _EventsScreenState extends State<EventsScreen>
     final startHour = event.startDateTime.hour + (event.startDateTime.minute / 60);
     final endHour = event.endDateTime.hour + (event.endDateTime.minute / 60);
     final duration = endHour - startHour;
-    
+
     // Calculate position and height
-    final top = startHour * 60.0; // 60px per hour
-    final height = (duration * 60.0).clamp(30.0, double.infinity); // Min 30px
+    final top = startHour * 30.0; // 30px per hour
+    final height = (duration * 30.0).clamp(15.0, double.infinity); // Min 15px
 
     final eventColor = _getEventColor(event);
 
@@ -1275,34 +1299,20 @@ class _EventsScreenState extends State<EventsScreen>
     if (events.isEmpty) return -1;
 
     final targetMonthStart = DateTime(selectedDate.year, selectedDate.month, 1);
-    int? monthIndex;
-    int? nearestIndex;
-    int? nearestDistanceMinutes;
 
-    for (int i = 0; i < events.length; i++) {
-      final eventDate = events[i].startDateTime;
+    final monthIndex = events.indexWhere((event) {
+      final eventDate = event.startDateTime;
+      return eventDate.year == targetMonthStart.year &&
+          eventDate.month == targetMonthStart.month;
+    });
+    if (monthIndex != -1) return monthIndex;
 
-      if (eventDate.year == targetMonthStart.year &&
-          eventDate.month == targetMonthStart.month) {
-        monthIndex = i;
-        break;
-      }
+    final firstOnOrAfterIndex = events.indexWhere(
+      (event) => !event.startDateTime.isBefore(targetMonthStart),
+    );
+    if (firstOnOrAfterIndex != -1) return firstOnOrAfterIndex;
 
-      final distanceMinutes =
-          eventDate.difference(targetMonthStart).inMinutes.abs();
-      final isCloser = nearestDistanceMinutes == null ||
-          distanceMinutes < nearestDistanceMinutes;
-      final isEquallyCloseButFuture = nearestDistanceMinutes != null &&
-          distanceMinutes == nearestDistanceMinutes &&
-          !eventDate.isBefore(targetMonthStart);
-
-      if (isCloser || isEquallyCloseButFuture) {
-        nearestDistanceMinutes = distanceMinutes;
-        nearestIndex = i;
-      }
-    }
-
-    return monthIndex ?? nearestIndex ?? -1;
+    return events.length - 1;
   }
 
 

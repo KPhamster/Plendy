@@ -17,9 +17,11 @@ import '../screens/receive_share/widgets/youtube_preview_widget.dart';
 import '../screens/receive_share/widgets/generic_url_preview_widget.dart';
 import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../screens/receive_share/widgets/yelp_preview_widget.dart';
+import '../screens/receive_share/widgets/ticketmaster_preview_widget.dart';
 import '../services/google_maps_service.dart';
 import '../services/instagram_settings_service.dart';
 import '../services/experience_share_service.dart';
+import '../services/ticketmaster_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../screens/experience_page_screen.dart';
 import 'web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
@@ -71,6 +73,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   // For Maps preview parity with ExperiencePageScreen
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  final TicketmasterService _ticketmasterService = TicketmasterService();
+  final Map<String, TicketmasterEventDetails?> _ticketmasterEventDetails = {};
+  final Set<String> _ticketmasterUrlsLoading = {};
   final ExperienceShareService _experienceShareService =
       ExperienceShareService();
   static const double _defaultPreviewHeight = 640.0;
@@ -191,6 +196,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         return 520.0;
       case _MediaType.maps:
         return 520.0;
+      case _MediaType.ticketmaster:
       case _MediaType.image:
       case _MediaType.generic:
         return 0;
@@ -207,6 +213,39 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   void _togglePreviewExpansion() {
     setState(() {
       _isPreviewExpanded = !_isPreviewExpanded;
+    });
+  }
+
+  void _queueTicketmasterDetailsLoad(String url) {
+    if (_ticketmasterEventDetails.containsKey(url) ||
+        _ticketmasterUrlsLoading.contains(url)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadTicketmasterEventDetails(url);
+      }
+    });
+  }
+
+  Future<void> _loadTicketmasterEventDetails(String url) async {
+    if (_ticketmasterUrlsLoading.contains(url) ||
+        _ticketmasterEventDetails.containsKey(url)) {
+      return;
+    }
+    setState(() {
+      _ticketmasterUrlsLoading.add(url);
+    });
+    TicketmasterEventDetails? details;
+    try {
+      details = await _ticketmasterService.getEventFromUrl(url);
+    } catch (_) {
+      details = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _ticketmasterEventDetails[url] = details;
+      _ticketmasterUrlsLoading.remove(url);
     });
   }
 
@@ -583,6 +622,32 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
             );
     }
 
+    if (type == _MediaType.ticketmaster) {
+      // First check if we have cached data in the SharedMediaItem
+      final hasCachedData = mediaItem.ticketmasterEventName != null || 
+                            mediaItem.ticketmasterImageUrl != null;
+      
+      // Only load from API if we don't have cached data
+      if (!hasCachedData) {
+        _queueTicketmasterDetailsLoad(url);
+      }
+      
+      final details = _ticketmasterEventDetails[url];
+      final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(url);
+      
+      // Prefer cached data from SharedMediaItem, fall back to API data
+      return TicketmasterPreviewWidget(
+        key: ValueKey(url),
+        ticketmasterUrl: url,
+        launchUrlCallback: widget.onLaunchUrl,
+        isLoading: isLoading,
+        eventName: mediaItem.ticketmasterEventName ?? details?.name,
+        venueName: mediaItem.ticketmasterVenueName ?? details?.venue?.name,
+        eventDate: mediaItem.ticketmasterEventDate ?? details?.startDateTime,
+        imageUrl: mediaItem.ticketmasterImageUrl ?? details?.imageUrl,
+      );
+    }
+
     if (type == _MediaType.maps) {
       // Seed a resolved future using the known experience/location data
       _mapsPreviewFutures[url] = Future.value({
@@ -924,6 +989,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         tooltip = 'Open in YouTube';
         iconSize = 30;
         break;
+      case _MediaType.ticketmaster:
+        tooltip = 'Open in Ticketmaster';
+        iconSize = 28;
+        break;
       case _MediaType.maps:
         iconData = FontAwesomeIcons.google;
         iconColor = const Color(0xFF4285F4);
@@ -952,16 +1021,36 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final Color expansionColor = Colors.blue;
     final Color shareColor = Colors.blue;
 
-    final Widget socialButton = IconButton(
-      tooltip: tooltip,
-      iconSize: iconSize,
-      onPressed: isLaunchable
-          ? () {
-              widget.onLaunchUrl(url);
-            }
-          : null,
-      icon: Icon(iconData, color: iconColor),
-    );
+    final Widget socialButton = type == _MediaType.ticketmaster
+        ? GestureDetector(
+            onTap: isLaunchable ? () => widget.onLaunchUrl(url) : null,
+            child: Tooltip(
+              message: tooltip,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF026CDF),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(8),
+                child: Image.asset(
+                  'assets/icon/misc/ticketmaster_logo.png',
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          )
+        : IconButton(
+            tooltip: tooltip,
+            iconSize: iconSize,
+            onPressed: isLaunchable
+                ? () {
+                    widget.onLaunchUrl(url);
+                  }
+                : null,
+            icon: Icon(iconData, color: iconColor),
+          );
 
     final Widget shareButton = IconButton(
       tooltip: 'Share media',
@@ -996,7 +1085,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     );
 
     final List<Widget> rightButtons = [shareButton];
-    if (showExpandButton) {
+    if (showExpandButton && type != _MediaType.ticketmaster) {
       rightButtons.add(const SizedBox(width: 4));
       rightButtons.add(expandButton);
     }
@@ -1089,6 +1178,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         lower.endsWith('.webp')) {
       return _MediaType.image;
     }
+    if (TicketmasterService.isTicketmasterUrl(lower)) {
+      return _MediaType.ticketmaster;
+    }
     if (lower.contains('tiktok.com') || lower.contains('vm.tiktok.com')) {
       return _MediaType.tiktok;
     }
@@ -1131,6 +1223,7 @@ enum _MediaType {
   instagram,
   facebook,
   youtube,
+  ticketmaster,
   yelp,
   maps,
   image,
