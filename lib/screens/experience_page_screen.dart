@@ -4681,13 +4681,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       final defaultStart = DateTime(now.year, now.month, now.day, now.hour, 0);
       final defaultEnd = defaultStart.add(const Duration(hours: 1));
 
+      // Build cover image URL from experience's location photo (if available)
+      String? coverImageUrl;
+      final resourceName = _currentExperience.location.photoResourceName;
+      if (resourceName != null && resourceName.isNotEmpty) {
+        coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+          resourceName,
+          maxWidthPx: 800,
+          maxHeightPx: 600,
+        );
+      }
+
       // Create a new event with this experience in the itinerary
       final newEvent = Event(
         id: '',
-        title: '',
+        title: _currentExperience.name,
         description: '',
         startDateTime: defaultStart,
         endDateTime: defaultEnd,
+        coverImageUrl: coverImageUrl,
         plannerUserId: userId,
         createdAt: now,
         updatedAt: now,

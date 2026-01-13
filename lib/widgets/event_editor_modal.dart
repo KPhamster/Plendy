@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import '../config/colors.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
@@ -86,6 +88,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   bool _isSaving = false;
   bool _isPostingComment = false;
+  bool _isUploadingCoverImage = false;
   bool _hasUnsavedChanges = false;
   bool _isEditModeEnabled = false;
   bool _attemptedAnonymousSignIn = false;
@@ -110,6 +113,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
   @override
   void initState() {
     super.initState();
+    // Pre-populate _manuallyEditedScheduleIds with entries that already have scheduled times
+    // This preserves previously saved times and prevents auto-setting from overwriting them
+    for (final entry in widget.event.experiences) {
+      if (entry.scheduledTime != null) {
+        _manuallyEditedScheduleIds.add(entry.experienceId);
+      }
+    }
     _currentEvent = _eventWithAutoPrimarySchedule(widget.event);
     _isEditModeEnabled = !widget.isReadOnly;
     _availableExperiences = List<Experience>.from(widget.experiences);
@@ -299,15 +309,61 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Future<void> _pickCoverImage() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1920,
+      maxHeight: 1080,
+      imageQuality: 85,
+    );
 
     if (image != null) {
-      // TODO: Upload image to Firebase Storage and get URL
-      // For now, show a message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Image upload not yet implemented')),
-        );
+      final userId = _authService.currentUser?.uid;
+      if (userId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please sign in to upload images')),
+          );
+        }
+        return;
+      }
+
+      setState(() {
+        _isUploadingCoverImage = true;
+      });
+
+      try {
+        final File imageFile = File(image.path);
+        final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final ref = FirebaseStorage.instance
+            .ref()
+            .child('event_covers')
+            .child(_currentEvent.id)
+            .child(fileName);
+
+        await ref.putFile(imageFile);
+        final String downloadUrl = await ref.getDownloadURL();
+
+        if (mounted) {
+          setState(() {
+            _coverImageUrlController.text = downloadUrl;
+            _isUploadingCoverImage = false;
+            _markUnsavedChanges();
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cover image uploaded successfully')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _isUploadingCoverImage = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to upload image: $e')),
+          );
+        }
       }
     }
   }
@@ -773,6 +829,31 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       child: const Icon(Icons.edit, color: Colors.black),
                     ),
             ),
+            // Uploading overlay
+            if (_isUploadingCoverImage)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.5),
+                  child: const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          'Uploading image...',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
