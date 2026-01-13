@@ -52,6 +52,8 @@ class ExperienceCardForm extends StatefulWidget {
   final OnUpdateCallback onUpdate; // Callback to parent (signature updated)
   final GlobalKey<FormState> formKey; // Pass form key down
   final void Function(String cardId)? onYelpButtonTapped; // ADDED
+  final VoidCallback? onEventSelect; // ADDED: Callback to show event selection dialog
+  final String? selectedEventTitle; // ADDED: Title of currently selected event (for indicator)
 
   const ExperienceCardForm({
     super.key,
@@ -66,6 +68,8 @@ class ExperienceCardForm extends StatefulWidget {
     required this.onUpdate, // Signature updated
     required this.formKey,
     this.onYelpButtonTapped, // ADDED
+    this.onEventSelect, // ADDED
+    this.selectedEventTitle, // ADDED
   });
 
   @override
@@ -1256,27 +1260,79 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           ],
                         ),
                       ),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: OutlinedButton.icon(
-                          icon: Icon(Icons.bookmark_outline),
-                          label: Text('Choose a saved experience'),
-                          onPressed: () =>
-                              widget.onSelectSavedExperience(widget.cardData),
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: Theme.of(context).primaryColor,
-                            side: BorderSide(
-                              color: Theme.of(context).primaryColor,
-                              width: 2.0,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.max,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              flex: 1,
+                              child: OutlinedButton.icon(
+                                icon: Icon(
+                                  widget.selectedEventTitle != null
+                                      ? Icons.check_circle
+                                      : Icons.event,
+                                  color: widget.selectedEventTitle != null
+                                      ? AppColors.sage
+                                      : null,
+                                ),
+                                label: Text(
+                                  'Events',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onPressed: widget.onEventSelect,
+                                style: OutlinedButton.styleFrom(
+                                  backgroundColor: widget.selectedEventTitle != null
+                                      ? AppColors.sage.withOpacity(0.1)
+                                      : Colors.white,
+                                  foregroundColor: widget.selectedEventTitle != null
+                                      ? AppColors.sage
+                                      : Theme.of(context).primaryColor,
+                                  side: BorderSide(
+                                    color: widget.selectedEventTitle != null
+                                        ? AppColors.sage
+                                        : Theme.of(context).primaryColor,
+                                    width: 2.0,
+                                  ),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              ),
                             ),
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            visualDensity: VisualDensity.compact,
-                          ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 2,
+                              child: OutlinedButton.icon(
+                                icon: Icon(Icons.bookmark_outline),
+                                label: Text(
+                                  'Choose a saved experience',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onPressed: () => widget
+                                    .onSelectSavedExperience(widget.cardData),
+                                style: OutlinedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor:
+                                      Theme.of(context).primaryColor,
+                                  side: BorderSide(
+                                    color: Theme.of(context).primaryColor,
+                                    width: 2.0,
+                                  ),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                      const SizedBox(height: 4),
                       // Location selection with preview
                       ValueListenableBuilder<bool>(
                         valueListenable: widget.cardData.locationEnabled,

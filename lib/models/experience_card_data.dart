@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../config/colors.dart';
 import '../models/experience.dart';
+import '../models/event.dart';
 
 /// Enum to track the source of the shared content for an experience card.
 enum ShareType {
@@ -78,6 +79,9 @@ class ExperienceCardData {
   /// Fetched description from Google Places API (editorialSummary/reviewSummary/generativeSummary)
   /// This is used as the description when user hasn't provided their own notes
   String? fetchedDescription;
+
+  /// Selected event for this experience (to add to event's itinerary on save)
+  Event? selectedEvent;
 
   ExperienceCardData();
 

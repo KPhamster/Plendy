@@ -60,6 +60,8 @@ import '../models/extracted_event_info.dart';
 import '../models/event.dart';
 import '../widgets/event_editor_modal.dart';
 import '../services/ticketmaster_service.dart';
+import '../services/event_service.dart';
+import 'package:intl/intl.dart';
 // Import ApiSecrets conditionally
 import '../config/api_secrets.dart'
     if (dart.library.io) '../config/api_secrets.dart'
@@ -92,6 +94,7 @@ class _ExperienceCardsSection extends StatelessWidget {
       experienceCards; // ADDED: To receive cards directly
   final GlobalKey? sectionKey; // ADDED for scrolling
   final void Function(String cardId)? onYelpButtonTapped; // ADDED
+  final void Function(ExperienceCardData card)? showSelectEventDialog; // ADDED: Show event selection dialog for a specific card
 
   const _ExperienceCardsSection({
     super.key,
@@ -110,6 +113,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     required this.experienceCards, // ADDED: To constructor
     this.sectionKey, // ADDED for scrolling
     this.onYelpButtonTapped, // ADDED
+    this.showSelectEventDialog, // ADDED
   });
 
   @override
@@ -191,7 +195,11 @@ class _ExperienceCardsSection extends StatelessWidget {
                         );
                       },
                       formKey: card.formKey,
-                      onYelpButtonTapped: onYelpButtonTapped, // ADDED
+                      onYelpButtonTapped: onYelpButtonTapped,
+                      onEventSelect: showSelectEventDialog != null 
+                          ? () => showSelectEventDialog!(card) 
+                          : null,
+                      selectedEventTitle: card.selectedEvent?.title,
                     );
                   }),
             if (!isSpecialUrl(currentSharedFiles.isNotEmpty
@@ -357,6 +365,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   
   // Event detection state - stored for use after successful save
   ExtractedEventInfo? _detectedEventInfo;
+
+  // Event service for managing events
+  final EventService _eventService = EventService();
 
   Widget _buildSharedUrlBar({required bool showInstructions}) {
     // Rebuilds show suffix icons immediately based on controller text
@@ -1098,6 +1109,32 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCAN PREVIEW: Found ${locations.length} location(s)');
+      _updateScanProgress(0.88);
+      
+      // Try to detect event information from available text content
+      // Priority 1: WebView extracted caption (e.g., from Instagram/TikTok)
+      // Priority 2: Location metadata's extracted text
+      ExtractedEventInfo? detectedEvent;
+      
+      if (_extractedCaption != null && _extractedCaption!.isNotEmpty) {
+        print('📅 SCAN PREVIEW: Checking WebView caption for event info...');
+        detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
+      }
+      
+      // Check location metadata for extracted text if no event found yet
+      if (detectedEvent == null && locations.isNotEmpty) {
+        for (final location in locations) {
+          if (location.metadata != null) {
+            final extractedText = location.metadata!['extractedText'] as String?;
+            if (extractedText != null && extractedText.isNotEmpty) {
+              print('📅 SCAN PREVIEW: Checking location metadata for event info...');
+              detectedEvent = await _detectEventFromTextAsync(extractedText);
+              if (detectedEvent != null) break;
+            }
+          }
+        }
+      }
+      
       _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
@@ -1107,7 +1144,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Always show the location selection dialog, even for single results
       // This lets users verify the location is correct before saving
-      await _handleMultipleExtractedLocations(locations, provider);
+      // Pass detected event info for event designation
+      await _handleMultipleExtractedLocations(
+        locations, 
+        provider,
+        detectedEventInfo: detectedEvent,
+      );
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ SCAN PREVIEW ERROR: $e');
@@ -1260,7 +1302,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.85);
+      
+      // Try to detect event information from the page content
+      ExtractedEventInfo? detectedEvent;
+      if (pageContent.isNotEmpty) {
+        print('📅 SCAN PAGE: Checking page content for event info...');
+        detectedEvent = await _detectEventFromTextAsync(pageContent);
+      }
+      
+      _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -1268,7 +1319,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(locations, provider);
+      // Pass detected event info for event designation
+      await _handleMultipleExtractedLocations(
+        locations, 
+        provider,
+        detectedEventInfo: detectedEvent,
+      );
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ SCAN PAGE ERROR: $e');
@@ -2213,7 +2269,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCREENSHOT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.85);
+      
+      // Try to detect event information from location metadata's extracted text
+      // For uploaded screenshots, we don't have WebView caption, but OCR may have extracted text
+      ExtractedEventInfo? detectedEvent;
+      
+      if (locations.isNotEmpty) {
+        for (final location in locations) {
+          if (location.metadata != null) {
+            final extractedText = location.metadata!['extractedText'] as String?;
+            if (extractedText != null && extractedText.isNotEmpty) {
+              print('📅 SCREENSHOT: Checking location metadata for event info...');
+              detectedEvent = await _detectEventFromTextAsync(extractedText);
+              if (detectedEvent != null) break;
+            }
+          }
+        }
+      }
+      
+      _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -2221,7 +2296,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(locations, provider);
+      // Pass detected event info for event designation
+      await _handleMultipleExtractedLocations(
+        locations, 
+        provider,
+        detectedEventInfo: detectedEvent,
+      );
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ SCREENSHOT ERROR: $e');
@@ -8141,6 +8221,77 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (!mounted) return;
       }
 
+      // Add each saved experience to its respective selected event's itinerary
+      // Group experiences by their selected event
+      final Map<String, List<String>> eventToExperienceIds = {};
+      final Map<String, Event> eventCache = {};
+      
+      for (int i = 0; i < experienceCards.length; i++) {
+        final card = experienceCards[i];
+        if (card.selectedEvent != null && i < savedExperienceIds.length) {
+          final eventId = card.selectedEvent!.id;
+          final experienceId = savedExperienceIds[i];
+          
+          eventToExperienceIds.putIfAbsent(eventId, () => []);
+          eventToExperienceIds[eventId]!.add(experienceId);
+          eventCache[eventId] = card.selectedEvent!;
+        }
+      }
+      
+      // Add experiences to their respective events
+      for (final entry in eventToExperienceIds.entries) {
+        final eventId = entry.key;
+        final experienceIdsForEvent = entry.value;
+        final cachedEvent = eventCache[eventId]!;
+        
+        try {
+          // Refresh the event to get the latest data
+          final freshEvent = await _eventService.getEvent(eventId);
+          if (freshEvent != null && mounted) {
+            // Create new itinerary entries for the experiences
+            final newEntries = experienceIdsForEvent.map((expId) => 
+              EventExperienceEntry(experienceId: expId)
+            ).toList();
+            
+            // Add to existing experiences
+            final updatedExperiences = [
+              ...freshEvent.experiences,
+              ...newEntries,
+            ];
+            
+            // Update the event
+            final updatedEvent = freshEvent.copyWith(
+              experiences: updatedExperiences,
+              updatedAt: DateTime.now(),
+            );
+            
+            await _eventService.updateEvent(updatedEvent);
+            
+            if (mounted) {
+              Fluttertoast.showToast(
+                msg: '${experienceIdsForEvent.length} experience${experienceIdsForEvent.length != 1 ? 's' : ''} added to "${cachedEvent.title}"',
+                toastLength: Toast.LENGTH_LONG,
+                gravity: ToastGravity.BOTTOM,
+              );
+            }
+          }
+        } catch (e) {
+          debugPrint('Error adding experiences to event $eventId: $e');
+          if (mounted) {
+            Fluttertoast.showToast(
+              msg: 'Experiences saved, but could not add to "${cachedEvent.title}"',
+              toastLength: Toast.LENGTH_LONG,
+              gravity: ToastGravity.BOTTOM,
+            );
+          }
+        }
+      }
+      
+      // Clear selected events from all cards after handling
+      for (final card in experienceCards) {
+        card.selectedEvent = null;
+      }
+
       if (shouldAttemptNavigation) {
         if (!mounted) return;
 
@@ -9226,6 +9377,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                       _experienceCardsSectionKey,
                                                   onYelpButtonTapped:
                                                       _trackYelpButtonTapped,
+                                                  showSelectEventDialog:
+                                                      _showSelectEventDialogForCard,
                                                 );
                                               },
                                             ),
@@ -10836,6 +10989,520 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     
     return null;
   }
+
+  // --- Select Event Dialog for adding experience to event itinerary ---
+  
+  /// Helper class to represent either a date header or an event in the list
+  
+
+  // Group events by date and create a list with headers
+  List<_EventListItem> _buildEventListWithHeaders(List<Event> events) {
+    if (events.isEmpty) return [];
+
+    final List<_EventListItem> items = [];
+    DateTime? currentDate;
+
+    for (final event in events) {
+      final eventDate = DateTime(
+        event.startDateTime.year,
+        event.startDateTime.month,
+        event.startDateTime.day,
+      );
+
+      // Add date header if this is a new day
+      if (currentDate == null || !_isSameDay(currentDate, eventDate)) {
+        items.add(_EventListItem.header(eventDate));
+        currentDate = eventDate;
+      }
+
+      items.add(_EventListItem.event(event));
+    }
+
+    return items;
+  }
+
+  // Format date header as "Tuesday, June 4, 2025"
+  String _formatDateHeader(DateTime date) {
+    return DateFormat('EEEE, MMMM d, yyyy').format(date);
+  }
+
+  // Build date header widget
+  Widget _buildEventDateHeader(DateTime date, ThemeData theme, bool isDark) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        _formatDateHeader(date),
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          color: isDark ? Colors.white70 : Colors.black87,
+          fontSize: 14,
+        ),
+      ),
+    );
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _formatEventTime(Event event) {
+    final start = DateFormat('h:mm a').format(event.startDateTime);
+    final end = DateFormat('h:mm a').format(event.endDateTime);
+
+    if (_isSameDay(event.startDateTime, event.endDateTime)) {
+      return '$start - $end';
+    } else {
+      return '$start - ${DateFormat('MMM d, h:mm a').format(event.endDateTime)}';
+    }
+  }
+
+  Color _getEventColor(Event event) {
+    if (event.colorHex != null && event.colorHex!.isNotEmpty) {
+      return _parseEventColorHex(event.colorHex!);
+    }
+    const colors = [
+      Colors.blue,
+      Colors.red,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.pink,
+      Colors.indigo,
+    ];
+    final hash = event.id.hashCode;
+    return colors[hash.abs() % colors.length];
+  }
+
+  Color _parseEventColorHex(String hex) {
+    String cleaned = hex.replaceAll('#', '');
+    if (cleaned.length == 6) {
+      cleaned = 'FF$cleaned';
+    }
+    return Color(int.parse(cleaned, radix: 16));
+  }
+
+  Widget _buildSelectEventCard(
+    Event event, 
+    ThemeData theme, 
+    bool isDark, 
+    bool isSelected,
+    {VoidCallback? onTap}
+  ) {
+    final cardColor = isDark ? const Color(0xFF2B2930) : Colors.white;
+    final borderColor = _getEventColor(event);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
+        children: [
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: borderColor.withOpacity(0.3),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: IntrinsicHeight(
+              child: Row(
+                children: [
+                  Container(
+                    width: 4,
+                    decoration: BoxDecoration(
+                      color: borderColor,
+                      borderRadius: const BorderRadius.horizontal(
+                        left: Radius.circular(16),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            event.title.isEmpty ? 'Untitled Event' : event.title,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'Google Sans',
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.access_time,
+                                size: 16,
+                                color: isDark ? Colors.white60 : Colors.black54,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _formatEventTime(event),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: isDark ? Colors.white60 : Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (event.description.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              event.description,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: isDark ? Colors.white54 : Colors.black45,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                          if (event.experiences.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on_outlined,
+                                  size: 16,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Selection indicator - sage circle with checkmark
+          if (isSelected)
+            Positioned(
+              top: 2,
+              right: 12,
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: AppColors.sage,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.check,
+                  size: 14,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showSelectEventDialogForCard(ExperienceCardData card) async {
+    if (!mounted) return;
+
+    final currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      Fluttertoast.showToast(
+        msg: 'Please sign in to select an event',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+      );
+      return;
+    }
+
+    // Show loading dialog while fetching events
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      // Fetch user's events
+      final events = await _eventService.getEventsForUser(currentUserId);
+      
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
+
+      // Sort events by start date (most recent first, but future events at top)
+      events.sort((a, b) => b.startDateTime.compareTo(a.startDateTime));
+
+      final eventListItems = _buildEventListWithHeaders(events);
+
+      // Find the index to scroll to
+      int anchorIndex = -1;
+      
+      // First priority: scroll to selected event for this card if there is one
+      if (card.selectedEvent != null) {
+        for (int i = 0; i < eventListItems.length; i++) {
+          if (!eventListItems[i].isHeader && 
+              eventListItems[i].event != null &&
+              eventListItems[i].event!.id == card.selectedEvent!.id) {
+            anchorIndex = i;
+            break;
+          }
+        }
+      }
+      
+      // Second priority: scroll to first upcoming event
+      if (anchorIndex == -1 && events.isNotEmpty) {
+        final now = DateTime.now();
+        for (int i = 0; i < eventListItems.length; i++) {
+          if (!eventListItems[i].isHeader && eventListItems[i].event != null) {
+            if (!eventListItems[i].event!.startDateTime.isBefore(now)) {
+              anchorIndex = i;
+              break;
+            }
+          }
+        }
+        // If no upcoming event found, anchor to the last event
+        if (anchorIndex == -1 && eventListItems.isNotEmpty) {
+          anchorIndex = eventListItems.length - 1;
+        }
+      }
+
+      final List<GlobalKey> itemKeys =
+          List.generate(eventListItems.length, (_) => GlobalKey());
+
+      await showDialog(
+        context: context,
+        builder: (dialogContext) {
+          final theme = Theme.of(dialogContext);
+          final isDark = theme.brightness == Brightness.dark;
+          final ScrollController scrollController = ScrollController();
+
+          // Scroll to anchor
+          void scrollToAnchor() {
+            if (anchorIndex < 0 || anchorIndex >= itemKeys.length) return;
+
+            void performScroll() {
+              // Initial jump to estimated position
+              const estimatedItemHeight = 110.0;
+              final estimatedOffset = anchorIndex * estimatedItemHeight;
+              final maxScroll = scrollController.position.maxScrollExtent;
+              scrollController.jumpTo(estimatedOffset.clamp(0.0, maxScroll));
+
+              int retries = 0;
+              const maxRetries = 15;
+
+              void tryEnsureVisible() {
+                if (retries++ >= maxRetries) return;
+                final keyContext = itemKeys[anchorIndex].currentContext;
+                if (keyContext != null) {
+                  Scrollable.ensureVisible(
+                    keyContext,
+                    duration: const Duration(milliseconds: 0),
+                    curve: Curves.easeOut,
+                    alignment: 0.1,
+                  );
+                } else {
+                  Future.delayed(
+                      const Duration(milliseconds: 100), tryEnsureVisible);
+                }
+              }
+
+              Future.delayed(const Duration(milliseconds: 150), tryEnsureVisible);
+            }
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              performScroll();
+            });
+          }
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            scrollToAnchor();
+          });
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return Dialog(
+                backgroundColor: AppColors.backgroundColor,
+                insetPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                shape:
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(dialogContext).size.width * 0.95,
+                    maxHeight: MediaQuery.of(dialogContext).size.height * 0.7,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                        child: Row(
+                          children: [
+                            Text(
+                              'Select an Event',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'Google Sans',
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () {
+                                triggerHeavyHaptic();
+                                scrollController.dispose();
+                                Navigator.of(dialogContext).pop();
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: events.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.event_outlined,
+                                      size: 48,
+                                      color: isDark ? Colors.white38 : Colors.black45,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'No events yet',
+                                      style: theme.textTheme.bodyMedium?.copyWith(
+                                        color:
+                                            isDark ? Colors.white70 : Colors.black54,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Create events from the Map screen',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color:
+                                            isDark ? Colors.white54 : Colors.black45,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.builder(
+                                controller: scrollController,
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                itemCount: eventListItems.length,
+                                itemBuilder: (context, index) {
+                                  final item = eventListItems[index];
+                                  return Container(
+                                    key: itemKeys[index],
+                                    child: item.isHeader
+                                        ? _buildEventDateHeader(item.date!, theme, isDark)
+                                        : _buildSelectEventCard(
+                                            item.event!,
+                                            theme,
+                                            isDark,
+                                            card.selectedEvent?.id == item.event!.id,
+                                            onTap: () {
+                                              triggerHeavyHaptic();
+                                              final tappedEvent = item.event!;
+                                              
+                                              if (card.selectedEvent?.id == tappedEvent.id) {
+                                                // Deselect if already selected
+                                                setState(() {
+                                                  card.selectedEvent = null;
+                                                });
+                                                setDialogState(() {});
+                                                Fluttertoast.showToast(
+                                                  msg: 'Event deselected',
+                                                  toastLength: Toast.LENGTH_SHORT,
+                                                  gravity: ToastGravity.BOTTOM,
+                                                );
+                                              } else {
+                                                // Select the event for this card
+                                                setState(() {
+                                                  card.selectedEvent = tappedEvent;
+                                                });
+                                                setDialogState(() {});
+                                                
+                                                // Close dialog and show toast
+                                                Navigator.of(dialogContext).pop();
+                                                Fluttertoast.showToast(
+                                                  msg: 'Experience will be saved to "${tappedEvent.title}"',
+                                                  toastLength: Toast.LENGTH_LONG,
+                                                  gravity: ToastGravity.BOTTOM,
+                                                );
+                                              }
+                                            },
+                                          ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
+      Fluttertoast.showToast(
+        msg: 'Error loading events: $e',
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+      );
+    }
+  }
+  // --- End Select Event Dialog ---
+}
+
+// Helper class to represent either a date header or an event
+class _EventListItem {
+  final DateTime? date;
+  final Event? event;
+  final bool isHeader;
+
+  _EventListItem.header(this.date)
+      : event = null,
+        isHeader = true;
+  _EventListItem.event(this.event)
+      : date = null,
+        isHeader = false;
 }
 
 class InstagramPreviewWrapper extends StatefulWidget {
