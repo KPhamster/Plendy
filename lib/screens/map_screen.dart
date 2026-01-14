@@ -7003,15 +7003,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (await canLaunchUrl(uri)) {
       try {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
-        // Clear the temporary marker after successfully launching maps
-        if (mounted) {
-          setState(() {
-            _tappedLocationMarker = null;
-            _tappedLocationDetails = null;
-            _tappedLocationBusinessStatus = null;
-            _tappedLocationOpenNow = null;
-          });
-        }
+        // Note: Don't clear the tapped location state here so the experience
+        // remains selected when user returns from external maps app
       } catch (e) {
         print("🗺️ MAP SCREEN: Could not launch $uri: $e");
         if (mounted) {
@@ -7061,15 +7054,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         );
       }
     }
-    // Clear the temporary marker after successfully launching maps
-    if (mounted) {
-      setState(() {
-        _tappedLocationMarker = null;
-        _tappedLocationDetails = null;
-        _tappedLocationBusinessStatus = null;
-        _tappedLocationOpenNow = null;
-      });
-    }
+    // Note: Don't clear the tapped location state here so the experience
+    // remains selected when user returns from external maps app
   }
   // --- END: Helper method to launch map location --- //
 
