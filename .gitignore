@@ -104,3 +104,4 @@ get-pip.py
 .claude/settings.local.json
 android-mcp-server/
 /.cursor
+lib/config/Plendy.code-workspace
