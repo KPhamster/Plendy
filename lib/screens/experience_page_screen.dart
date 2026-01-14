@@ -975,6 +975,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final result = await showModalBottomSheet<Experience?>(
       context: context,
       isScrollControlled: true, // Important for keyboard handling
+      enableDrag: false, // Disable swipe-to-dismiss
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         // Optional: Rounded corners

@@ -22,6 +22,7 @@ import 'package:plendy/models/enums/share_enums.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -1542,7 +1543,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   bottom: MediaQuery.of(context).viewInsets.bottom,
                   left: 16,
                   right: 16,
-                  top: 16),
+                  top: 50),
               child: SingleChildScrollView(
                 child: Form(
                   key: _formKey,
@@ -1553,7 +1554,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     // Modal Title
                     Text(
                       'Edit Experience',
-                      style: Theme.of(context).textTheme.headlineSmall,
+                      style: GoogleFonts.notoSerif(
+                        fontSize: Theme.of(context).textTheme.headlineSmall?.fontSize,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).textTheme.headlineSmall?.color,
+                      ),
                     ),
                     const SizedBox(height: 20),
                     Align(

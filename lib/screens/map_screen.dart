@@ -4,6 +4,7 @@ import 'dart:math' as Math; // Import for mathematical functions
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
@@ -165,6 +166,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   bool _isSearching = false;
+  bool _isReturningFromNavigation = false; // Track navigation return to disable search
   Timer? _debounce;
   GoogleMapController?
       _mapController; // To be initialized from _mapControllerCompleter
@@ -5019,10 +5021,27 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Future<void> _navigateToExperience(
       Experience experience, UserCategory category) async {
     print("🗺️ MAP SCREEN: Navigating to experience: ${experience.name}");
+    // Set flag to disable search field during navigation return
+    setState(() {
+      _isReturningFromNavigation = true;
+    });
+    // Unfocus any focused element to dismiss keyboard before navigation
+    FocusScope.of(context).unfocus();
+    // Disable focus on search field to prevent it from gaining focus during navigation
+    _searchFocusNode.canRequestFocus = false;
+    // Clear search state to prevent search from triggering on return
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.clear();
     final List<UserCategory> additionalCategories =
         _collectAccessibleCategoriesForExperience(experience);
     final List<ColorCategory> mergedColorCategories =
         _buildColorCategoryListForExperience(experience);
+    // Save the state to restore selection after navigation
+    final Experience savedExperience = experience;
+    final UserCategory savedCategory = category;
+    final Location savedLocation = experience.location;
+    final String? savedBusinessStatus = _tappedLocationBusinessStatus;
+    final bool? savedOpenNow = _tappedLocationOpenNow;
     // Clear the temporary tapped marker when navigating away
     setState(() {
       _tappedLocationMarker = null;
@@ -5034,6 +5053,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _publicReadOnlyExperience =
           null; // ADDED: Clear any public fallback experience
       _publicReadOnlyExperienceId = null;
+      _showSearchResults = false;
+      _searchResults = [];
     });
     final result = await Navigator.push<bool>(
       context,
@@ -5047,9 +5068,117 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ),
     );
     if (!mounted) return;
+    // Force hide keyboard immediately after returning from navigation
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
     if (result == true) {
       await _loadDataAndGenerateMarkers();
     }
+    if (!mounted) return;
+    // Force hide keyboard again before restore to prevent any flicker
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    // Restore the selected experience state after returning from navigation
+    await _restoreSelectedExperience(
+      savedExperience,
+      savedCategory,
+      savedLocation,
+      savedBusinessStatus,
+      savedOpenNow,
+    );
+    // Re-enable search field focus and re-add the listener after restore is complete
+    if (mounted) {
+      setState(() {
+        _isReturningFromNavigation = false;
+      });
+      _searchFocusNode.canRequestFocus = true;
+      _searchController.addListener(_onSearchChanged);
+    }
+  }
+
+  /// Restores the selected experience state after returning from navigation.
+  /// This rebuilds the marker and bottom sheet without animating the camera.
+  Future<void> _restoreSelectedExperience(
+    Experience experience,
+    UserCategory category,
+    Location location,
+    String? businessStatus,
+    bool? openNow,
+  ) async {
+    // Force hide keyboard using system channel
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    // Ensure any keyboard is dismissed before restoring state
+    FocusScope.of(context).unfocus();
+    // Wait for keyboard to fully dismiss before restoring state
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (!mounted) return;
+    // Force hide again after delay to ensure it stays hidden
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+
+    // Get marker background color from color category
+    Color markerBackgroundColor = Colors.grey;
+    try {
+      if (experience.colorCategoryId != null) {
+        final colorCat = _colorCategories
+            .firstWhere((cc) => cc.id == experience.colorCategoryId);
+        markerBackgroundColor = _parseColor(colorCat.colorHex);
+      }
+    } catch (_) {}
+
+    final String iconText = (experience.categoryIconDenorm != null &&
+            experience.categoryIconDenorm!.isNotEmpty)
+        ? experience.categoryIconDenorm!
+        : category.icon;
+
+    final tappedMarkerId = MarkerId('selected_experience_location');
+    final int animationToken = ++_markerAnimationToken;
+    const int finalSize = 100;
+    final int startSize = _markerStartSize(finalSize);
+
+    Future<BitmapDescriptor> iconBuilder(int size) {
+      return _bitmapDescriptorFromText(
+        iconText,
+        backgroundColor: markerBackgroundColor,
+        size: size,
+        backgroundOpacity: 1.0,
+      );
+    }
+
+    if (!mounted || animationToken != _markerAnimationToken) {
+      return;
+    }
+
+    // Restore state to show bottom sheet
+    setState(() {
+      _tappedLocationDetails = location;
+      _tappedExperience = experience;
+      _tappedExperienceCategory = category;
+      _tappedLocationBusinessStatus = businessStatus;
+      _tappedLocationOpenNow = openNow;
+    });
+
+    // Build and set the marker
+    final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+    if (!mounted || animationToken != _markerAnimationToken) {
+      return;
+    }
+    setState(() {
+      _tappedLocationMarker = _buildSelectedMarker(
+        markerId: tappedMarkerId,
+        position: LatLng(location.latitude, location.longitude),
+        infoWindowTitle: '$iconText ${experience.name}',
+        icon: firstIcon,
+      );
+    });
+
+    // Animate marker to final size
+    unawaited(_animateSelectedMarkerSmooth(
+      animationToken: animationToken,
+      markerId: tappedMarkerId,
+      position: LatLng(location.latitude, location.longitude),
+      infoWindowTitle: '$iconText ${experience.name}',
+      iconBuilder: iconBuilder,
+      startSize: startSize,
+      endSize: finalSize,
+    ));
   }
 
   Future<void> _handleTappedLocationNavigation() async {
@@ -7292,10 +7421,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         }
       } catch (e) {/* Use default grey color */}
 
-      final String selectedIconText = (experience.categoryIconDenorm != null &&
-              experience.categoryIconDenorm!.isNotEmpty)
-          ? experience.categoryIconDenorm!
-          : '*';
+      final String selectedIconText =
+          _getCategoryIconForExperience(experience) ?? category.icon;
       final tappedMarkerId = MarkerId('selected_experience_location');
       final int animationToken = ++_markerAnimationToken;
       const int finalSize = 88;
@@ -7999,6 +8126,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     child: TextField(
                       controller: _searchController,
                       focusNode: _searchFocusNode,
+                      enabled: !_isReturningFromNavigation,
                       decoration: InputDecoration(
                         hintText: 'Search for a place or address',
                         border: OutlineInputBorder(

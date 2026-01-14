@@ -2658,6 +2658,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         userColorCategories: _colorCategories,
       ),
       isScrollControlled: true,
+      enableDrag: false, // Disable swipe-to-dismiss
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),

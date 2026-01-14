@@ -22,6 +22,7 @@ import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AddExperienceModal extends StatefulWidget {
   final List<UserCategory> userCategories;
@@ -1321,7 +1322,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               bottom: MediaQuery.of(context).viewInsets.bottom,
               left: 16,
               right: 16,
-              top: 16),
+              top: 50),
           child: SingleChildScrollView(
             child: Form(
               key: _formKey,
@@ -1331,7 +1332,11 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 children: [
               Text(
                 'Add Experience',
-                style: Theme.of(context).textTheme.headlineSmall,
+                style: GoogleFonts.notoSerif(
+                  fontSize: Theme.of(context).textTheme.headlineSmall?.fontSize,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).textTheme.headlineSmall?.color,
+                ),
               ),
               const SizedBox(height: 20),
               Align(
