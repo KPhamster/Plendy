@@ -238,136 +238,151 @@ class CategoryAutoAssignService {
     print('   📋 Place types: ${placeTypes.take(5).join(', ')}');
     print('   📋 PlaceType enum: ${placeType.name}');
     
+    // Build location context from extracted data for AI disambiguation
+    // Use address if available (e.g., "123 Main St, Bangkok, Thailand")
+    final locationContext = (locationData.address != null && locationData.address!.isNotEmpty)
+        ? locationData.address
+        : null;
+    
+    // Log available categories so we can verify custom categories are included
+    final categoryNames = userCategories.map((c) => c.name).toList();
+    print('   📂 Available categories (${categoryNames.length}): ${categoryNames.join(', ')}');
+    
     // Build a lowercase lookup map for user categories
     final categoryLookup = <String, String>{}; // lowercase name -> category ID
     for (final cat in userCategories) {
       categoryLookup[cat.name.toLowerCase()] = cat.id;
     }
     
-    // Step 0: Check location name keywords FIRST (more semantic than place types)
-    // This catches cases like "Trailhead" → "Hike" even when Google says it's a "park"
-    final nameLower = locationName.toLowerCase();
-    for (final entry in _keywordToCategoryMap.entries) {
-      if (nameLower.contains(entry.key)) {
-        final categoryName = entry.value;
-        if (categoryLookup.containsKey(categoryName)) {
-          print('   ✅ Name keyword match: "${entry.key}" in name → "$categoryName"');
-          return categoryLookup[categoryName];
-        }
-      }
-    }
+    // ===== STEPS 0-3 COMMENTED OUT - USING AI-ONLY MODE =====
+    // Uncomment these blocks to re-enable rule-based matching
     
-    // Step 1: Direct match - collect all placeTypes that match user category names
-    // Then select the highest priority match (avoids "cafe" being selected over "restaurant")
-    final directMatches = <String, int>{}; // categoryId -> priority
-    for (final type in placeTypes) {
-      final normalizedType = type.toLowerCase().replaceAll('_', ' ');
-      if (categoryLookup.containsKey(normalizedType)) {
-        final categoryId = categoryLookup[normalizedType]!;
-        final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
-        // Only keep the highest priority (lowest number) for each category
-        if (!directMatches.containsKey(categoryId) || priority < directMatches[categoryId]!) {
-          directMatches[categoryId] = priority;
-        }
-      }
-    }
+    // // Step 0: Check location name keywords FIRST (more semantic than place types)
+    // // This catches cases like "Trailhead" → "Hike" even when Google says it's a "park"
+    // final nameLower = locationName.toLowerCase();
+    // for (final entry in _keywordToCategoryMap.entries) {
+    //   if (nameLower.contains(entry.key)) {
+    //     final categoryName = entry.value;
+    //     if (categoryLookup.containsKey(categoryName)) {
+    //       print('   ✅ Name keyword match: "${entry.key}" in name → "$categoryName"');
+    //       return categoryLookup[categoryName];
+    //     }
+    //   }
+    // }
+    // 
+    // // Step 1: Direct match - collect all placeTypes that match user category names
+    // // Then select the highest priority match (avoids "cafe" being selected over "restaurant")
+    // final directMatches = <String, int>{}; // categoryId -> priority
+    // for (final type in placeTypes) {
+    //   final normalizedType = type.toLowerCase().replaceAll('_', ' ');
+    //   if (categoryLookup.containsKey(normalizedType)) {
+    //     final categoryId = categoryLookup[normalizedType]!;
+    //     final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
+    //     // Only keep the highest priority (lowest number) for each category
+    //     if (!directMatches.containsKey(categoryId) || priority < directMatches[categoryId]!) {
+    //       directMatches[categoryId] = priority;
+    //     }
+    //   }
+    // }
+    // 
+    // if (directMatches.isNotEmpty) {
+    //   // Select the category with the highest priority (lowest number)
+    //   final sortedMatches = directMatches.entries.toList()
+    //     ..sort((a, b) => a.value.compareTo(b.value));
+    //   final bestCategoryId = sortedMatches.first.key;
+    //   final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
+    //   
+    //   if (directMatches.length > 1) {
+    //     final allMatches = directMatches.keys.map((id) => 
+    //       userCategories.firstWhere((c) => c.id == id).name).toList();
+    //     print('   🎯 Multiple direct matches found: ${allMatches.join(', ')}');
+    //     print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
+    //   } else {
+    //     print('   ✅ Direct match found: "${bestCategory.name}"');
+    //   }
+    //   return bestCategoryId;
+    // }
+    // 
+    // // Step 2: Mapping-based match - use predefined mappings with priority
+    // final mappingMatches = <String, int>{}; // categoryId -> priority
+    // for (final entry in _placeTypeToCategoryMapping.entries) {
+    //   final categoryName = entry.key.toLowerCase();
+    //   final matchingTypes = entry.value;
+    //   
+    //   // Check if any of the location's placeTypes match this category's types
+    //   for (final type in placeTypes) {
+    //     final normalizedType = type.toLowerCase();
+    //     if (matchingTypes.any((t) => normalizedType.contains(t) || t.contains(normalizedType))) {
+    //       // Found a mapping match, now check if user has this category
+    //       if (categoryLookup.containsKey(categoryName)) {
+    //         final categoryId = categoryLookup[categoryName]!;
+    //         final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
+    //         if (!mappingMatches.containsKey(categoryId) || priority < mappingMatches[categoryId]!) {
+    //           mappingMatches[categoryId] = priority;
+    //         }
+    //       }
+    //     }
+    //   }
+    // }
+    // 
+    // if (mappingMatches.isNotEmpty) {
+    //   final sortedMatches = mappingMatches.entries.toList()
+    //     ..sort((a, b) => a.value.compareTo(b.value));
+    //   final bestCategoryId = sortedMatches.first.key;
+    //   final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
+    //   
+    //   if (mappingMatches.length > 1) {
+    //     final allMatches = mappingMatches.keys.map((id) => 
+    //       userCategories.firstWhere((c) => c.id == id).name).toList();
+    //     print('   🎯 Multiple mapping matches found: ${allMatches.join(', ')}');
+    //     print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
+    //   } else {
+    //     print('   ✅ Mapping match found: "${bestCategory.name}"');
+    //   }
+    //   return bestCategoryId;
+    // }
+    // 
+    // // Step 3: Match based on PlaceType enum
+    // final enumName = placeType.name.toLowerCase();
+    // if (categoryLookup.containsKey(enumName)) {
+    //   print('   ✅ Enum match found: "${placeType.name}" → "$enumName"');
+    //   return categoryLookup[enumName];
+    // }
+    // 
+    // // Try enum-to-category mapping
+    // final enumToCategoryMap = {
+    //   'restaurant': 'restaurant',
+    //   'cafe': 'cafe',
+    //   'bar': 'bar',
+    //   'museum': 'museum',
+    //   'park': 'park',
+    //   'hotel': 'stay',
+    //   'lodging': 'stay',
+    //   'store': 'other',
+    //   'shopping': 'other',
+    //   'attraction': 'attraction',
+    //   'landmark': 'attraction',
+    //   'entertainment': 'event',
+    //   'event': 'event',
+    // };
+    // 
+    // final mappedCategory = enumToCategoryMap[enumName];
+    // if (mappedCategory != null && categoryLookup.containsKey(mappedCategory)) {
+    //   print('   ✅ Enum mapping match: "${placeType.name}" → "$mappedCategory"');
+    //   return categoryLookup[mappedCategory];
+    // }
     
-    if (directMatches.isNotEmpty) {
-      // Select the category with the highest priority (lowest number)
-      final sortedMatches = directMatches.entries.toList()
-        ..sort((a, b) => a.value.compareTo(b.value));
-      final bestCategoryId = sortedMatches.first.key;
-      final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
-      
-      if (directMatches.length > 1) {
-        final allMatches = directMatches.keys.map((id) => 
-          userCategories.firstWhere((c) => c.id == id).name).toList();
-        print('   🎯 Multiple direct matches found: ${allMatches.join(', ')}');
-        print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
-      } else {
-        print('   ✅ Direct match found: "${bestCategory.name}"');
-      }
-      return bestCategoryId;
-    }
+    // ===== END COMMENTED STEPS 0-3 =====
     
-    // Step 2: Mapping-based match - use predefined mappings with priority
-    final mappingMatches = <String, int>{}; // categoryId -> priority
-    for (final entry in _placeTypeToCategoryMapping.entries) {
-      final categoryName = entry.key.toLowerCase();
-      final matchingTypes = entry.value;
-      
-      // Check if any of the location's placeTypes match this category's types
-      for (final type in placeTypes) {
-        final normalizedType = type.toLowerCase();
-        if (matchingTypes.any((t) => normalizedType.contains(t) || t.contains(normalizedType))) {
-          // Found a mapping match, now check if user has this category
-          if (categoryLookup.containsKey(categoryName)) {
-            final categoryId = categoryLookup[categoryName]!;
-            final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
-            if (!mappingMatches.containsKey(categoryId) || priority < mappingMatches[categoryId]!) {
-              mappingMatches[categoryId] = priority;
-            }
-          }
-        }
-      }
-    }
-    
-    if (mappingMatches.isNotEmpty) {
-      final sortedMatches = mappingMatches.entries.toList()
-        ..sort((a, b) => a.value.compareTo(b.value));
-      final bestCategoryId = sortedMatches.first.key;
-      final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
-      
-      if (mappingMatches.length > 1) {
-        final allMatches = mappingMatches.keys.map((id) => 
-          userCategories.firstWhere((c) => c.id == id).name).toList();
-        print('   🎯 Multiple mapping matches found: ${allMatches.join(', ')}');
-        print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
-      } else {
-        print('   ✅ Mapping match found: "${bestCategory.name}"');
-      }
-      return bestCategoryId;
-    }
-    
-    // Step 3: Match based on PlaceType enum
-    final enumName = placeType.name.toLowerCase();
-    if (categoryLookup.containsKey(enumName)) {
-      print('   ✅ Enum match found: "${placeType.name}" → "$enumName"');
-      return categoryLookup[enumName];
-    }
-    
-    // Try enum-to-category mapping
-    final enumToCategoryMap = {
-      'restaurant': 'restaurant',
-      'cafe': 'cafe',
-      'bar': 'bar',
-      'museum': 'museum',
-      'park': 'park',
-      'hotel': 'stay',
-      'lodging': 'stay',
-      'store': 'other',
-      'shopping': 'other',
-      'attraction': 'attraction',
-      'landmark': 'attraction',
-      'entertainment': 'event',
-      'event': 'event',
-    };
-    
-    final mappedCategory = enumToCategoryMap[enumName];
-    if (mappedCategory != null && categoryLookup.containsKey(mappedCategory)) {
-      print('   ✅ Enum mapping match: "${placeType.name}" → "$mappedCategory"');
-      return categoryLookup[mappedCategory];
-    }
-    
-    // Step 4: AI-based fallback (optional, uses Gemini Flash which is cost-effective)
+    // Step 4: AI-based categorization (now primary method)
     if (useAiFallback && userCategories.length > 1) {
-      print('   🤖 No direct match, using AI to determine best category...');
+      print('   🤖 Using AI to determine best category...');
       try {
-        final categoryNames = userCategories.map((c) => c.name).toList();
         final bestCategoryName = await _determineCategoryWithAI(
           locationName: locationName,
           placeTypes: placeTypes,
           availableCategories: categoryNames,
+          locationContext: locationContext,
         );
         
         if (bestCategoryName != null) {
@@ -406,10 +421,11 @@ class CategoryAutoAssignService {
     String locationName,
     List<UserCategory> userCategories, {
     bool useAiFallback = true,
+    String? locationContext,
   }) async {
     if (userCategories.isEmpty) return null;
     
-    final nameLower = locationName.toLowerCase();
+    // final nameLower = locationName.toLowerCase(); // Commented out - used by keyword matching
     print('🏷️ CATEGORY BY NAME: Determining category for "$locationName"');
     
     // Build a lowercase lookup map for user categories
@@ -418,26 +434,32 @@ class CategoryAutoAssignService {
       categoryLookup[cat.name.toLowerCase()] = cat.id;
     }
     
-    // Step 1: Keyword-based matching in location name
-    for (final entry in _keywordToCategoryMap.entries) {
-      if (nameLower.contains(entry.key)) {
-        final categoryName = entry.value;
-        if (categoryLookup.containsKey(categoryName)) {
-          print('   ✅ Keyword match: "${entry.key}" → "$categoryName"');
-          return categoryLookup[categoryName];
-        }
-      }
-    }
+    // ===== STEP 1 COMMENTED OUT - USING AI-ONLY MODE =====
+    // Uncomment this block to re-enable keyword-based matching
     
-    // Step 2: AI-based fallback
+    // // Step 1: Keyword-based matching in location name
+    // for (final entry in _keywordToCategoryMap.entries) {
+    //   if (nameLower.contains(entry.key)) {
+    //     final categoryName = entry.value;
+    //     if (categoryLookup.containsKey(categoryName)) {
+    //       print('   ✅ Keyword match: "${entry.key}" → "$categoryName"');
+    //       return categoryLookup[categoryName];
+    //     }
+    //   }
+    // }
+    
+    // ===== END COMMENTED STEP 1 =====
+    
+    // Step 2: AI-based categorization (now primary method)
     if (useAiFallback && userCategories.length > 1) {
-      print('   🤖 No keyword match, using AI...');
+      print('   🤖 Using AI to categorize...');
       try {
         final categoryNames = userCategories.map((c) => c.name).toList();
         final bestCategoryName = await _determineCategoryWithAI(
           locationName: locationName,
           placeTypes: [], // No place types available for location picker
           availableCategories: categoryNames,
+          locationContext: locationContext,
         );
         
         if (bestCategoryName != null) {
@@ -467,43 +489,122 @@ class CategoryAutoAssignService {
     return userCategories.first.id;
   }
 
-  /// Use Gemini AI to determine the best category for a location.
-  /// This is a lightweight call using Gemini Flash for cost efficiency.
+  /// Use Gemini AI with Google Search to determine the best category for a location.
+  /// 
+  /// This method searches Google to understand the TRUE context of what a place is
+  /// (e.g., finding out that "Jurassic World: The Experience" is an indoor theme park attraction)
+  /// before selecting the most appropriate category.
+  /// 
+  /// [locationContext] - Additional context like city, address to help disambiguate common names
   Future<String?> _determineCategoryWithAI({
     required String locationName,
     required List<String> placeTypes,
     required List<String> availableCategories,
+    String? locationContext,
   }) async {
     if (!_geminiService.isConfigured) {
       print('   ⚠️ Gemini not configured, skipping AI categorization');
       return null;
     }
     
-    // Build a simple prompt for category selection
+    // Build search query with location context for disambiguation
+    final searchQuery = locationContext != null && locationContext.isNotEmpty
+        ? '$locationName $locationContext'
+        : locationName;
+    
+    // Build a prompt that tells Gemini to search Google for context about the place
     final placeTypesInfo = placeTypes.isNotEmpty 
-        ? ' with Google Places types: ${placeTypes.take(5).join(', ')}'
+        ? '\nGoogle Places API types: ${placeTypes.take(5).join(', ')}'
         : '';
-    final prompt = '''Given a location named "$locationName"$placeTypesInfo.
+    
+    final locationContextInfo = locationContext != null && locationContext.isNotEmpty
+        ? '\nLocation: $locationContext'
+        : '';
+    
+    // Format categories as a numbered list for clarity
+    final categoriesList = availableCategories.asMap().entries
+        .map((e) => '${e.key + 1}. ${e.value}')
+        .join('\n');
+    
+    final prompt = '''Search Google for "$searchQuery" to understand what this place actually is.
+$placeTypesInfo$locationContextInfo
 
-Choose the single BEST category from this list: ${availableCategories.join(', ')}
+The user has created these CUSTOM categories for organizing their places:
+$categoriesList
 
-Respond with ONLY the category name, nothing else. Choose the most specific and relevant category.''';
+Based on your search results, which ONE category from the user's list is the BEST match for "$locationName"?
+
+CRITICAL RULES:
+1. ALWAYS prefer MORE SPECIFIC categories over GENERIC ones:
+   - Look at ALL the user's categories and find the MOST SPECIFIC match
+   - If the user has a category that precisely describes this type of place, use it
+   - Generic categories like "Restaurant", "Cafe", "Bar", "Attraction", "Park" should only be used if no more specific category fits
+
+2. UNDERSTAND what the place primarily IS:
+   - A bubble tea shop, boba shop, juice bar, or smoothie place = look for drink-related categories
+   - A bakery, ice cream shop, or dessert-focused place = look for dessert-related categories  
+   - A theme park or amusement venue = look for amusement/entertainment categories
+   - A hiking trail or nature area = look for hiking/nature/outdoor categories
+   - A speakeasy or cocktail lounge = look for speakeasy or specialty bar categories
+
+3. MATCH the user's category naming style:
+   - Users create specific categories for things they care about
+   - If you see a specific category that matches the place type, that's what the user wants
+   - The more specific the category name, the more intentional the user was about creating it
+
+YOUR ANSWER MUST BE EXACTLY ONE OF THESE: ${availableCategories.join(', ')}
+
+Reply with ONLY the category name from the list. No explanation, no punctuation, just the category name.''';
 
     try {
-      // Use a simple text generation call
-      final response = await _geminiService.generateSimpleText(prompt);
+      print('   🔍 Searching Google for "$searchQuery"...');
+      
+      // Use Google Search grounding to get real context about the place
+      final response = await _geminiService.generateTextWithGoogleSearch(prompt);
+      
       if (response != null && response.isNotEmpty) {
-        // Clean up the response and find matching category
-        final cleanResponse = response.trim().toLowerCase();
+        print('   📋 AI response: "${response.trim()}"');
+        
+        // Try to find an exact match first (case-insensitive)
+        final cleanResponse = response.trim();
+        
+        // Strategy 1: Exact match (case-insensitive)
         for (final category in availableCategories) {
-          if (cleanResponse.contains(category.toLowerCase()) ||
-              category.toLowerCase().contains(cleanResponse)) {
+          if (cleanResponse.toLowerCase() == category.toLowerCase()) {
             return category;
           }
         }
-        // If exact match not found, try to find the closest one
+        
+        // Strategy 2: Response ends with a category name (AI often puts answer at the end)
+        final responseLines = cleanResponse.split('\n');
+        final lastLine = responseLines.last.trim();
         for (final category in availableCategories) {
-          if (cleanResponse == category.toLowerCase()) {
+          if (lastLine.toLowerCase() == category.toLowerCase()) {
+            print('   📋 Found category in last line: "$category"');
+            return category;
+          }
+        }
+        
+        // Strategy 3: Look for category as a whole word (not substring)
+        // This prevents "bar" matching inside "beverages"
+        final responseLower = cleanResponse.toLowerCase();
+        for (final category in availableCategories) {
+          final categoryLower = category.toLowerCase();
+          // Use word boundary matching: category must be surrounded by non-word characters or string boundaries
+          final pattern = RegExp('(^|[^a-z])${RegExp.escape(categoryLower)}(\$|[^a-z])');
+          if (pattern.hasMatch(responseLower)) {
+            print('   📋 Found category as whole word: "$category"');
+            return category;
+          }
+        }
+        
+        // Strategy 4: Check if response contains category in quotes or bold
+        for (final category in availableCategories) {
+          final categoryLower = category.toLowerCase();
+          if (responseLower.contains('"$categoryLower"') ||
+              responseLower.contains('**$categoryLower**') ||
+              responseLower.contains('*$categoryLower*')) {
+            print('   📋 Found category in quotes/bold: "$category"');
             return category;
           }
         }
@@ -520,15 +621,21 @@ Respond with ONLY the category name, nothing else. Choose the most specific and 
   /// Returns a record with the determined category IDs:
   /// - colorCategoryId: The "Want to go" color category ID (or null if not found)
   /// - primaryCategoryId: The best matching primary category ID
+  /// 
+  /// [locationContext] - Additional context like city/address to help AI disambiguate common place names
   Future<({String? colorCategoryId, String? primaryCategoryId})> autoCategorizeForNewLocation({
     required String locationName,
     required List<UserCategory> userCategories,
     required List<ColorCategory> colorCategories,
     List<String>? placeTypes,
     String? placeId,
+    String? locationContext,
     bool useAiFallback = true,
   }) async {
     print('🏷️ AUTO-CATEGORIZE: Setting categories for "$locationName"');
+    if (locationContext != null && locationContext.isNotEmpty) {
+      print('   📍 Location context: $locationContext');
+    }
     
     // API Fallback: If no placeTypes but we have a placeId, fetch from Places API
     List<String>? effectivePlaceTypes = placeTypes;
@@ -566,6 +673,7 @@ Respond with ONLY the category name, nothing else. Choose the most specific and 
         effectivePlaceTypes,
         userCategories,
         useAiFallback: useAiFallback,
+        locationContext: locationContext,
       );
     } else {
       print('   ℹ️ No placeTypes available (stored or from API), using location name matching');
@@ -573,6 +681,7 @@ Respond with ONLY the category name, nothing else. Choose the most specific and 
         locationName,
         userCategories,
         useAiFallback: useAiFallback,
+        locationContext: locationContext,
       );
     }
     
@@ -586,107 +695,114 @@ Respond with ONLY the category name, nothing else. Choose the most specific and 
     List<String> placeTypes,
     List<UserCategory> userCategories, {
     bool useAiFallback = true,
+    String? locationContext,
   }) async {
     if (userCategories.isEmpty || placeTypes.isEmpty) {
-      return determineBestCategoryByLocationName(locationName, userCategories, useAiFallback: useAiFallback);
+      return determineBestCategoryByLocationName(locationName, userCategories, useAiFallback: useAiFallback, locationContext: locationContext);
     }
     
     print('🏷️ CATEGORY BY PLACE TYPES: Using stored types for "$locationName"');
+    print('   📋 Place types available: ${placeTypes.take(5).join(', ')}');
     
-    // Build a lowercase lookup map for user categories
-    final categoryLookup = <String, String>{}; // lowercase name -> category ID
-    for (final cat in userCategories) {
-      categoryLookup[cat.name.toLowerCase()] = cat.id;
-    }
+    // ===== STEPS 0-2 COMMENTED OUT - USING AI-ONLY MODE =====
+    // Uncomment these blocks to re-enable rule-based matching
     
-    // Step 0: Check location name keywords FIRST (more semantic than place types)
-    // This catches cases like "Trailhead" → "Hike" even when Google says it's a "park"
-    final nameLower = locationName.toLowerCase();
-    for (final entry in _keywordToCategoryMap.entries) {
-      if (nameLower.contains(entry.key)) {
-        final categoryName = entry.value;
-        if (categoryLookup.containsKey(categoryName)) {
-          print('   ✅ Name keyword match: "${entry.key}" in name → "$categoryName"');
-          return categoryLookup[categoryName];
-        }
-      }
-    }
+    // // Build a lowercase lookup map for user categories
+    // final categoryLookup = <String, String>{}; // lowercase name -> category ID
+    // for (final cat in userCategories) {
+    //   categoryLookup[cat.name.toLowerCase()] = cat.id;
+    // }
+    // 
+    // // Step 0: Check location name keywords FIRST (more semantic than place types)
+    // // This catches cases like "Trailhead" → "Hike" even when Google says it's a "park"
+    // final nameLower = locationName.toLowerCase();
+    // for (final entry in _keywordToCategoryMap.entries) {
+    //   if (nameLower.contains(entry.key)) {
+    //     final categoryName = entry.value;
+    //     if (categoryLookup.containsKey(categoryName)) {
+    //       print('   ✅ Name keyword match: "${entry.key}" in name → "$categoryName"');
+    //       return categoryLookup[categoryName];
+    //     }
+    //   }
+    // }
+    // 
+    // // Step 1: Direct match - collect all placeTypes that match user category names
+    // // Then select the highest priority match (avoids "cafe" being selected over "restaurant")
+    // final directMatches = <String, int>{}; // categoryId -> priority
+    // for (final type in placeTypes) {
+    //   final normalizedType = type.toLowerCase().replaceAll('_', ' ');
+    //   if (categoryLookup.containsKey(normalizedType)) {
+    //     final categoryId = categoryLookup[normalizedType]!;
+    //     final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
+    //     // Only keep the highest priority (lowest number) for each category
+    //     if (!directMatches.containsKey(categoryId) || priority < directMatches[categoryId]!) {
+    //       directMatches[categoryId] = priority;
+    //     }
+    //   }
+    // }
+    // 
+    // if (directMatches.isNotEmpty) {
+    //   // Select the category with the highest priority (lowest number)
+    //   final sortedMatches = directMatches.entries.toList()
+    //     ..sort((a, b) => a.value.compareTo(b.value));
+    //   final bestCategoryId = sortedMatches.first.key;
+    //   final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
+    //   
+    //   if (directMatches.length > 1) {
+    //     final allMatches = directMatches.keys.map((id) => 
+    //       userCategories.firstWhere((c) => c.id == id).name).toList();
+    //     print('   🎯 Multiple direct matches found: ${allMatches.join(', ')}');
+    //     print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
+    //   } else {
+    //     print('   ✅ Direct match found: "${bestCategory.name}"');
+    //   }
+    //   return bestCategoryId;
+    // }
+    // 
+    // // Step 2: Mapping-based match - use predefined mappings with priority
+    // final mappingMatches = <String, int>{}; // categoryId -> priority
+    // for (final entry in _placeTypeToCategoryMapping.entries) {
+    //   final categoryName = entry.key.toLowerCase();
+    //   final matchingTypes = entry.value;
+    //   
+    //   // Check if any of the location's placeTypes match this category's types
+    //   for (final type in placeTypes) {
+    //     final normalizedType = type.toLowerCase();
+    //     if (matchingTypes.any((t) => normalizedType.contains(t) || t.contains(normalizedType))) {
+    //       // Found a mapping match, now check if user has this category
+    //       if (categoryLookup.containsKey(categoryName)) {
+    //         final categoryId = categoryLookup[categoryName]!;
+    //         final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
+    //         if (!mappingMatches.containsKey(categoryId) || priority < mappingMatches[categoryId]!) {
+    //           mappingMatches[categoryId] = priority;
+    //         }
+    //       }
+    //     }
+    //   }
+    // }
+    // 
+    // if (mappingMatches.isNotEmpty) {
+    //   final sortedMatches = mappingMatches.entries.toList()
+    //     ..sort((a, b) => a.value.compareTo(b.value));
+    //   final bestCategoryId = sortedMatches.first.key;
+    //   final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
+    //   
+    //   if (mappingMatches.length > 1) {
+    //     final allMatches = mappingMatches.keys.map((id) => 
+    //       userCategories.firstWhere((c) => c.id == id).name).toList();
+    //     print('   🎯 Multiple mapping matches found: ${allMatches.join(', ')}');
+    //     print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
+    //   } else {
+    //     print('   ✅ Mapping match found: "${bestCategory.name}"');
+    //   }
+    //   return bestCategoryId;
+    // }
     
-    // Step 1: Direct match - collect all placeTypes that match user category names
-    // Then select the highest priority match (avoids "cafe" being selected over "restaurant")
-    final directMatches = <String, int>{}; // categoryId -> priority
-    for (final type in placeTypes) {
-      final normalizedType = type.toLowerCase().replaceAll('_', ' ');
-      if (categoryLookup.containsKey(normalizedType)) {
-        final categoryId = categoryLookup[normalizedType]!;
-        final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
-        // Only keep the highest priority (lowest number) for each category
-        if (!directMatches.containsKey(categoryId) || priority < directMatches[categoryId]!) {
-          directMatches[categoryId] = priority;
-        }
-      }
-    }
+    // ===== END COMMENTED STEPS 0-2 =====
     
-    if (directMatches.isNotEmpty) {
-      // Select the category with the highest priority (lowest number)
-      final sortedMatches = directMatches.entries.toList()
-        ..sort((a, b) => a.value.compareTo(b.value));
-      final bestCategoryId = sortedMatches.first.key;
-      final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
-      
-      if (directMatches.length > 1) {
-        final allMatches = directMatches.keys.map((id) => 
-          userCategories.firstWhere((c) => c.id == id).name).toList();
-        print('   🎯 Multiple direct matches found: ${allMatches.join(', ')}');
-        print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
-      } else {
-        print('   ✅ Direct match found: "${bestCategory.name}"');
-      }
-      return bestCategoryId;
-    }
-    
-    // Step 2: Mapping-based match - use predefined mappings with priority
-    final mappingMatches = <String, int>{}; // categoryId -> priority
-    for (final entry in _placeTypeToCategoryMapping.entries) {
-      final categoryName = entry.key.toLowerCase();
-      final matchingTypes = entry.value;
-      
-      // Check if any of the location's placeTypes match this category's types
-      for (final type in placeTypes) {
-        final normalizedType = type.toLowerCase();
-        if (matchingTypes.any((t) => normalizedType.contains(t) || t.contains(normalizedType))) {
-          // Found a mapping match, now check if user has this category
-          if (categoryLookup.containsKey(categoryName)) {
-            final categoryId = categoryLookup[categoryName]!;
-            final priority = _placeTypePriority[type.toLowerCase()] ?? 50;
-            if (!mappingMatches.containsKey(categoryId) || priority < mappingMatches[categoryId]!) {
-              mappingMatches[categoryId] = priority;
-            }
-          }
-        }
-      }
-    }
-    
-    if (mappingMatches.isNotEmpty) {
-      final sortedMatches = mappingMatches.entries.toList()
-        ..sort((a, b) => a.value.compareTo(b.value));
-      final bestCategoryId = sortedMatches.first.key;
-      final bestCategory = userCategories.firstWhere((c) => c.id == bestCategoryId);
-      
-      if (mappingMatches.length > 1) {
-        final allMatches = mappingMatches.keys.map((id) => 
-          userCategories.firstWhere((c) => c.id == id).name).toList();
-        print('   🎯 Multiple mapping matches found: ${allMatches.join(', ')}');
-        print('   ✅ Selected highest priority: "${bestCategory.name}" (priority: ${sortedMatches.first.value})');
-      } else {
-        print('   ✅ Mapping match found: "${bestCategory.name}"');
-      }
-      return bestCategoryId;
-    }
-    
-    // Fall back to location name matching if no placeType match found
-    print('   ℹ️ No placeType match, falling back to location name matching');
-    return determineBestCategoryByLocationName(locationName, userCategories, useAiFallback: useAiFallback);
+    // Go directly to AI-based categorization via determineBestCategoryByLocationName
+    print('   🤖 Using AI-only mode for categorization');
+    return determineBestCategoryByLocationName(locationName, userCategories, useAiFallback: useAiFallback, locationContext: locationContext);
   }
 }
 

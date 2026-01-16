@@ -9049,8 +9049,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                           icon: const Icon(
                                                               Icons
                                                                   .share_outlined,
-                                                              color:
-                                                                  Colors.blue,
+                                                              color: AppColors
+                                                                  .teal,
                                                               size: 28),
                                                           tooltip: 'Share',
                                                           padding:
@@ -9080,8 +9080,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                         },
                                                         icon: Icon(
                                                             Icons.map_outlined,
-                                                            color: Colors
-                                                                .green[700],
+                                                            color:
+                                                                AppColors.sage,
                                                             size: 28),
                                                         tooltip:
                                                             'Open in map app',
@@ -9110,7 +9110,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                         },
                                                         icon: Icon(
                                                             Icons.directions,
-                                                            color: Colors.blue,
+                                                            color:
+                                                                AppColors.teal,
                                                             size: 28),
                                                         tooltip:
                                                             'Get Directions',

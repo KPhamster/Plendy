@@ -134,6 +134,10 @@ class GeminiGroundingResult {
     final locations = <GoogleMapsLocation>[];
     String? widgetToken;
 
+    // Always parse the JSON text response to get address/city info
+    // This info is often more detailed than what's in grounding chunks
+    final parsedFromText = text.isNotEmpty ? _parseLocationsFromText(text) : <GoogleMapsLocation>[];
+    
     if (groundingMetadata != null) {
       // Extract Google Maps locations from grounding chunks
       final groundingChunks = groundingMetadata['groundingChunks'] as List? ?? [];
@@ -142,7 +146,32 @@ class GeminiGroundingResult {
         if (chunk is Map<String, dynamic>) {
           final maps = chunk['maps'] as Map<String, dynamic>?;
           if (maps != null) {
-            locations.add(GoogleMapsLocation.fromJson(maps));
+            var groundedLocation = GoogleMapsLocation.fromJson(maps);
+            
+            // Enrich grounding chunk with address/city from parsed text response
+            // Grounding chunks often lack this info even though Gemini extracted it
+            if ((groundedLocation.formattedAddress == null || groundedLocation.formattedAddress!.isEmpty) &&
+                parsedFromText.isNotEmpty) {
+              // Try to find matching location by name similarity
+              final enrichmentSource = _findMatchingParsedLocation(
+                groundedLocation.name, 
+                parsedFromText,
+              );
+              if (enrichmentSource != null) {
+                groundedLocation = GoogleMapsLocation(
+                  placeId: groundedLocation.placeId,
+                  name: groundedLocation.name,
+                  coordinates: groundedLocation.coordinates,
+                  formattedAddress: enrichmentSource.formattedAddress ?? groundedLocation.formattedAddress,
+                  types: groundedLocation.types.isNotEmpty ? groundedLocation.types : enrichmentSource.types,
+                  uri: groundedLocation.uri,
+                  city: enrichmentSource.city ?? groundedLocation.city,
+                );
+                print('📍 GEMINI: Enriched "${groundedLocation.name}" with address from text: ${enrichmentSource.formattedAddress}');
+              }
+            }
+            
+            locations.add(groundedLocation);
           }
         }
       }
@@ -151,15 +180,12 @@ class GeminiGroundingResult {
       widgetToken = groundingMetadata['googleMapsWidgetContextToken'] as String?;
     }
 
-    // FALLBACK: If no grounding chunks, try to parse JSON from text response
+    // FALLBACK: If no grounding chunks, use parsed locations from text response
     // This handles cases where Gemini returns locations in JSON format but
     // Google Maps grounding doesn't verify them (common for landmarks, viewpoints)
-    if (locations.isEmpty && text.isNotEmpty) {
-      final parsedLocations = _parseLocationsFromText(text);
-      locations.addAll(parsedLocations);
-      if (parsedLocations.isNotEmpty) {
-        print('📍 GEMINI: Parsed ${parsedLocations.length} locations from text response (no grounding)');
-      }
+    if (locations.isEmpty && parsedFromText.isNotEmpty) {
+      locations.addAll(parsedFromText);
+      print('📍 GEMINI: Parsed ${parsedFromText.length} locations from text response (no grounding)');
     }
 
     return GeminiGroundingResult(
@@ -264,6 +290,50 @@ class GeminiGroundingResult {
     }
     
     return parts.isNotEmpty ? parts.join(', ') : null;
+  }
+
+  /// Find a matching parsed location by name similarity
+  /// Used to enrich grounding chunks with address/city from parsed text response
+  static GoogleMapsLocation? _findMatchingParsedLocation(
+    String groundedName,
+    List<GoogleMapsLocation> parsedLocations,
+  ) {
+    if (parsedLocations.isEmpty) return null;
+    
+    final groundedNameLower = groundedName.toLowerCase();
+    final groundedNameCompact = groundedNameLower.replaceAll(RegExp(r'[^a-z0-9]'), '');
+    
+    // First pass: exact or very close match
+    for (final parsed in parsedLocations) {
+      final parsedNameLower = parsed.name.toLowerCase();
+      final parsedNameCompact = parsedNameLower.replaceAll(RegExp(r'[^a-z0-9]'), '');
+      
+      // Check for exact compact match or one contains the other
+      if (groundedNameCompact == parsedNameCompact ||
+          groundedNameCompact.contains(parsedNameCompact) ||
+          parsedNameCompact.contains(groundedNameCompact)) {
+        return parsed;
+      }
+    }
+    
+    // Second pass: check if significant words match
+    final groundedWords = groundedNameLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+    
+    GoogleMapsLocation? bestMatch;
+    int bestMatchCount = 0;
+    
+    for (final parsed in parsedLocations) {
+      final parsedWords = parsed.name.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      final matchCount = groundedWords.intersection(parsedWords).length;
+      
+      // Require at least 1 significant word to match
+      if (matchCount > bestMatchCount && matchCount >= 1) {
+        bestMatch = parsed;
+        bestMatchCount = matchCount;
+      }
+    }
+    
+    return bestMatch;
   }
 
   /// Create from Cloud Function response (Vertex AI YouTube analysis)

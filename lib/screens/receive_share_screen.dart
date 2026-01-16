@@ -278,6 +278,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Track if AI scan is running
   bool _isAiScanInProgress = false;
+  // Track if categorization is in progress
+  bool _isCategorizing = false;
   // Track scan progress (0.0 to 1.0)
   double _scanProgress = 0.0;
   // Store pending scan results to apply when app returns to foreground
@@ -516,7 +518,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              'Plendy AI analyzing...',
+                              _isCategorizing ? 'Categorizing...' : 'Plendy AI analyzing...',
                               style: TextStyle(
                                 color: AppColors.wineLight,
                                 fontWeight: FontWeight.w500,
@@ -586,7 +588,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              'Plendy AI analyzing...',
+                              _isCategorizing ? 'Categorizing...' : 'Plendy AI analyzing...',
                               style: TextStyle(
                                 color: AppColors.wineLight,
                                 fontWeight: FontWeight.w500,
@@ -2394,17 +2396,55 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Suspend media previews (unmount WebViews) while navigating to other screens
   bool _suspendMediaPreviews = false;
 
-  // Method to show snackbar only if not already showing
+  // Method to show toast notifications with Plendy icon
   void _showSnackBar(BuildContext context, String message) {
-    // Hide any existing snackbar first
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    // Use FToast for custom toast with icon
+    final fToast = FToast();
+    fToast.init(context);
 
-    // Show new snackbar
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: Duration(seconds: 1), // Set duration to 1 second
+    final toast = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(25),
+        color: Colors.grey[800],
       ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Plendy icon in a circle
+          Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Image.asset(
+              'assets/icon/icon-cropped.png',
+              width: 16,
+              height: 16,
+              fit: BoxFit.contain,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    fToast.showToast(
+      child: toast,
+      gravity: ToastGravity.BOTTOM,
+      toastDuration: const Duration(seconds: 2),
     );
   }
 
@@ -2642,8 +2682,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         targetCard.selectedCategoryId = cardData['selectedCategoryId'];
         targetCard.selectedColorCategoryId =
             cardData['selectedColorCategoryId'];
-        targetCard.selectedOtherCategoryIds =
-            List<String>.from(cardData['selectedOtherCategoryIds'] ?? []);
+        // Note: selectedOtherCategoryIds intentionally not restored to start fresh each time
         targetCard.selectedOtherColorCategoryIds =
             List<String>.from(cardData['selectedOtherColorCategoryIds'] ?? []);
         targetCard.locationController.text =
@@ -4908,6 +4947,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
       _updateScanProgress(0.5);
 
+      // Extract geographic hints from the full caption for disambiguation
+      // This helps pick the right location when same-name places exist in multiple countries
+      // e.g., "Jurassic World: The Experience" exists in London, Bangkok, Madrid
+      final geographicHints = _locationExtractor.extractGeographicHints(_extractedCaption!);
+      if (geographicHints.isNotEmpty) {
+        print('🌍 MAPS GROUNDING: Extracted geographic hints: $geographicHints');
+      }
+
       // Convert Gemini results and verify via Places API if needed
       List<ExtractedLocationData> locations = [];
       if (result != null && result.locations.isNotEmpty) {
@@ -4940,14 +4987,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             ));
           } else {
             // No grounding - verify via Places API (WITHOUT city context bias)
+            // BUT pass geographic hints from the full caption for disambiguation
             print('🔍 MAPS GROUNDING: Verifying "${loc.name}" via Places API...');
             
-            // Use _locationExtractor to resolve - pass just the name, no context
-            // This searches for the exact location name without "seattle" bias
+            // Build search string with address/city context from Gemini's extraction
+            // This helps disambiguate same-name locations (e.g., Mokkoji in San Diego vs Orange County)
+            String searchStringWithContext = loc.name;
+            if (loc.formattedAddress != null && loc.formattedAddress!.isNotEmpty) {
+              // Use full address if available (e.g., "Mokkoji, 8981 Mira Mesa Blvd, San Diego")
+              searchStringWithContext = '${loc.name}, ${loc.formattedAddress}';
+              print('🔍 MAPS GROUNDING: Using address context: "$searchStringWithContext"');
+            } else if (loc.city != null && loc.city!.isNotEmpty) {
+              // Fall back to city if no full address
+              searchStringWithContext = '${loc.name}, ${loc.city}';
+              print('🔍 MAPS GROUNDING: Using city context: "$searchStringWithContext"');
+            }
+            
+            // Use _locationExtractor to resolve - pass geographic hints for disambiguation
+            // This helps pick Bangkok over London when caption mentions Thailand
             final verifiedLocations = await _locationExtractor.extractLocationsFromCaption(
-              loc.name, // Just the location name, not full caption
+              searchStringWithContext, // Include address/city context for better disambiguation
               platform: 'Instagram',
               maxLocations: 1,
+              geographicHints: geographicHints, // Pass hints for country/city disambiguation
             );
             
             if (verifiedLocations.isNotEmpty) {
@@ -4968,22 +5030,94 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 googleMapsUri: verified.googleMapsUri ?? loc.uri,
                 placeTypes: verified.placeTypes ?? loc.types,
                 originalQuery: loc.name, // Store original name from caption
+                website: verified.website, // Pass through website from Places API
               ));
             } else {
-              // Couldn't verify - include with lower confidence
-              print('⚠️ MAPS GROUNDING: Could not verify "${loc.name}"');
+              // Could not verify location via Places API
+              // Add with address but no coordinates - will show in dialog as "Not found in Google Places"
+              print('⚠️ MAPS GROUNDING: Could not verify "${loc.name}" - adding with address only (not in Google Places)');
               locations.add(ExtractedLocationData(
                 name: loc.name,
                 address: loc.formattedAddress,
                 placeId: null,
-                coordinates: hasValidCoords ? loc.coordinates : null,
+                coordinates: null, // No coordinates - will show "Not found" indicator in UI
                 type: ExtractedLocationData.inferPlaceType(loc.types),
                 source: ExtractionSource.geminiGrounding,
-                confidence: 0.5,
+                confidence: 0.2, // Very low confidence - not verified
                 googleMapsUri: loc.uri,
                 placeTypes: loc.types,
                 originalQuery: loc.name,
               ));
+            }
+          }
+        }
+      }
+
+      // ========== FALLBACK: TRY INSTAGRAM HANDLE LOOKUP ==========
+      // If Maps grounding found nothing and this is Instagram content,
+      // try to look up the poster's username as a business handle.
+      // Instagram captions are formatted as "username - caption text"
+      if (locations.isEmpty && 
+          _extractedFromPlatform == 'Instagram' && 
+          _extractedCaption != null) {
+        print('📸 MAPS GROUNDING: No locations from text, trying Instagram handle lookup...');
+        
+        // Extract username from caption (format: "username - caption text")
+        final dashIndex = _extractedCaption!.indexOf(' - ');
+        if (dashIndex > 0) {
+          final username = _extractedCaption!.substring(0, dashIndex).trim();
+          
+          // Only try if it looks like a valid username (alphanumeric, dots, underscores)
+          if (username.isNotEmpty && 
+              RegExp(r'^[a-zA-Z0-9._]+$').hasMatch(username) &&
+              username.length >= 3 &&
+              username.length <= 30) {
+            print('📸 MAPS GROUNDING: Extracted username: @$username');
+            _updateScanProgress(0.6);
+            
+            try {
+              // Use Gemini to look up what business this Instagram handle belongs to
+              final businessName = await geminiService.lookupInstagramHandle(
+                username,
+                city: null, // Let it search globally
+              );
+              
+              if (businessName != null && businessName.isNotEmpty) {
+                print('✅ MAPS GROUNDING: Instagram handle @$username → "$businessName"');
+                _updateScanProgress(0.7);
+                
+                // Search for this business via Places API
+                final verifiedLocations = await _locationExtractor.extractLocationsFromCaption(
+                  businessName,
+                  platform: 'Instagram',
+                  maxLocations: 1,
+                );
+                
+                if (verifiedLocations.isNotEmpty) {
+                  final verified = verifiedLocations.first;
+                  print('✅ MAPS GROUNDING: Found business via handle: "${verified.name}" at ${verified.address}');
+                  
+                  locations.add(ExtractedLocationData(
+                    name: verified.name,
+                    address: verified.address,
+                    placeId: verified.placeId,
+                    coordinates: verified.coordinates,
+                    type: verified.type,
+                    source: ExtractionSource.placesSearch,
+                    confidence: 0.85,
+                    googleMapsUri: verified.googleMapsUri,
+                    placeTypes: verified.placeTypes,
+                    originalQuery: '@$username', // Store the handle as original query
+                    website: verified.website,
+                  ));
+                } else {
+                  print('⚠️ MAPS GROUNDING: Could not find "$businessName" in Places API');
+                }
+              } else {
+                print('⚠️ MAPS GROUNDING: Could not identify business for @$username');
+              }
+            } catch (e) {
+              print('⚠️ MAPS GROUNDING: Handle lookup error: $e');
             }
           }
         }
@@ -5369,6 +5503,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Check if auto-set categories is enabled
       final shouldAutoSetCategories = await _aiSettingsService.shouldAutoSetCategories();
       
+      // Set categorizing state if auto-set categories is enabled
+      if (shouldAutoSetCategories && mounted) {
+        setState(() {
+          _isCategorizing = true;
+        });
+      }
+      
       // Fill existing empty cards with new locations
       for (int i = 0; i < locationsForEmptyCards.length; i++) {
         final locationData = locationsForEmptyCards[i];
@@ -5432,6 +5573,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             }
           }
         }
+      }
+
+      // Reset categorizing state
+      if (mounted && _isCategorizing) {
+        setState(() {
+          _isCategorizing = false;
+        });
       }
 
       // Process existing experiences (duplicates user chose to use)
@@ -5775,12 +5923,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final locationName = location.displayName ?? location.getPlaceName();
     print('🏷️ AUTO-CATEGORIZE: Setting categories for "$locationName"');
     
+    // Build location context for AI disambiguation (city, country helps with common place names)
+    final locationContextParts = <String>[];
+    if (location.city != null && location.city!.isNotEmpty) {
+      locationContextParts.add(location.city!);
+    }
+    if (location.state != null && location.state!.isNotEmpty) {
+      locationContextParts.add(location.state!);
+    }
+    if (location.country != null && location.country!.isNotEmpty) {
+      locationContextParts.add(location.country!);
+    }
+    final locationContext = locationContextParts.isNotEmpty 
+        ? locationContextParts.join(', ')
+        : null;
+    
     final categorization = await _categoryAutoAssignService.autoCategorizeForNewLocation(
       locationName: locationName,
       userCategories: _userCategories,
       colorCategories: _userColorCategories,
       placeTypes: location.placeTypes, // Use stored placeTypes for better accuracy
       placeId: location.placeId, // API fallback if placeTypes not stored
+      locationContext: locationContext, // City/country for AI disambiguation
     );
     
     // Set Color Category to 'Want to go'
@@ -8170,16 +8334,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (errors.isEmpty) {
         message = '';
         if (successCount > 0) {
-          message += '$successCount experience(s) created. ';
+          message +=
+              '$successCount ${successCount == 1 ? 'experience' : 'experiences'} created. ';
         }
-        if (updateCount > 0) message += '$updateCount experience(s) updated. ';
+        if (updateCount > 0) {
+          message +=
+              '$updateCount ${updateCount == 1 ? 'experience' : 'experiences'} updated! ';
+        }
         message = message.trim();
         if (message.isEmpty) message = 'No changes saved.';
         shouldAttemptNavigation = true;
       } else {
         message = 'Completed with errors: ';
-        if (successCount > 0) message += '$successCount created. ';
-        if (updateCount > 0) message += '$updateCount updated. ';
+        if (successCount > 0) message += '$successCount created! ';
+        if (updateCount > 0) message += '$updateCount updated! ';
         message += '${errors.length} failed.';
         if (successCount > 0 || updateCount > 0) {
           shouldAttemptNavigation =
@@ -11799,6 +11967,12 @@ class _MultiLocationSelectionDialog extends StatefulWidget {
 class _MultiLocationSelectionDialogState
     extends State<_MultiLocationSelectionDialog> {
   late Set<int> _selectedIndices;
+  
+  /// Maps location index to business status from Places API
+  final Map<int, String?> _businessStatusMap = {};
+  
+  /// Service for fetching place details
+  final GoogleMapsService _mapsService = GoogleMapsService();
 
   /// Confidence threshold - locations below this should be verified by user
   /// Note: Good matches from extraction service get 0.85 confidence, so threshold
@@ -11811,6 +11985,45 @@ class _MultiLocationSelectionDialogState
     // Start with all locations selected
     _selectedIndices =
         Set<int>.from(List.generate(widget.locations.length, (i) => i));
+    // Fetch business status for all locations with place IDs
+    _fetchBusinessStatuses();
+  }
+  
+  /// Fetch business status for all locations that have a placeId
+  Future<void> _fetchBusinessStatuses() async {
+    for (int i = 0; i < widget.locations.length; i++) {
+      final location = widget.locations[i];
+      if (location.placeId != null && location.placeId!.isNotEmpty) {
+        // Fetch in parallel but update UI as each completes
+        _fetchBusinessStatusForIndex(i, location.placeId!);
+      }
+    }
+  }
+  
+  /// Fetch business status for a single location by index
+  Future<void> _fetchBusinessStatusForIndex(int index, String placeId) async {
+    try {
+      // Strip 'places/' prefix if present (comes from grounding chunks)
+      String cleanPlaceId = placeId;
+      if (placeId.startsWith('places/')) {
+        cleanPlaceId = placeId.substring(7); // Remove 'places/' prefix
+      }
+      
+      final detailsMap = await _mapsService.fetchPlaceDetailsData(cleanPlaceId);
+      final businessStatus = detailsMap?['businessStatus'] as String?;
+      if (mounted) {
+        setState(() {
+          _businessStatusMap[index] = businessStatus;
+        });
+      }
+    } catch (e) {
+      print('⚠️ BUSINESS STATUS: Error fetching for index $index: $e');
+    }
+  }
+  
+  /// Check if a location at index is permanently closed
+  bool _isPermanentlyClosed(int index) {
+    return _businessStatusMap[index] == 'CLOSED_PERMANENTLY';
   }
   
   bool get _hasEventInfo => widget.detectedEventInfo != null;
@@ -11860,23 +12073,53 @@ class _MultiLocationSelectionDialogState
   void _finishSelection() {
     // Sort indices and map to locations
     final sortedIndices = _selectedIndices.toList()..sort();
-    final selectedLocations =
+    final allSelectedLocations =
         sortedIndices.map((i) => widget.locations[i]).toList();
 
-    // Build map of selected locations that are duplicates
+    // Filter out locations without coordinates (not found in Google Places)
+    final validLocations = allSelectedLocations
+        .where((loc) => loc.coordinates != null)
+        .toList();
+    final skippedLocations = allSelectedLocations
+        .where((loc) => loc.coordinates == null)
+        .toList();
+
+    // Show warning if any locations were skipped
+    if (skippedLocations.isNotEmpty) {
+      final skippedNames = skippedLocations
+          .map((loc) => '"${loc.name}"')
+          .join(', ');
+      Fluttertoast.showToast(
+        msg: '⚠️ Skipped ${skippedLocations.length} location(s) not found in Google Places: $skippedNames',
+        toastLength: Toast.LENGTH_LONG,
+        backgroundColor: Colors.orange[700],
+      );
+    }
+
+    // If no valid locations remain, don't proceed
+    if (validLocations.isEmpty) {
+      Fluttertoast.showToast(
+        msg: '❌ No valid locations selected. Please select locations that were found in Google Places.',
+        toastLength: Toast.LENGTH_LONG,
+        backgroundColor: Colors.red[700],
+      );
+      return;
+    }
+
+    // Build map of selected locations that are duplicates (only for valid locations)
     final selectedDuplicates =
         <ExtractedLocationData, Experience>{};
     for (final index in sortedIndices) {
-      if (widget.duplicates.containsKey(index)) {
-        selectedDuplicates[widget.locations[index]] =
-            widget.duplicates[index]!;
+      final loc = widget.locations[index];
+      if (loc.coordinates != null && widget.duplicates.containsKey(index)) {
+        selectedDuplicates[loc] = widget.duplicates[index]!;
       }
     }
 
     Navigator.pop(
         context,
         _MultiLocationSelectionResult(
-          selectedLocations: selectedLocations,
+          selectedLocations: validLocations,
           selectedDuplicates: selectedDuplicates,
           // Pass through event info for post-save handling
           eventInfo: widget.detectedEventInfo,
@@ -12067,74 +12310,116 @@ class _MultiLocationSelectionDialogState
                 final isDuplicate = widget.duplicates.containsKey(index);
                 final existingExp = widget.duplicates[index];
                 final isLowConfidence = _isLowConfidence(location);
+                final hasNoCoordinates = location.coordinates == null;
+                final isDisabled = hasNoCoordinates; // Can't select locations without coordinates
+                final isPermanentlyClosed = _isPermanentlyClosed(index);
 
                 return InkWell(
-                  onTap: withHeavyTap(() => _toggleLocation(index)),
+                  onTap: isDisabled ? null : withHeavyTap(() => _toggleLocation(index)),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     decoration: BoxDecoration(
-                      // Low confidence takes priority for background color
-                      color: isSelected
-                          ? (isLowConfidence
-                              ? primaryColor.withOpacity(0.05)
-                              : isDuplicate
-                                  ? AppColors.teal.withOpacity(0.12)
-                                  : AppColors.sage.withOpacity(0.08))
-                          : null,
+                      // Gray out disabled items, use primaryColor for permanently closed
+                      color: isDisabled
+                          ? Colors.red.withOpacity(0.05)
+                          : isSelected
+                              ? (isPermanentlyClosed
+                                  ? primaryColor.withOpacity(0.05)
+                                  : isLowConfidence
+                                      ? primaryColor.withOpacity(0.05)
+                                      : isDuplicate
+                                          ? AppColors.teal.withOpacity(0.12)
+                                          : AppColors.sage.withOpacity(0.08))
+                              : null,
                       borderRadius: BorderRadius.circular(8),
-                      border: isLowConfidence && isSelected
+                      border: (isPermanentlyClosed || isLowConfidence) && isSelected
                           ? Border.all(
                               color: primaryColor.withOpacity(0.3),
                               width: 1)
-                          : null,
+                          : isDisabled
+                              ? Border.all(
+                                  color: Colors.red.withOpacity(0.2),
+                                  width: 1)
+                              : null,
                     ),
                     child: Row(
                       children: [
-                        Checkbox(
-                          value: isSelected,
-                          onChanged: (_) => _toggleLocation(index),
-                          // Low confidence takes priority (even if duplicate)
-                          activeColor: isLowConfidence
+                        // Show checkbox only if location is not disabled
+                        if (!isDisabled) ...[
+                          Checkbox(
+                            value: isSelected,
+                            onChanged: (_) => _toggleLocation(index),
+                            // Permanently closed and low confidence use primaryColor
+                            activeColor: isPermanentlyClosed || isLowConfidence
                               ? primaryColor
                               : isDuplicate
                                   ? AppColors.teal
                                   : AppColors.sage,
-                        ),
+                          ),
+                        ] else ...[
+                          // Show empty space to align with other items
+                          const SizedBox(width: 48),
+                        ],
                         Icon(
-                          // Low confidence takes priority for icon (even if duplicate)
-                          isLowConfidence
-                              ? Icons.help_outline
-                              : isDuplicate
-                                  ? Icons.bookmark
-                                  : Icons.place,
+                          // Show error icon for disabled items, store_off for closed, otherwise based on confidence
+                          isDisabled
+                              ? Icons.error_outline
+                              : isPermanentlyClosed
+                                  ? Icons.store_outlined
+                                  : isLowConfidence
+                                      ? Icons.help_outline
+                                      : isDuplicate
+                                          ? Icons.bookmark
+                                          : Icons.place,
                           size: 18,
-                          color: isLowConfidence
-                              ? primaryColor
-                              : isDuplicate
-                                  ? AppColors.teal
-                                  : Colors.grey,
+                          color: isDisabled
+                              ? Colors.red[700]
+                              : isPermanentlyClosed || isLowConfidence
+                                  ? primaryColor
+                                  : isDuplicate
+                                      ? AppColors.teal
+                                      : Colors.grey,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      location.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w500,
-                                        color: isSelected
-                                            ? Colors.black
-                                            : Colors.grey[700],
+                              // For disabled items (no coordinates), show "No result for..."
+                              if (isDisabled)
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'No result for "${location.originalQuery ?? location.name}"',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.red[700],
+                                          fontStyle: FontStyle.italic,
+                                        ),
                                       ),
                                     ),
-                                  ),
+                                  ],
+                                )
+                              else
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        location.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          color: isSelected
+                                              ? Colors.black
+                                              : Colors.grey[700],
+                                        ),
+                                      ),
+                                    ),
                                   if (isDuplicate)
                                     Container(
                                       margin:
@@ -12153,6 +12438,33 @@ class _MultiLocationSelectionDialogState
                                           fontSize: 10,
                                           fontWeight: FontWeight.w600,
                                           color: AppColors.teal,
+                                        ),
+                                      ),
+                                    ),
+                                  // Show closed badge for permanently closed locations
+                                  if (isPermanentlyClosed)
+                                    Container(
+                                      margin:
+                                          const EdgeInsets.only(left: 4),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            primaryColor.withOpacity(0.12),
+                                        borderRadius:
+                                            BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color:
+                                              primaryColor.withOpacity(0.35),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Closed',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: primaryColor,
                                         ),
                                       ),
                                     ),
@@ -12194,69 +12506,107 @@ class _MultiLocationSelectionDialogState
                                         ],
                                       ),
                                     ),
-                                ],
-                              ),
-                              if (location.address != null &&
-                                  location.address!.isNotEmpty)
-                                Text(
-                                  location.address!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              // Show original scanned text if different from resolved name
-                              if (location.originalQuery != null &&
-                                  location.originalQuery!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.search,
-                                        size: 11,
-                                        color: Colors.grey[500],
+                                  // Show confident badge for sage-colored locations (not duplicate, not low confidence, not closed)
+                                  if (!isDuplicate && !isLowConfidence && !isPermanentlyClosed)
+                                    Container(
+                                      margin:
+                                          const EdgeInsets.only(left: 4),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.sage
+                                            .withOpacity(0.18),
+                                        borderRadius:
+                                            BorderRadius.circular(4),
                                       ),
-                                      const SizedBox(width: 3),
-                                      Expanded(
-                                        child: Text(
-                                          'From: "${location.originalQuery}"',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            fontStyle: FontStyle.italic,
-                                            color: Colors.grey[500],
-                                          ),
+                                      child: Text(
+                                        'Confident',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.sage,
                                         ),
                                       ),
-                                    ],
+                                    ),
+                                ],
+                              ),
+                              // Show details only for enabled items
+                              if (!isDisabled) ...[
+                                if (location.address != null &&
+                                    location.address!.isNotEmpty)
+                                  Text(
+                                    location.address!,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
                                   ),
-                                ),
-                              if (isDuplicate && existingExp != null)
+                                // Show original scanned text if different from resolved name
+                                if (location.originalQuery != null &&
+                                    location.originalQuery!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.search,
+                                          size: 11,
+                                          color: Colors.grey[500],
+                                        ),
+                                        const SizedBox(width: 3),
+                                        Expanded(
+                                          child: Text(
+                                            'From: "${location.originalQuery}"',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontStyle: FontStyle.italic,
+                                              color: Colors.grey[500],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (isDuplicate && existingExp != null)
+                                  Text(
+                                    'Address already saved as: "${existingExp.name}"',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontStyle: FontStyle.italic,
+                                      color: AppColors.teal,
+                                    ),
+                                  ),
+                                if (isLowConfidence && !isDuplicate)
+                                  Text(
+                                    'Please verify this location is correct',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontStyle: FontStyle.italic,
+                                      color: primaryColor,
+                                    ),
+                                  ),
+                              ] else ...[
+                                // For disabled items, show simplified error message
+                                const SizedBox(height: 2),
                                 Text(
-                                  'Address already saved as: "${existingExp.name}"',
+                                  'Not found in Google Places',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 11,
+                                    color: Colors.red[600],
                                     fontStyle: FontStyle.italic,
-                                    color: AppColors.teal,
                                   ),
                                 ),
-                              if (isLowConfidence && !isDuplicate)
-                                Text(
-                                  'Please verify this location is correct',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontStyle: FontStyle.italic,
-                                    color: primaryColor,
-                                  ),
-                                ),
+                              ],
                             ],
                           ),
                         ),

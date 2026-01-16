@@ -16,6 +16,28 @@ import 'instagram_oembed_service.dart';
 /// [phase] describes what phase of extraction is happening
 typedef ExtractionProgressCallback = void Function(int current, int total, String phase);
 
+/// Geographic hints extracted from caption for location disambiguation
+/// Used when multiple locations share the same name (e.g., "Jurassic World" in London vs Bangkok)
+class GeographicHints {
+  final Set<String> countries;
+  final Set<String> cities;
+  final Set<String> regions;
+  
+  GeographicHints({
+    Set<String>? countries,
+    Set<String>? cities,
+    Set<String>? regions,
+  }) : countries = countries ?? {},
+       cities = cities ?? {},
+       regions = regions ?? {};
+  
+  bool get isEmpty => countries.isEmpty && cities.isEmpty && regions.isEmpty;
+  bool get isNotEmpty => !isEmpty;
+  
+  @override
+  String toString() => 'GeographicHints(countries: $countries, cities: $cities, regions: $regions)';
+}
+
 /// Service for extracting location information from shared URLs
 /// 
 /// This service orchestrates multiple extraction strategies:
@@ -129,6 +151,7 @@ class LinkLocationExtractionService {
   /// [sourceUrl] - Optional source URL for caching and context
   /// [userLocation] - Optional user location for better results
   /// [maxLocations] - Maximum number of locations to return (default: 10, null = unlimited)
+  /// [geographicHints] - Optional pre-extracted geographic hints for disambiguation
   ///
   /// Returns a list of [ExtractedLocationData] objects found in the caption.
   Future<List<ExtractedLocationData>> extractLocationsFromCaption(
@@ -138,6 +161,7 @@ class LinkLocationExtractionService {
     String? sourceUrl,
     LatLng? userLocation,
     int? maxLocations,
+    GeographicHints? geographicHints,
   }) async {
     // Check cache if we have a source URL
     if (sourceUrl != null) {
@@ -184,8 +208,8 @@ class LinkLocationExtractionService {
       final Set<String> seenLocationNames = {};
       
       // Check if we have grounding chunks with location data
-      // BUT validate that the grounding chunks are actually relevant to the caption
-      // (Gemini sometimes returns unrelated businesses based on keywords)
+      // Prioritize grounding results (with valid placeId) over text-parsed results
+      // Google's Maps grounding uses semantic understanding - trust it more
       if (geminiResult != null && geminiResult.locations.isNotEmpty) {
         // Generic regions/counties to skip - these are too vague to be useful
         final genericRegions = {
@@ -195,9 +219,32 @@ class LinkLocationExtractionService {
           'united states', 'usa', 'america',
         };
         
-        // Filter grounding chunks to only include ones whose names appear in the caption
+        // Separate grounding chunks (have placeId) from text-parsed results (no placeId)
+        // Grounding chunks come from Google Maps semantic understanding - trust them
+        // Text-parsed results are from Gemini's JSON response - need validation
+        final groundingChunks = geminiResult.locations.where((loc) => loc.placeId.isNotEmpty).toList();
+        final textParsedLocations = geminiResult.locations.where((loc) => loc.placeId.isEmpty).toList();
+        
+        print('🔍 CAPTION: ${groundingChunks.length} grounding chunks (trusted), ${textParsedLocations.length} text-parsed');
+        
+        // Filter grounding chunks - only skip generic regions, trust semantic matching
+        final relevantGroundingChunks = groundingChunks.where((location) {
+          final nameLower = location.name.toLowerCase().trim();
+          
+          // Skip generic region/county names
+          if (genericRegions.contains(nameLower)) {
+            print('⏭️ CAPTION: Skipping generic region/county: "${location.name}"');
+            return false;
+          }
+          
+          // Trust grounding chunks - Google Maps semantic understanding already validated them
+          print('✅ CAPTION: Trusting grounding chunk: "${location.name}" (placeId: ${location.placeId.substring(0, location.placeId.length > 10 ? 10 : location.placeId.length)}...)');
+          return true;
+        }).toList();
+        
+        // Filter text-parsed locations more strictly - require caption text match
         final lowerCaption = caption.toLowerCase();
-        final relevantLocations = geminiResult.locations.where((location) {
+        final relevantTextParsed = textParsedLocations.where((location) {
           final nameLower = location.name.toLowerCase().trim();
           
           // Skip generic region/county names
@@ -218,13 +265,17 @@ class LinkLocationExtractionService {
           }
           final isRelevant = matchCount >= requiredMatches;
           if (!isRelevant) {
-            print('⏭️ CAPTION: Skipping unrelated grounding result: "${location.name}" (not mentioned in caption)');
+            print('⏭️ CAPTION: Skipping unrelated text-parsed result: "${location.name}" (not mentioned in caption)');
           }
           return isRelevant;
         }).toList();
         
+        // Prioritize grounding chunks over text-parsed results
+        // Grounding chunks have verified placeId from Google Maps
+        final relevantLocations = [...relevantGroundingChunks, ...relevantTextParsed];
+        
         if (relevantLocations.isNotEmpty) {
-          print('✅ CAPTION EXTRACTION: Found ${relevantLocations.length} relevant location(s) from grounding (filtered from ${geminiResult.locations.length})');
+          print('✅ CAPTION EXTRACTION: Found ${relevantLocations.length} location(s) - ${relevantGroundingChunks.length} from grounding (trusted), ${relevantTextParsed.length} from text parsing');
         
         // Convert and verify each location has valid coordinates
         final locationsToProcess = maxLocations != null ? relevantLocations.take(maxLocations) : relevantLocations;
@@ -278,6 +329,7 @@ class LinkLocationExtractionService {
               address: location.formattedAddress,
               locationContext: locationContext, // Add city/region context
               userLocation: userLocation,
+              geographicHints: geographicHints, // Pass geographic hints for disambiguation
             );
             
             // Check if this location name came from a mention
@@ -302,16 +354,17 @@ class LinkLocationExtractionService {
                 originalQuery: matchingMention ?? resolvedLocation.originalQuery,
               ));
             } else {
-              // Still add the location even without coords - user can manually set
-              print('⚠️ CAPTION: Could not resolve "${location.name}", adding without coords');
+              // Could not resolve via Places API - add with address but no coordinates
+              // Will be shown in UI as "Location not found in Google Places"
+              print('⚠️ CAPTION: Could not resolve "${location.name}" - adding with address only (not in Google Places)');
               results.add(ExtractedLocationData(
                 placeId: location.placeId.isNotEmpty ? location.placeId : null,
                 name: location.name,
                 address: location.formattedAddress,
-                coordinates: null, // No valid coordinates
+                coordinates: null, // No coordinates - will show "Not found" in UI
                 type: ExtractedLocationData.inferPlaceType(location.types),
                 source: ExtractionSource.geminiGrounding,
-                confidence: 0.5, // Lower confidence without coords
+                confidence: 0.2, // Very low confidence - not verified
                 placeTypes: location.types,
                 originalQuery: matchingMention,
               ));
@@ -319,15 +372,15 @@ class LinkLocationExtractionService {
           }
         }
         } else {
-          print('⚠️ CAPTION EXTRACTION: Grounding returned ${geminiResult.locations.length} results but none matched caption text');
+          print('⚠️ CAPTION EXTRACTION: ${geminiResult.locations.length} locations found but all were generic regions');
         }
       } 
       
       // Fallback: Parse JSON from Gemini's text response when:
       // 1. No grounding chunks were returned, OR
-      // 2. Grounding chunks were irrelevant (filtered out above)
+      // 2. All locations were filtered out (generic regions only)
       if (results.isEmpty && geminiResult != null && geminiResult.responseText.isNotEmpty) {
-        print('🔄 CAPTION EXTRACTION: No grounding chunks, parsing JSON from response text...');
+        print('🔄 CAPTION EXTRACTION: No valid locations from grounding, parsing JSON from response text...');
         
         final parsedLocations = _parseLocationsFromJsonResponse(geminiResult.responseText);
         
@@ -419,6 +472,7 @@ class LinkLocationExtractionService {
               address: address,
               locationContext: effectiveContext,
               userLocation: userLocation,
+              geographicHints: geographicHints, // Pass geographic hints for disambiguation
             );
             
             // Check if this location name came from a mention
@@ -485,6 +539,191 @@ class LinkLocationExtractionService {
     return results;
   }
   
+  /// Extract geographic hints (countries, major cities) from caption text
+  /// Used to disambiguate locations when multiple places share the same name
+  /// This is a public method so it can be called from receive_share_screen.dart
+  GeographicHints extractGeographicHints(String caption) {
+    final lowerCaption = caption.toLowerCase();
+    final countries = <String>{};
+    final cities = <String>{};
+    final regions = <String>{};
+    
+    // Extract hashtags for checking
+    final hashtagPattern = RegExp(r'#(\w+)');
+    final hashtags = hashtagPattern.allMatches(lowerCaption)
+        .map((m) => m.group(1)?.toLowerCase() ?? '')
+        .toSet();
+    
+    // International countries (common travel destinations)
+    const internationalCountries = {
+      'thailand': 'Thailand',
+      'japan': 'Japan',
+      'korea': 'South Korea',
+      'southkorea': 'South Korea',
+      'china': 'China',
+      'vietnam': 'Vietnam',
+      'singapore': 'Singapore',
+      'malaysia': 'Malaysia',
+      'indonesia': 'Indonesia',
+      'philippines': 'Philippines',
+      'taiwan': 'Taiwan',
+      'india': 'India',
+      'australia': 'Australia',
+      'newzealand': 'New Zealand',
+      'uk': 'United Kingdom',
+      'unitedkingdom': 'United Kingdom',
+      'england': 'England',
+      'london': 'United Kingdom', // City but strong country indicator
+      'france': 'France',
+      'paris': 'France', // City but strong country indicator
+      'germany': 'Germany',
+      'italy': 'Italy',
+      'spain': 'Spain',
+      'portugal': 'Portugal',
+      'greece': 'Greece',
+      'turkey': 'Turkey',
+      'mexico': 'Mexico',
+      'canada': 'Canada',
+      'brazil': 'Brazil',
+      'argentina': 'Argentina',
+      'dubai': 'United Arab Emirates',
+      'uae': 'United Arab Emirates',
+      'egypt': 'Egypt',
+      'morocco': 'Morocco',
+      'southafrica': 'South Africa',
+    };
+    
+    // Major international cities with their countries
+    const internationalCities = {
+      'bangkok': 'Thailand',
+      'phuket': 'Thailand',
+      'chiangmai': 'Thailand',
+      'pattaya': 'Thailand',
+      'tokyo': 'Japan',
+      'osaka': 'Japan',
+      'kyoto': 'Japan',
+      'seoul': 'South Korea',
+      'busan': 'South Korea',
+      'beijing': 'China',
+      'shanghai': 'China',
+      'hongkong': 'China',
+      'taipei': 'Taiwan',
+      'hanoi': 'Vietnam',
+      'hochiminh': 'Vietnam',
+      'saigon': 'Vietnam',
+      'kualalumpur': 'Malaysia',
+      'bali': 'Indonesia',
+      'jakarta': 'Indonesia',
+      'manila': 'Philippines',
+      'mumbai': 'India',
+      'delhi': 'India',
+      'sydney': 'Australia',
+      'melbourne': 'Australia',
+      'auckland': 'New Zealand',
+      'london': 'United Kingdom',
+      'manchester': 'United Kingdom',
+      'edinburgh': 'United Kingdom',
+      'paris': 'France',
+      'nice': 'France',
+      'berlin': 'Germany',
+      'munich': 'Germany',
+      'rome': 'Italy',
+      'milan': 'Italy',
+      'venice': 'Italy',
+      'florence': 'Italy',
+      'barcelona': 'Spain',
+      'madrid': 'Spain',
+      'lisbon': 'Portugal',
+      'athens': 'Greece',
+      'istanbul': 'Turkey',
+      'dubai': 'United Arab Emirates',
+      'abudhabi': 'United Arab Emirates',
+      'cairo': 'Egypt',
+      'marrakech': 'Morocco',
+      'capetown': 'South Africa',
+      'toronto': 'Canada',
+      'vancouver': 'Canada',
+      'montreal': 'Canada',
+      'mexicocity': 'Mexico',
+      'cancun': 'Mexico',
+      'riodejaneiro': 'Brazil',
+      'saopaulo': 'Brazil',
+      'buenosaires': 'Argentina',
+    };
+    
+    // Check hashtags and caption text for countries
+    for (final entry in internationalCountries.entries) {
+      final keyword = entry.key;
+      final country = entry.value;
+      
+      // Check hashtags
+      if (hashtags.contains(keyword)) {
+        countries.add(country);
+        print('🌍 GEO HINTS: Found country in hashtag: #$keyword → $country');
+      }
+      // Check caption text (with word boundary for longer words)
+      else if (keyword.length >= 4) {
+        final pattern = RegExp(r'\b' + RegExp.escape(keyword) + r'\b', caseSensitive: false);
+        if (pattern.hasMatch(lowerCaption)) {
+          countries.add(country);
+          print('🌍 GEO HINTS: Found country in text: $keyword → $country');
+        }
+      }
+    }
+    
+    // Check hashtags and caption text for cities
+    for (final entry in internationalCities.entries) {
+      final cityKey = entry.key;
+      final country = entry.value;
+      
+      // Check hashtags
+      if (hashtags.contains(cityKey)) {
+        cities.add(cityKey);
+        countries.add(country); // City implies country
+        print('🌍 GEO HINTS: Found city in hashtag: #$cityKey → $country');
+      }
+      // Check caption text
+      else if (cityKey.length >= 4) {
+        final pattern = RegExp(r'\b' + RegExp.escape(cityKey) + r'\b', caseSensitive: false);
+        if (pattern.hasMatch(lowerCaption)) {
+          cities.add(cityKey);
+          countries.add(country);
+          print('🌍 GEO HINTS: Found city in text: $cityKey → $country');
+        }
+      }
+    }
+    
+    // Check for well-known landmarks/places that indicate countries
+    const landmarkIndicators = {
+      'asiatique': 'Thailand', // Asiatique The Riverfront in Bangkok
+      'chatuchak': 'Thailand',
+      'sukhumvit': 'Thailand',
+      'shibuya': 'Japan',
+      'shinjuku': 'Japan',
+      'akihabara': 'Japan',
+      'harajuku': 'Japan',
+      'gangnam': 'South Korea',
+      'myeongdong': 'South Korea',
+      'bigben': 'United Kingdom',
+      'eiffeltower': 'France',
+      'colosseum': 'Italy',
+      'sagradafamilia': 'Spain',
+    };
+    
+    for (final entry in landmarkIndicators.entries) {
+      if (hashtags.contains(entry.key) || lowerCaption.contains(entry.key)) {
+        countries.add(entry.value);
+        print('🌍 GEO HINTS: Found landmark indicator: ${entry.key} → ${entry.value}');
+      }
+    }
+    
+    final hints = GeographicHints(countries: countries, cities: cities, regions: regions);
+    if (hints.isNotEmpty) {
+      print('🌍 GEO HINTS: Extracted hints: $hints');
+    }
+    return hints;
+  }
+
   /// Extract city/region context from caption text
   /// Returns the most specific location mentioned (city > region > state)
   String? _extractLocationContext(String caption) {
@@ -691,6 +930,7 @@ class LinkLocationExtractionService {
     LatLng? userLocation,
     String? surroundingText, // Optional caption/page text for AI reranking context
     String? geminiType, // Optional expected type from Gemini extraction
+    GeographicHints? geographicHints, // Optional geographic hints for disambiguation
   }) async {
     try {
       // Build search query - combine name with location context for better results
@@ -724,9 +964,28 @@ class LinkLocationExtractionService {
         return null;
       }
 
+      // Merge locationContext into geographic hints for better city matching
+      // This ensures that when we search for "Mokkoji, san diego", San Diego results get a boost
+      GeographicHints? effectiveHints = geographicHints;
+      if (locationContext != null && locationContext.isNotEmpty) {
+        final contextLower = locationContext.toLowerCase().trim();
+        // Create or extend hints with the location context as a city hint
+        if (effectiveHints == null || effectiveHints.isEmpty) {
+          effectiveHints = GeographicHints(cities: {contextLower});
+        } else if (!effectiveHints.cities.contains(contextLower)) {
+          // Add the location context city to existing hints
+          effectiveHints = GeographicHints(
+            countries: effectiveHints.countries,
+            cities: {...effectiveHints.cities, contextLower},
+          );
+        }
+        print('📍 PLACES RESOLVE: Added location context "$contextLower" to city hints');
+      }
+
       // Use the sophisticated scoring method to find the best match
       // This properly handles name matching with compact comparison
-      final bestResult = _selectBestPlaceResult(results, locationName, geminiType: geminiType);
+      // Pass geographic hints for disambiguation of same-name locations
+      final bestResult = _selectBestPlaceResult(results, locationName, geminiType: geminiType, geographicHints: effectiveHints);
       
       if (bestResult == null) {
         print('⚠️ PLACES RESOLVE: No good match found for "$locationName"');
@@ -820,6 +1079,16 @@ class LinkLocationExtractionService {
       if (!hasGoodNameMatch && !rerankResult.usedAIRerank) {
         print('⚠️ PLACES RESOLVE: Best result "$resultName" doesn\'t match "$locationName" well enough');
         print('   Will add location without coordinates (user can set manually)');
+        return null;
+      }
+      
+      // CRITICAL: If AI reranking explicitly said NO candidates match (needsConfirmation=true 
+      // with very low confidence), return null so caller can use Gemini's address for geocoding.
+      // This handles cases where the place doesn't exist in Google Places (closed, new, etc.)
+      // e.g., "Rising Sun Collective" not in Places → should geocode "3914 30th St, San Diego"
+      if (rerankResult.needsConfirmation && rerankResult.confidence < 0.3) {
+        print('⚠️ PLACES RESOLVE: AI reranking found NO good matches (confidence: ${(rerankResult.confidence * 100).toInt()}%)');
+        print('   Place may not exist in Google Places. Will use Gemini\'s address for geocoding.');
         return null;
       }
       
@@ -3007,10 +3276,12 @@ class LinkLocationExtractionService {
   /// 1. STRONGLY preferring exact/close name matches (most important!)
   /// 2. Using Gemini's type hint to prefer matching place types
   /// 3. Avoiding localities when searching for specific places
+  /// 4. Boosting results that match geographic hints (country/city from caption)
   Map<String, dynamic>? _selectBestPlaceResult(
     List<Map<String, dynamic>> results,
     String originalName, {
     String? geminiType,
+    GeographicHints? geographicHints,
   }) {
     if (results.isEmpty) return null;
     // IMPORTANT: Don't skip scoring for single results!
@@ -3378,6 +3649,71 @@ class LinkLocationExtractionService {
         }
       }
       
+      // === GEOGRAPHIC HINTS SCORING ===
+      // When we have geographic hints from the caption (countries/cities),
+      // boost results that match those hints. This helps disambiguate
+      // locations with the same name in different countries.
+      // e.g., "Jurassic World: The Experience" exists in London, Bangkok, Madrid
+      // If caption mentions #thailand, boost the Bangkok location.
+      if (geographicHints != null && geographicHints.isNotEmpty) {
+        final resultDescription = (result['description'] ?? result['formatted_address'] ?? '') as String;
+        final lowerDescription = resultDescription.toLowerCase();
+        
+        // Country matching - check if result address contains a hinted country
+        for (final country in geographicHints.countries) {
+          final countryLower = country.toLowerCase();
+          
+          // Check for country name in address
+          if (lowerDescription.contains(countryLower)) {
+            score += 60; // Strong bonus for matching country
+            print('🌍 GEO SCORING: +60 country match ("$country" found in address)');
+            break;
+          }
+          
+          // Check for country-specific city names that indicate the country
+          // e.g., "Bangkok" in address indicates Thailand
+          final countryIndicators = _getCountryIndicators(country);
+          for (final indicator in countryIndicators) {
+            if (lowerDescription.contains(indicator)) {
+              score += 60;
+              print('🌍 GEO SCORING: +60 country indicator match ("$indicator" → $country)');
+              break;
+            }
+          }
+        }
+        
+        // City matching - check if result address contains a hinted city
+        // Also penalize results that DON'T match when we have a city hint
+        bool foundCityMatch = false;
+        for (final city in geographicHints.cities) {
+          if (lowerDescription.contains(city)) {
+            score += 80; // Strong bonus for matching city - should overcome name match differences
+            print('🌍 GEO SCORING: +80 city match ("$city" found in address)');
+            foundCityMatch = true;
+            break;
+          }
+        }
+        
+        // Penalize results that don't match ANY hinted city when city hints are provided
+        // This helps disambiguate same-name places in different cities
+        // e.g., "Mokkoji Shabu Shabu Bar" in Orange vs San Diego
+        if (!foundCityMatch && geographicHints.cities.isNotEmpty && lowerDescription.isNotEmpty) {
+          // Check if this result is in a DIFFERENT city than what we're looking for
+          // Common US city patterns in addresses
+          final commonCities = ['orange', 'costa mesa', 'irvine', 'tustin', 'anaheim', 
+                               'garden grove', 'santa ana', 'huntington beach', 'newport beach',
+                               'los angeles', 'san diego', 'san francisco', 'seattle'];
+          for (final otherCity in commonCities) {
+            if (lowerDescription.contains(otherCity) && 
+                !geographicHints.cities.any((hintedCity) => otherCity.contains(hintedCity) || hintedCity.contains(otherCity))) {
+              score -= 50; // Penalty for being in a different city
+              print('🌍 GEO SCORING: -50 wrong city penalty ("$otherCity" in address, wanted: ${geographicHints.cities})');
+              break;
+            }
+          }
+        }
+      }
+      
       // Log scoring for debugging
       print('📷 IMAGE EXTRACTION: Scoring "$resultName" = $score (types: ${types.take(3).join(", ")})');
       
@@ -3393,6 +3729,34 @@ class LinkLocationExtractionService {
     }
     
     return bestResult ?? results.first;
+  }
+  
+  /// Helper to get city/region indicators for a country
+  /// Used to detect country from city names in addresses
+  List<String> _getCountryIndicators(String country) {
+    const indicators = <String, List<String>>{
+      'Thailand': ['bangkok', 'phuket', 'chiang mai', 'pattaya', 'krabi', 'thailand'],
+      'Japan': ['tokyo', 'osaka', 'kyoto', 'japan', 'jp'],
+      'South Korea': ['seoul', 'busan', 'korea', 'kr'],
+      'China': ['beijing', 'shanghai', 'china', 'cn'],
+      'United Kingdom': ['london', 'uk', 'united kingdom', 'england', 'gb'],
+      'France': ['paris', 'france', 'fr'],
+      'Germany': ['berlin', 'munich', 'germany', 'de'],
+      'Italy': ['rome', 'milan', 'italy', 'it'],
+      'Spain': ['madrid', 'barcelona', 'spain', 'es'],
+      'Australia': ['sydney', 'melbourne', 'australia', 'au'],
+      'Singapore': ['singapore', 'sg'],
+      'Malaysia': ['kuala lumpur', 'malaysia', 'my'],
+      'Indonesia': ['bali', 'jakarta', 'indonesia', 'id'],
+      'Vietnam': ['hanoi', 'ho chi minh', 'vietnam', 'vn'],
+      'Philippines': ['manila', 'philippines', 'ph'],
+      'India': ['mumbai', 'delhi', 'india', 'in'],
+      'United Arab Emirates': ['dubai', 'abu dhabi', 'uae'],
+      'Mexico': ['mexico city', 'cancun', 'mexico', 'mx'],
+      'Canada': ['toronto', 'vancouver', 'canada', 'ca'],
+      'Brazil': ['rio', 'sao paulo', 'brazil', 'br'],
+    };
+    return indicators[country] ?? [country.toLowerCase()];
   }
   
   /// Extended version of _selectBestPlaceResult that uses additional context
