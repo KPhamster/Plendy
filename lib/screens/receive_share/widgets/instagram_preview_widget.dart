@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:async';
 import 'dart:typed_data';
@@ -60,6 +61,9 @@ class InstagramWebViewState extends State<InstagramWebView> {
   
   // Display mode from settings
   bool _forceDirectWebView = false; // When true, skip oEmbed and load URL directly
+  
+  // Manual override from error state - takes precedence over widget.overrideWebViewMode
+  bool? _manualWebViewOverride;
 
   @override
   void initState() {
@@ -93,12 +97,58 @@ class InstagramWebViewState extends State<InstagramWebView> {
     // Reinitialize with new settings
     _loadSettingsAndInitialize();
   }
+  
+  /// Switch to Web View mode
+  Future<void> _switchToWebViewMode() async {
+    print('🔄 INSTAGRAM: Switching to Web View mode from error state');
+    // Set manual override to bypass widget.overrideWebViewMode
+    _manualWebViewOverride = true;
+    // Also update global settings so the toggle chip reflects the change
+    await InstagramSettingsService.instance.setDisplayOption('webview');
+    // Reinitialize with web view mode
+    _loadSettingsAndInitialize();
+  }
+  
+  /// Build the error message widget with tappable "Web View" link
+  Widget _buildErrorMessage() {
+    const errorTextStyle = TextStyle(color: Color(0xFF616161), fontSize: 14);
+    const webViewLinkStyle = TextStyle(
+      color: Color(0xFFE1306C), // Instagram pink
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+    );
+    
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        style: errorTextStyle,
+        children: [
+          const TextSpan(
+            text: 'Unable to load Instagram preview.\n\nThe uploader of this content may have disallowed embedding of their content in other apps, the content may be private, or it has been marked as inappropriate.\n\nTry opening in Instagram or switch to "',
+          ),
+          TextSpan(
+            text: 'Web View',
+            style: webViewLinkStyle,
+            recognizer: TapGestureRecognizer()..onTap = _switchToWebViewMode,
+          ),
+          const TextSpan(
+            text: '" mode.',
+          ),
+        ],
+      ),
+    );
+  }
 
   /// Load user settings and initialize
   Future<void> _loadSettingsAndInitialize() async {
-    // Check for override first, otherwise load user's display preference
+    // Check for manual override first (set when user taps "Web View" in error message)
+    // Then check widget override, otherwise load user's display preference
     final bool isWebViewMode;
-    if (widget.overrideWebViewMode != null) {
+    if (_manualWebViewOverride != null) {
+      isWebViewMode = _manualWebViewOverride!;
+      print('🔧 INSTAGRAM: Using manual override - isWebViewMode: $isWebViewMode');
+    } else if (widget.overrideWebViewMode != null) {
       isWebViewMode = widget.overrideWebViewMode!;
       print('🔧 INSTAGRAM: Using override mode - isWebViewMode: $isWebViewMode');
     } else {
@@ -195,7 +245,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
         // In Default mode, show error instead of falling back to WebView
         // This happens when the API fails (e.g., permissions error, private content)
         setState(() {
-          _errorMessage = 'Unable to load Instagram preview.\n\nThis may be due to:\n• Private or restricted content\n• API permissions not configured\n\nTry opening in Instagram or switch to "Web View" mode in Settings.';
+          _errorMessage = 'Unable to load Instagram preview.\n\nThe uploader of this content may have disallowed embedding of their content in other apps, the content may be private, or it has been marked as inappropriate.\n\nTry opening in Instagram or switch to "Web View" mode in Settings.';
           isLoading = false;
         });
       }
@@ -585,28 +635,31 @@ class InstagramWebViewState extends State<InstagramWebView> {
           borderRadius: BorderRadius.circular(8),
         ),
         child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, color: Colors.grey[600], size: 48),
-              const SizedBox(height: 16),
-              Text(
-                _errorMessage!,
-                style: TextStyle(color: Colors.grey[600]),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () => widget.launchUrlCallback(widget.url),
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Open in Instagram'),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: _initializeOEmbed,
-                child: const Text('Retry'),
-              ),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline, color: Colors.grey[600], size: 48),
+                const SizedBox(height: 16),
+                _buildErrorMessage(),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () => widget.launchUrlCallback(widget.url),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open in Instagram'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE1306C),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _initializeOEmbed,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -667,11 +720,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
               children: [
                 Icon(Icons.error_outline, color: Colors.grey[600], size: 48),
                 const SizedBox(height: 16),
-                Text(
-                  _errorMessage!,
-                  style: TextStyle(color: Colors.grey[700], fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
+                _buildErrorMessage(),
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
                   onPressed: () => widget.launchUrlCallback(widget.url),

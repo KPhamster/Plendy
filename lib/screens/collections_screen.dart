@@ -6983,7 +6983,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
       final String message = messageParts.join('. ');
       final String displayMessage = message.isEmpty
-          ? 'Experiences updated.'
+          ? 'Experiences updated!'
           : (message.endsWith('.') ? message : '$message.');
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(displayMessage)));

@@ -1536,11 +1536,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         key: _localMessengerKey,
         child: Scaffold(
           backgroundColor: Colors.transparent,
+          resizeToAvoidBottomInset: false,
           body: Material(
             color: AppColors.backgroundColor,
             child: Padding(
               padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
                   left: 16,
                   right: 16,
                   top: 50),

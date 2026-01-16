@@ -95,9 +95,8 @@ class ReceiveShareProvider extends ChangeNotifier {
     
     String? lastUsedCategoryId = _prefs!.getString(AppConstants.lastUsedCategoryKey);
     String? lastUsedColorCategoryId = _prefs!.getString(AppConstants.lastUsedColorCategoryKey);
-    List<String>? lastUsedOtherCategoryIds = _prefs!.getStringList(AppConstants.lastUsedOtherCategoriesKey);
-    List<String>? lastUsedOtherColorCategoryIds =
-        _prefs!.getStringList(AppConstants.lastUsedOtherColorCategoriesKey);
+    // Note: lastUsedOtherCategoryIds and lastUsedOtherColorCategoryIds are intentionally not loaded
+    // to allow 'Other Categories' to start fresh each time
 
     // --- Text Category Defaulting ---
     if (isFirstCard) {
@@ -170,22 +169,13 @@ class ReceiveShareProvider extends ChangeNotifier {
     }
 
     // --- Other Categories Defaulting (for first card) ---
+    // Note: Other Categories intentionally NOT defaulted to allow fresh start each time
     if (isFirstCard) {
-      if (lastUsedOtherCategoryIds != null) {
-        final validOtherIds = lastUsedOtherCategoryIds
-            .where((id) => _userCategories.any((cat) => cat.id == id))
-            .toList();
-        cardData.selectedOtherCategoryIds = validOtherIds;
-        print("Provider (First Card): Applied PREFERRED other category IDs: $validOtherIds to card ${cardData.id.substring(cardData.id.length - 4)}");
-      }
-      if (lastUsedOtherColorCategoryIds != null) {
-        final validOtherColorIds = lastUsedOtherColorCategoryIds
-            .where((id) => _userColorCategories.any((cat) => cat.id == id))
-            .toList();
-        cardData.selectedOtherColorCategoryIds = validOtherColorIds;
-        print(
-            "Provider (First Card): Applied PREFERRED other color category IDs: $validOtherColorIds to card ${cardData.id.substring(cardData.id.length - 4)}");
-      }
+      // Clear other categories to start fresh
+      cardData.selectedOtherCategoryIds = [];
+      cardData.selectedOtherColorCategoryIds = [];
+      print("Provider (First Card): Applied PREFERRED other category IDs: [] to card ${cardData.id.substring(cardData.id.length - 4)}");
+      print("Provider (First Card): Applied PREFERRED other color category IDs: [] to card ${cardData.id.substring(cardData.id.length - 4)}");
     }
   }
 

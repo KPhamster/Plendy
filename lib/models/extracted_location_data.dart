@@ -76,6 +76,9 @@ class ExtractedLocationData {
   /// e.g., if user scanned "eiffel tower cafe" and it resolved to "Café de l'Homme",
   /// this field would contain "eiffel tower cafe"
   final String? originalQuery;
+  
+  /// Business status from Google Places API (e.g., 'OPERATIONAL', 'CLOSED_TEMPORARILY', 'CLOSED_PERMANENTLY')
+  final String? businessStatus;
 
   const ExtractedLocationData({
     this.placeId,
@@ -91,6 +94,7 @@ class ExtractedLocationData {
     this.website,
     this.needsConfirmation = false,
     this.originalQuery,
+    this.businessStatus,
   });
 
   /// Create from a map (for JSON deserialization)
@@ -114,6 +118,7 @@ class ExtractedLocationData {
       website: map['website'] as String?,
       needsConfirmation: map['needsConfirmation'] as bool? ?? false,
       originalQuery: map['originalQuery'] as String?,
+      businessStatus: map['businessStatus'] as String?,
     );
   }
 
@@ -134,6 +139,7 @@ class ExtractedLocationData {
       'website': website,
       'needsConfirmation': needsConfirmation,
       'originalQuery': originalQuery,
+      'businessStatus': businessStatus,
     };
   }
 
@@ -152,6 +158,7 @@ class ExtractedLocationData {
     String? website,
     bool? needsConfirmation,
     String? originalQuery,
+    String? businessStatus,
   }) {
     return ExtractedLocationData(
       placeId: placeId ?? this.placeId,
@@ -167,6 +174,7 @@ class ExtractedLocationData {
       website: website ?? this.website,
       needsConfirmation: needsConfirmation ?? this.needsConfirmation,
       originalQuery: originalQuery ?? this.originalQuery,
+      businessStatus: businessStatus ?? this.businessStatus,
     );
   }
 

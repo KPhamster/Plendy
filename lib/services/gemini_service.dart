@@ -177,58 +177,125 @@ class GeminiService {
       
       print('🔎 GEMINI HANDLE LOOKUP: Looking up @$cleanHandle${city != null ? " in $city" : ""}...');
       
-      // Build search query
-      final searchQuery = city != null 
-          ? '@$cleanHandle $city instagram business'
-          : '@$cleanHandle instagram business';
-      
+      // Use JSON-based prompt similar to _searchForBusinessByHandle for better results
       final prompt = '''
-What business does the Instagram account "@$cleanHandle" belong to?
-${city != null ? 'Location: $city' : ''}
+I need to find the ACTUAL BUSINESS NAME for the Instagram account "@$cleanHandle".
 
-CRITICAL INSTRUCTIONS:
-1. Search for "@$cleanHandle instagram" to find the actual business
-2. Look for the OFFICIAL business name, not what the handle literally spells
-3. Many handles are abbreviations: "sofa" = "SOcial FAbric", "kwc" = "Know Where Coffee"
-4. The handle "@sofaseattle" is "Social Fabric Cafe & Market" (SOFA = SOcial FAbric), NOT a furniture store!
+${city != null ? 'Location hint: $city' : ''}
 
-YOUR RESPONSE MUST BE:
-- ONLY the business name (e.g., "Social Fabric Cafe & Market")
-- NO explanations, NO sentences, NO punctuation except what's in the name
-- If unknown, respond with just: UNKNOWN
+=== YOUR TASK ===
+Search online to find:
+1. What business does @$cleanHandle belong to?
+2. What is the OFFICIAL business name?
+3. What type of business is it (restaurant, cafe, bar, etc.)?
 
-EXAMPLES OF CORRECT RESPONSES:
-- Social Fabric Cafe & Market
-- RockCreek Seafood & Spirits
-- Nutty Squirrel Gelato
-- UNKNOWN
+=== SEARCH STRATEGY ===
+1. Search for "@$cleanHandle instagram"
+2. Search for "@$cleanHandle" plus business type keywords (restaurant, cafe, ramen, etc.)
+3. Look for the business website, Google listing, or Yelp page
+4. Check if the handle contains location hints (e.g., "pb" = Pacific Beach, "nyc" = New York)
 
-WRONG (do NOT do this):
-- "The business is Social Fabric Cafe"
-- "@sofaseattle refers to Couch Seattle"
-- "Based on my search, it's..."
+=== OUTPUT FORMAT ===
+Return a JSON object:
+{
+  "found": true or false,
+  "name": "The official business name (e.g., 'Ramen Ryoma', 'Dolce Luna Cafe')",
+  "type": "restaurant/cafe/bar/bakery/etc",
+  "confidence": "high/medium/low",
+  "explanation": "Brief explanation of how you identified this business"
+}
+
+If you cannot find the business with confidence, return:
+{"found": false, "name": null, "explanation": "Why it couldn't be found"}
+
+=== IMPORTANT RULES ===
+- Search for the ACTUAL business name from @$cleanHandle
+- Do NOT just convert the handle to a name without verifying it exists
+- Handles often contain abbreviations (e.g., "pb" = Pacific Beach, "sd" = San Diego)
+- Use Google Search to verify the business exists
+- Return ONLY the JSON object, no other text
 ''';
 
-      // Use Gemini with Google Search grounding to look up the handle
-      final response = await _callGeminiWithSearchGrounding(prompt);
+      // Use Gemini with Google Search grounding - use higher token limit for JSON response
+      final response = await _callGeminiWithSearchGrounding(prompt, maxOutputTokens: 512);
       
       if (response == null) {
         print('⚠️ GEMINI HANDLE LOOKUP: No response from API');
         return null;
       }
       
-      // Extract the business name from the response
-      final businessName = _extractBusinessNameFromResponse(response);
+      // Try to parse JSON response first (new format)
+      final businessName = _extractBusinessNameFromJsonResponse(response);
       
-      if (businessName != null && businessName.isNotEmpty && businessName != 'UNKNOWN') {
+      if (businessName != null && businessName.isNotEmpty) {
         print('✅ GEMINI HANDLE LOOKUP: @$cleanHandle → "$businessName"');
         return businessName;
+      }
+      
+      // Fallback to old text-based extraction
+      final fallbackName = _extractBusinessNameFromResponse(response);
+      
+      if (fallbackName != null && fallbackName.isNotEmpty && fallbackName != 'UNKNOWN') {
+        print('✅ GEMINI HANDLE LOOKUP (fallback): @$cleanHandle → "$fallbackName"');
+        return fallbackName;
       } else {
         print('⚠️ GEMINI HANDLE LOOKUP: Could not determine business for @$cleanHandle');
         return null;
       }
     } catch (e) {
       print('❌ GEMINI HANDLE LOOKUP ERROR: $e');
+      return null;
+    }
+  }
+  
+  /// Extract business name from JSON-formatted Gemini response
+  String? _extractBusinessNameFromJsonResponse(Map<String, dynamic> response) {
+    try {
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+
+      final text = parts.first['text'] as String?;
+      if (text == null || text.isEmpty) return null;
+      
+      print('📝 GEMINI HANDLE LOOKUP: Raw response: ${text.substring(0, text.length > 200 ? 200 : text.length)}...');
+
+      // Try to extract JSON from the response
+      String jsonStr = text.trim();
+      
+      // Remove markdown code blocks if present
+      if (jsonStr.startsWith('```json')) {
+        jsonStr = jsonStr.substring(7);
+      } else if (jsonStr.startsWith('```')) {
+        jsonStr = jsonStr.substring(3);
+      }
+      if (jsonStr.endsWith('```')) {
+        jsonStr = jsonStr.substring(0, jsonStr.length - 3);
+      }
+      jsonStr = jsonStr.trim();
+      
+      // Try to parse as JSON
+      final Map<String, dynamic> jsonData = jsonDecode(jsonStr);
+      
+      final found = jsonData['found'] as bool? ?? false;
+      final name = jsonData['name'] as String?;
+      final confidence = jsonData['confidence'] as String? ?? 'unknown';
+      final explanation = jsonData['explanation'] as String? ?? '';
+      
+      print('   🔍 Search confidence: $confidence');
+      print('   📝 Explanation: $explanation');
+      
+      if (found && name != null && name.isNotEmpty) {
+        return name;
+      }
+      
+      return null;
+    } catch (e) {
+      print('⚠️ GEMINI HANDLE LOOKUP: JSON parse error: $e');
       return null;
     }
   }
@@ -4321,6 +4388,45 @@ If you cannot find reliable information about this specific place, return:
       return null;
     }
   }
+
+  /// Generate a text response WITH Google Search grounding
+  /// 
+  /// This method searches Google to get real-world context about the query
+  /// before generating a response. Useful for:
+  /// - Looking up what a place actually is (restaurant, museum, etc.)
+  /// - Getting accurate information about businesses
+  /// - Categorizing places based on their true nature
+  ///
+  /// [prompt] - The prompt to send to Gemini
+  ///
+  /// Returns the text response, or null if the call fails
+  Future<String?> generateTextWithGoogleSearch(String prompt) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI SEARCH: API key not configured');
+      return null;
+    }
+
+    try {
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      if (response == null) return null;
+
+      // Extract text from response
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      if (content == null) return null;
+
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+
+      return parts.first['text'] as String?;
+    } catch (e) {
+      print('❌ GEMINI SEARCH ERROR: $e');
+      return null;
+    }
+  }
   
   /// Detect event information from text content using AI
   /// 
@@ -4345,8 +4451,7 @@ If you cannot find reliable information about this specific place, return:
       print('📅 GEMINI EVENT: Analyzing text for event information...');
       
       final prompt = '''
-Analyze this text and determine if it describes an event (past, present, or future). If yes, extract the event details.
-IMPORTANT: Extract events regardless of whether they have already occurred - users may want to save past events they attended.
+Analyze this text and determine if it describes a SCHEDULED EVENT with an EXPLICIT date/time mentioned.
 
 TEXT TO ANALYZE:
 """
@@ -4355,13 +4460,19 @@ $text
 
 TODAY'S DATE: ${DateTime.now().toIso8601String().split('T')[0]}
 
-INSTRUCTIONS:
-1. Look for event-related content: festivals, fairs, concerts, shows, exhibitions, pop-ups, limited-time events, etc.
-2. Find any date/time information - explicit dates like "April 4-6, 2025", "this weekend", "next Saturday", etc.
-3. Extract the EXACT dates mentioned in the text, even if they are in the past
-4. For multi-day events like "April 4-6, 2025", use the first day as start and last day as end
-5. If only a date is given without time, use 10:00 AM as start and 10:00 PM as end
-6. For events without end times, estimate a reasonable duration (2-4 hours typical)
+CRITICAL RULES:
+1. ONLY return is_event: true if BOTH conditions are met:
+   a) The text describes an actual scheduled event (festival, fair, concert, show, exhibition, pop-up, etc.)
+   b) The text contains an EXPLICIT date or time (e.g., "April 4-6", "this Saturday", "8pm", "next weekend")
+2. Do NOT infer or make up dates - if no date/time is explicitly stated, return is_event: false
+3. Do NOT treat general business descriptions as events (e.g., "new boba shop opened" is NOT an event unless it says "grand opening on [date]")
+4. Do NOT use today's date as a default - dates must be explicitly mentioned in the text
+
+INSTRUCTIONS (only if both conditions above are met):
+1. Extract the EXACT dates mentioned in the text, even if they are in the past
+2. For multi-day events like "April 4-6, 2025", use the first day as start and last day as end
+3. If only a date is given without time, use 10:00 AM as start and 10:00 PM as end
+4. For events without end times, estimate a reasonable duration (2-4 hours typical)
 
 RESPONSE FORMAT:
 Return a JSON object with this exact structure:
@@ -4376,8 +4487,10 @@ Return a JSON object with this exact structure:
 
 EXAMPLES:
 - "OC Japan Fair April 4-6, 2025" → is_event: true, start: 2025-04-04T10:00:00, end: 2025-04-06T22:00:00
-- "Best restaurants in LA" → is_event: false
-- "Join us March 15th for food and music" → is_event: true, use March 15 with current year if not specified
+- "Best restaurants in LA" → is_event: false (no event, just a list)
+- "New boba shop in Chula Vista" → is_event: false (business description, no scheduled event with date)
+- "Grand opening this Saturday at 10am!" → is_event: true (explicit event with date/time)
+- "Join us March 15th for food and music" → is_event: true, use March 15 with current year
 
 Return ONLY the JSON object, no other text.
 ''';
@@ -4467,6 +4580,31 @@ Return ONLY the JSON object, no other text.
       if (startDateTime == null) {
         print('⚠️ GEMINI EVENT: Could not parse start datetime: $startDateTimeStr');
         return null;
+      }
+      
+      // SAFEGUARD: If the detected date is today's date, verify the text actually mentions "today" or similar
+      // This catches AI hallucinations where it makes up today's date when no date is mentioned
+      final now = DateTime.now();
+      final isToday = startDateTime.year == now.year && 
+                      startDateTime.month == now.month && 
+                      startDateTime.day == now.day;
+      
+      if (isToday) {
+        final lowerText = text.toLowerCase();
+        final todayIndicators = [
+          'today', 'tonight', 'this evening', 'this morning', 'this afternoon',
+          'happening now', 'right now', 'doors open', 'starts at',
+          // Also check for explicit date mention of today
+          '${now.month}/${now.day}',
+          '${now.day}/${now.month}',
+        ];
+        final hasTodayReference = todayIndicators.any((indicator) => lowerText.contains(indicator));
+        
+        if (!hasTodayReference) {
+          print('⚠️ GEMINI EVENT: Detected today\'s date but no "today" reference found in text - likely hallucinated');
+          print('   Text snippet: ${text.length > 200 ? text.substring(0, 200) : text}...');
+          return null;
+        }
       }
       
       // Parse end time or default to 2 hours after start
