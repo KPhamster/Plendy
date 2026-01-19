@@ -5033,21 +5033,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 website: verified.website, // Pass through website from Places API
               ));
             } else {
-              // Could not verify location via Places API
-              // Add with address but no coordinates - will show in dialog as "Not found in Google Places"
-              print('⚠️ MAPS GROUNDING: Could not verify "${loc.name}" - adding with address only (not in Google Places)');
-              locations.add(ExtractedLocationData(
-                name: loc.name,
-                address: loc.formattedAddress,
-                placeId: null,
-                coordinates: null, // No coordinates - will show "Not found" indicator in UI
-                type: ExtractedLocationData.inferPlaceType(loc.types),
-                source: ExtractionSource.geminiGrounding,
-                confidence: 0.2, // Very low confidence - not verified
-                googleMapsUri: loc.uri,
-                placeTypes: loc.types,
-                originalQuery: loc.name,
-              ));
+              // Could not verify location via Places API - skip it entirely
+              // We never return results without actual coordinates (e.g., generic regions like "Vancouver", "Banff", "Utah")
+              print('⏭️ MAPS GROUNDING: Skipping "${loc.name}" - could not resolve to a place with coordinates');
             }
           }
         }
@@ -11982,9 +11970,12 @@ class _MultiLocationSelectionDialogState
   @override
   void initState() {
     super.initState();
-    // Start with all locations selected
-    _selectedIndices =
-        Set<int>.from(List.generate(widget.locations.length, (i) => i));
+    // Start with all valid locations selected (those with coordinates)
+    _selectedIndices = Set<int>.from(
+      widget.locations.asMap().entries
+          .where((e) => e.value.coordinates != null)
+          .map((e) => e.key)
+    );
     // Fetch business status for all locations with place IDs
     _fetchBusinessStatuses();
   }
@@ -12028,7 +12019,19 @@ class _MultiLocationSelectionDialogState
   
   bool get _hasEventInfo => widget.detectedEventInfo != null;
 
-  bool get _allSelected => _selectedIndices.length == widget.locations.length;
+  /// Count of valid locations (those with coordinates - excludes "No results" items)
+  int get _validLocationCount => widget.locations
+      .where((loc) => loc.coordinates != null)
+      .length;
+  
+  /// Indices of valid locations (those with coordinates)
+  Set<int> get _validLocationIndices => Set<int>.from(
+    widget.locations.asMap().entries
+        .where((e) => e.value.coordinates != null)
+        .map((e) => e.key)
+  );
+
+  bool get _allSelected => _selectedIndices.length == _validLocationCount && _validLocationCount > 0;
   bool get _noneSelected => _selectedIndices.isEmpty;
 
   int get _duplicateCount => widget.duplicates.length;
@@ -12054,8 +12057,8 @@ class _MultiLocationSelectionDialogState
       if (_allSelected) {
         _selectedIndices.clear();
       } else {
-        _selectedIndices =
-            Set<int>.from(List.generate(widget.locations.length, (i) => i));
+        // Only select valid locations (those with coordinates)
+        _selectedIndices = Set<int>.from(_validLocationIndices);
       }
     });
   }
@@ -12152,9 +12155,9 @@ class _MultiLocationSelectionDialogState
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                widget.locations.length == 1
+                _validLocationCount == 1
                     ? '1 Location Found'
-                    : '${widget.locations.length} Locations Found',
+                    : '$_validLocationCount Locations Found',
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -12281,7 +12284,7 @@ class _MultiLocationSelectionDialogState
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    '${_selectedIndices.length}/${widget.locations.length}',
+                    '${_selectedIndices.length}/$_validLocationCount',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,

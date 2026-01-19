@@ -354,20 +354,9 @@ class LinkLocationExtractionService {
                 originalQuery: matchingMention ?? resolvedLocation.originalQuery,
               ));
             } else {
-              // Could not resolve via Places API - add with address but no coordinates
-              // Will be shown in UI as "Location not found in Google Places"
-              print('⚠️ CAPTION: Could not resolve "${location.name}" - adding with address only (not in Google Places)');
-              results.add(ExtractedLocationData(
-                placeId: location.placeId.isNotEmpty ? location.placeId : null,
-                name: location.name,
-                address: location.formattedAddress,
-                coordinates: null, // No coordinates - will show "Not found" in UI
-                type: ExtractedLocationData.inferPlaceType(location.types),
-                source: ExtractionSource.geminiGrounding,
-                confidence: 0.2, // Very low confidence - not verified
-                placeTypes: location.types,
-                originalQuery: matchingMention,
-              ));
+              // Could not resolve via Places API - skip it entirely
+              // We never return results without actual coordinates (e.g., generic regions like "Vancouver", "Banff", "Utah")
+              print('⏭️ CAPTION: Skipping "${location.name}" - could not resolve to a place with coordinates');
             }
           }
         }
@@ -497,18 +486,9 @@ class LinkLocationExtractionService {
                 originalQuery: matchingMention ?? resolvedLocation.originalQuery,
               ));
             } else {
-              // Add location without coordinates - user can manually set
-              print('⚠️ CAPTION: Could not resolve "$name", adding without coords');
-              results.add(ExtractedLocationData(
-                placeId: null,
-                name: name,
-                address: address ?? (city != null ? '$city${region != null ? ", $region" : ""}' : null),
-                coordinates: null,
-                type: PlaceType.unknown,
-                source: ExtractionSource.geminiGrounding, // From Gemini, even though grounding chunks were empty
-                confidence: 0.5,
-                originalQuery: matchingMention,
-              ));
+              // Could not resolve via Places API - skip it entirely
+              // We never return results without actual coordinates (e.g., generic regions like "Vancouver", "Banff", "Utah")
+              print('⏭️ CAPTION: Skipping "$name" - could not resolve to a place with coordinates');
             }
           }
         } else {
@@ -1446,17 +1426,9 @@ class LinkLocationExtractionService {
         print('✅ YOUTUBE: Resolved "${location.name}" → ${resolvedLocation.name} (${resolvedLocation.coordinates?.latitude}, ${resolvedLocation.coordinates?.longitude})');
         results.add(resolvedLocation);
       } else {
-        // Still add without coordinates - user can manually set location
-        print('⚠️ YOUTUBE: Could not resolve "${location.name}", adding without coords');
-        results.add(ExtractedLocationData(
-          placeId: null,
-          name: location.name,
-          address: location.city,
-          coordinates: null, // No coordinates - don't use placeholder (0,0)
-          type: PlaceType.unknown,
-          source: ExtractionSource.geminiGrounding,
-          confidence: 0.5, // Lower confidence without coords
-        ));
+        // Could not resolve via Places API - skip it entirely
+        // We never return results without actual coordinates (e.g., generic regions like "Vancouver", "Banff", "Utah")
+        print('⏭️ YOUTUBE: Skipping "${location.name}" - could not resolve to a place with coordinates');
       }
     }
     
