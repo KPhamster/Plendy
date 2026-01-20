@@ -2194,7 +2194,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_publicCategories.isEmpty) {
+    // Filter categories to only show those with experiences
+    final categoriesWithExperiences = _publicCategories
+        .where((category) {
+          final experiences = _categoryExperiences[category.id] ?? [];
+          return experiences.isNotEmpty;
+        })
+        .toList();
+
+    if (categoriesWithExperiences.isEmpty) {
       return const Center(child: Text('No public categories to share yet.'));
     }
 
@@ -2230,7 +2238,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  final category = _publicCategories[index];
+                  final category = categoriesWithExperiences[index];
                   final experiences = _categoryExperiences[category.id] ?? [];
                   final bool isSelected = _selectedCategory?.id == category.id;
 
@@ -2294,7 +2302,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     ),
                   );
                 },
-                childCount: _publicCategories.length,
+                childCount: categoriesWithExperiences.length,
               ),
             ),
           ),
@@ -2304,12 +2312,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     final int headerOffset = showCountHeader ? 1 : 0;
     return ListView.builder(
-      itemCount: _publicCategories.length + headerOffset,
+      itemCount: categoriesWithExperiences.length + headerOffset,
       itemBuilder: (context, index) {
         if (showCountHeader && index == 0) {
           return _buildExperienceCountHeader(_publicExperienceCount);
         }
-        final category = _publicCategories[index - headerOffset];
+        final category = categoriesWithExperiences[index - headerOffset];
         final experiences = _categoryExperiences[category.id] ?? [];
         final bool isSelected = _selectedCategory?.id == category.id;
 
@@ -2584,7 +2592,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_publicColorCategories.isEmpty) {
+    // Filter color categories to only show those with experiences
+    final colorCategoriesWithExperiences = _publicColorCategories
+        .where((colorCategory) {
+          final experiences = _categoryExperiences[colorCategory.id] ?? [];
+          return experiences.isNotEmpty;
+        })
+        .toList();
+
+    if (colorCategoriesWithExperiences.isEmpty) {
       return const Center(
           child: Text('No public color categories to share yet.'));
     }
@@ -2622,7 +2638,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  final colorCategory = _publicColorCategories[index];
+                  final colorCategory = colorCategoriesWithExperiences[index];
                   final experiences =
                       _categoryExperiences[colorCategory.id] ?? [];
                   final bool isSelected =
@@ -2694,7 +2710,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     ),
                   );
                 },
-                childCount: _publicColorCategories.length,
+                childCount: colorCategoriesWithExperiences.length,
               ),
             ),
           ),
@@ -2704,7 +2720,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     final int headerOffset = showCountHeader ? 1 : 0;
     return ListView.separated(
-      itemCount: _publicColorCategories.length + headerOffset,
+      itemCount: colorCategoriesWithExperiences.length + headerOffset,
       separatorBuilder: (context, index) {
         if (showCountHeader && index == 0) {
           return const SizedBox.shrink();
@@ -2715,7 +2731,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         if (showCountHeader && index == 0) {
           return _buildExperienceCountHeader(_publicExperienceCount);
         }
-        final colorCategory = _publicColorCategories[index - headerOffset];
+        final colorCategory = colorCategoriesWithExperiences[index - headerOffset];
         final experiences = _categoryExperiences[colorCategory.id] ?? [];
         final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
 

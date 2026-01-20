@@ -6811,10 +6811,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         normalizedUrl.contains('goo.gl/maps')) {
       firstCard.originalShareType = ShareType.maps;
 
-      // Set loading state to show spinner in location field
+      // Set loading state to show spinner in location field AND AI analyzing chip
       firstCard.isSelectingLocation = true;
+      _isExtractingLocation = true;
+      _scanProgress = 0.5; // Show progress in the bar
       if (mounted) {
-        setState(() {}); // Trigger rebuild to show loading indicator
+        setState(() {}); // Trigger rebuild to show loading indicator and chip
       }
 
       // Start the extraction and handle completion
@@ -6825,14 +6827,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Only clear here if no location was found (result is null)
         if (result == null || result['location'] == null) {
           firstCard.isSelectingLocation = false;
+          _isExtractingLocation = false;
+          _scanProgress = 0.0;
           if (mounted) {
-            setState(() {}); // Trigger rebuild to hide loading indicator
+            setState(() {}); // Trigger rebuild to hide loading indicator and chip
           }
         }
         return result;
       }).catchError((error) {
         // Clear loading state on error
         firstCard.isSelectingLocation = false;
+        _isExtractingLocation = false;
+        _scanProgress = 0.0;
         if (mounted) {
           setState(() {});
         }
@@ -7851,7 +7857,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Debounce the update to prevent rapid rebuilds
     _locationUpdateDebounce?.cancel();
-    _locationUpdateDebounce = Timer(const Duration(milliseconds: 100), () {
+    _locationUpdateDebounce = Timer(const Duration(milliseconds: 100), () async {
       if (!mounted) return;
       provider.updateCardFromShareDetails(
         cardId: cardId,
@@ -7864,9 +7870,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
 
       if (mounted) {
+        // Check if auto-categorization is enabled before clearing the chip
+        final shouldAutoSetCategories = location.placeId != null 
+            ? await _aiSettingsService.shouldAutoSetCategories()
+            : false;
+        
         setState(() {
-          // Clear loading state after location is actually set
+          // Clear location field loading state
           firstCard.isSelectingLocation = false;
+          
+          // Update progress bar - extraction done
+          _scanProgress = 0.8;
 
           final String? placeIdKey = location.placeId;
           if (placeIdKey != null && placeIdKey.isNotEmpty) {
@@ -7883,7 +7897,32 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             };
             _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
           } else {}
+          
+          // If auto-categorization is enabled, switch chip to "Categorizing..."
+          // Keep _isExtractingLocation true so the chip stays visible
+          if (shouldAutoSetCategories) {
+            _isCategorizing = true;
+          } else {
+            // No categorization, hide the chip now
+            _isExtractingLocation = false;
+            _scanProgress = 0.0;
+          }
         });
+        
+        // Auto-set Color Category to 'Want to go' and determine Primary Category
+        // for the newly extracted location from Google Maps URL
+        if (shouldAutoSetCategories) {
+          await _autoCategorizeCardForNewLocation(cardId, location, provider);
+          
+          // Hide chip after categorization completes
+          if (mounted) {
+            setState(() {
+              _isCategorizing = false;
+              _isExtractingLocation = false;
+              _scanProgress = 0.0;
+            });
+          }
+        }
       }
     });
   }
