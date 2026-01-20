@@ -6535,20 +6535,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           "🗺️ MAP SCREEN: Filtered ${deduped.length} experiences down to ${filteredExperiences.length}");
 
       // Regenerate markers from the filtered list
-      _generateMarkersFromExperiences(filteredExperiences);
+      await _generateMarkersFromExperiences(filteredExperiences);
 
-      // Optionally: Animate camera to fit the filtered markers if needed
-      // This might be desired behavior after filtering
-      // final GoogleMapController controller = await _mapControllerCompleter.future;
-      // final bounds = _calculateBoundsFromMarkers(_markers); // Use the updated _markers
-      // if (bounds != null) {
-      //   controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
-      // }
+      // Animate camera based on number of markers
       _mapController ??= await _mapControllerCompleter.future;
-      final bounds = _calculateBoundsFromMarkers(_markers);
-      if (bounds != null && _mapController != null) {
-        _mapController!
-            .animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
+      if (_mapController != null) {
+        // For few markers, fit all of them on screen
+        // For many markers, zoom to the densest cluster
+        const int densityThreshold = 20;
+        if (_markers.length <= densityThreshold) {
+          // Fit all markers on screen
+          final bounds = _calculateBoundsFromMarkers(_markers);
+          if (bounds != null) {
+            _mapController!
+                .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80.0));
+          }
+        } else {
+          // Use density-based approach for many markers
+          final densestCluster = _findDensestMarkerCluster(_markers);
+          if (densestCluster != null) {
+            _mapController!.animateCamera(
+              CameraUpdate.newLatLngZoom(
+                  densestCluster.center, densestCluster.zoom),
+            );
+          }
+        }
       }
     } catch (e, stackTrace) {
       print("🗺️ MAP SCREEN: Error applying filters: $e");
@@ -6568,6 +6579,116 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
   // --- END Apply Filters ---
+
+  // --- Helper: Find the densest cluster of markers ---
+  /// Returns the center point and appropriate zoom level for the densest cluster of markers.
+  /// Uses a grid-based approach to find where markers are most concentrated.
+  ({LatLng center, double zoom})? _findDensestMarkerCluster(
+      Map<String, Marker> markers) {
+    if (markers.isEmpty) return null;
+    if (markers.length == 1) {
+      return (center: markers.values.first.position, zoom: 14.0);
+    }
+
+    final positions = markers.values.map((m) => m.position).toList();
+
+    // Find bounds of all markers
+    double minLat = positions.first.latitude;
+    double maxLat = positions.first.latitude;
+    double minLng = positions.first.longitude;
+    double maxLng = positions.first.longitude;
+
+    for (final pos in positions) {
+      if (pos.latitude < minLat) minLat = pos.latitude;
+      if (pos.latitude > maxLat) maxLat = pos.latitude;
+      if (pos.longitude < minLng) minLng = pos.longitude;
+      if (pos.longitude > maxLng) maxLng = pos.longitude;
+    }
+
+    // Use a grid-based density calculation
+    // Grid size: 10x10 cells
+    const int gridSize = 10;
+    final double latStep = (maxLat - minLat) / gridSize;
+    final double lngStep = (maxLng - minLng) / gridSize;
+
+    // Handle edge case where all markers are at the same location
+    if (latStep == 0 && lngStep == 0) {
+      return (center: positions.first, zoom: 14.0);
+    }
+
+    // Count markers in each cell
+    final Map<String, List<LatLng>> cellMarkers = {};
+    for (final pos in positions) {
+      final int latIdx =
+          latStep > 0 ? ((pos.latitude - minLat) / latStep).floor().clamp(0, gridSize - 1) : 0;
+      final int lngIdx =
+          lngStep > 0 ? ((pos.longitude - minLng) / lngStep).floor().clamp(0, gridSize - 1) : 0;
+      final cellKey = '$latIdx,$lngIdx';
+      cellMarkers.putIfAbsent(cellKey, () => []);
+      cellMarkers[cellKey]!.add(pos);
+    }
+
+    // Find the cell with the most markers
+    String? densestCell;
+    int maxCount = 0;
+    for (final entry in cellMarkers.entries) {
+      if (entry.value.length > maxCount) {
+        maxCount = entry.value.length;
+        densestCell = entry.key;
+      }
+    }
+
+    if (densestCell == null) return null;
+
+    // Calculate the center of the densest cluster
+    final clusterPositions = cellMarkers[densestCell]!;
+    double sumLat = 0, sumLng = 0;
+    for (final pos in clusterPositions) {
+      sumLat += pos.latitude;
+      sumLng += pos.longitude;
+    }
+    final center = LatLng(
+      sumLat / clusterPositions.length,
+      sumLng / clusterPositions.length,
+    );
+
+    // Calculate appropriate zoom level based on cluster spread
+    double clusterMinLat = clusterPositions.first.latitude;
+    double clusterMaxLat = clusterPositions.first.latitude;
+    double clusterMinLng = clusterPositions.first.longitude;
+    double clusterMaxLng = clusterPositions.first.longitude;
+
+    for (final pos in clusterPositions) {
+      if (pos.latitude < clusterMinLat) clusterMinLat = pos.latitude;
+      if (pos.latitude > clusterMaxLat) clusterMaxLat = pos.latitude;
+      if (pos.longitude < clusterMinLng) clusterMinLng = pos.longitude;
+      if (pos.longitude > clusterMaxLng) clusterMaxLng = pos.longitude;
+    }
+
+    final latSpread = clusterMaxLat - clusterMinLat;
+    final lngSpread = clusterMaxLng - clusterMinLng;
+    final maxSpread = latSpread > lngSpread ? latSpread : lngSpread;
+
+    // Determine zoom level based on spread (approximate)
+    double zoom;
+    if (maxSpread < 0.005) {
+      zoom = 16.0; // Very tight cluster
+    } else if (maxSpread < 0.02) {
+      zoom = 14.0; // Neighborhood level
+    } else if (maxSpread < 0.1) {
+      zoom = 12.0; // City level
+    } else if (maxSpread < 0.5) {
+      zoom = 10.0; // Region level
+    } else {
+      zoom = 8.0; // Wide area
+    }
+
+    print(
+        "🗺️ MAP SCREEN: Densest cluster has $maxCount markers at $center with zoom $zoom");
+
+    return (center: center, zoom: zoom);
+  }
+  // --- END Find Densest Cluster ---
 
   // --- REFACTORED: Marker generation logic ---
   Future<void> _generateMarkersFromExperiences(
