@@ -85,10 +85,10 @@ class MapScreen extends StatefulWidget {
       this.initialEvent}); // UPDATED: Constructor
 
   @override
-  State<MapScreen> createState() => _MapScreenState();
+  State<MapScreen> createState() => MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
+class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final ExperienceService _experienceService = ExperienceService();
   final AuthService _authService = AuthService();
   final UserService _userService = UserService();
@@ -508,6 +508,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _markerAnimationController?.dispose();
     _markerAnimationController = null;
     super.dispose();
+  }
+
+  /// Public method to refresh map data (called from MainScreen when experiences are updated)
+  Future<void> refreshData() async {
+    await _loadDataAndGenerateMarkers();
   }
 
   void _initializeFiltersAndData() {
@@ -8058,6 +8063,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     print(
         "🗺️ MAP SCREEN: (build) Condition for BottomNav/Details Panel is: ${_tappedLocationDetails != null}");
 
+    // Check if there will be any leading widget (custom back button or auto-implied)
+    final bool hasCustomLeading =
+        (_isEventViewModeActive || _isAddToEventModeActive) &&
+            widget.initialEvent != null;
+    final bool hasAutoImpliedLeading =
+        ModalRoute.of(context)?.canPop ?? false;
+    final bool hasLeading = hasCustomLeading || hasAutoImpliedLeading;
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: AppColors.backgroundColor,
@@ -8066,8 +8079,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         foregroundColor: Colors.black,
         elevation: 0,
         titleSpacing: 0,
-        leading: (_isEventViewModeActive || _isAddToEventModeActive) &&
-                widget.initialEvent != null
+        leading: hasCustomLeading
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () async {
@@ -8096,6 +8108,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Add leading padding when there's no back button (e.g., from nav bar tab)
+            if (!hasLeading) const SizedBox(width: 16),
             Image.asset(
               'assets/icon/icon-cropped.png',
               height: 28,

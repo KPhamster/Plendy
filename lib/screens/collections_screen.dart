@@ -163,8 +163,9 @@ class GroupedContentItem {
 
 class CollectionsScreen extends StatefulWidget {
   final ValueChanged<bool>? onLoadingChanged;
+  final VoidCallback? onDataChanged;
 
-  const CollectionsScreen({super.key, this.onLoadingChanged});
+  const CollectionsScreen({super.key, this.onLoadingChanged, this.onDataChanged});
 
   @override
   State<CollectionsScreen> createState() => CollectionsScreenState();
@@ -350,6 +351,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     if (result == true && mounted) {
       _loadData();
+      // Notify parent that data changed (e.g., for MapScreen refresh)
+      widget.onDataChanged?.call();
     }
   }
 
@@ -2646,6 +2649,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     if (result != null) {
       _loadData();
+      widget.onDataChanged?.call();
     } else {}
   }
 
@@ -2666,6 +2670,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     if (result != null) {
       _loadData();
+      // Notify parent that data changed (e.g., for MapScreen refresh)
+      widget.onDataChanged?.call();
     } else {}
   }
 
@@ -6991,6 +6997,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     if (mounted) {
       await _loadData();
+      // Notify parent that data changed (e.g., for MapScreen refresh)
+      widget.onDataChanged?.call();
     }
   }
 

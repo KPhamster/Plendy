@@ -11,6 +11,7 @@ import '../widgets/notification_dot.dart';
 import 'collections_screen.dart';
 import 'discovery_screen.dart';
 import 'events_screen.dart';
+import 'map_screen.dart';
 import 'profile_screen.dart';
 import 'package:provider/provider.dart';
 import '../providers/discovery_share_coordinator.dart';
@@ -33,6 +34,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       GlobalKey<DiscoveryScreenState>();
   final GlobalKey<CollectionsScreenState> _collectionsKey =
       GlobalKey<CollectionsScreenState>();
+  final GlobalKey<MapScreenState> _mapKey = GlobalKey<MapScreenState>();
   DiscoveryShareCoordinator? _shareCoordinator;
   bool _isCollectionsLoading = true;
 
@@ -52,7 +54,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       CollectionsScreen(
         key: _collectionsKey,
         onLoadingChanged: _handleCollectionsLoadingChanged,
+        onDataChanged: _refreshMap,
       ),
+      MapScreen(key: _mapKey),
       const EventsScreen(),
       ProfileScreen(onRequestDiscoveryRefresh: _refreshDiscovery),
     ];
@@ -223,6 +227,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _collectionsKey.currentState?.refreshData();
   }
 
+  /// Refresh map data (called when experiences are updated in Collections)
+  void _refreshMap() {
+    _mapKey.currentState?.refreshData();
+  }
+
   void _handleCollectionsLoadingChanged(bool isLoading) {
     if (!mounted || _isCollectionsLoading == isLoading) {
       return;
@@ -306,6 +315,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               BottomNavigationBarItem(
                 icon: _buildCollectionIcon(context),
                 label: 'Collection',
+              ),
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.map_outlined),
+                label: 'Map',
               ),
               const BottomNavigationBarItem(
                 icon: Icon(Icons.event_outlined),
