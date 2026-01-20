@@ -69,31 +69,34 @@ class _SplashScreenState extends State<SplashScreen>
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
       body: SizedBox.expand(
-        child: Lottie.asset(
-          'assets/animations/splash_logo.json',
-          controller: _animationController,
-          fit: BoxFit.contain,
-          onLoaded: (composition) {
-            print(
-                'SplashScreen: Lottie onLoaded called, duration=${composition.duration}');
-            // Cancel fallback timer since animation loaded successfully
-            _fallbackTimer?.cancel();
+        child: FittedBox(
+          fit: BoxFit.fitHeight,
+          alignment: Alignment.center,
+          child: Lottie.asset(
+            'assets/animations/splash_logo.json',
+            controller: _animationController,
+            onLoaded: (composition) {
+              print(
+                  'SplashScreen: Lottie onLoaded called, duration=${composition.duration}');
+              // Cancel fallback timer since animation loaded successfully
+              _fallbackTimer?.cancel();
 
-            // Set the duration and start the animation
-            _animationController.duration = composition.duration;
-            print('SplashScreen: Starting animation');
-            _animationController.forward();
-          },
-          errorBuilder: (context, error, stackTrace) {
-            print('SplashScreen: Lottie errorBuilder called - $error');
-            // If Lottie fails to load, show static logo and complete after 2 seconds
-            _fallbackTimer?.cancel();
-            Timer(const Duration(seconds: 2), _completeAnimation);
-            return Image.asset(
-              'assets/icon/icon.png',
-              fit: BoxFit.contain,
-            );
-          },
+              // Set the duration and start the animation
+              _animationController.duration = composition.duration;
+              print('SplashScreen: Starting animation');
+              _animationController.forward();
+            },
+            errorBuilder: (context, error, stackTrace) {
+              print('SplashScreen: Lottie errorBuilder called - $error');
+              // If Lottie fails to load, show static logo and complete after 2 seconds
+              _fallbackTimer?.cancel();
+              Timer(const Duration(seconds: 2), _completeAnimation);
+              return Image.asset(
+                'assets/icon/icon.png',
+                fit: BoxFit.contain,
+              );
+            },
+          ),
         ),
       ),
     );
