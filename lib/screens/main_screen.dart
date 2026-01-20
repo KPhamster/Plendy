@@ -18,7 +18,7 @@ import '../providers/discovery_share_coordinator.dart';
 class MainScreen extends StatefulWidget {
   final int initialIndex;
 
-  const MainScreen({super.key, this.initialIndex = 0});
+  const MainScreen({super.key, this.initialIndex = 1});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
