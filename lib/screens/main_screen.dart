@@ -7,6 +7,8 @@ import 'package:share_handler/share_handler.dart';
 import '../services/sharing_service.dart';
 import '../services/experience_service.dart';
 import '../services/notification_state_service.dart';
+import '../services/auth_service.dart';
+import '../services/my_people_preload_service.dart';
 import '../widgets/notification_dot.dart';
 import 'collections_screen.dart';
 import 'discovery_screen.dart';
@@ -65,6 +67,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _collectionsKey.currentState?.startContentPreload();
       // Preload public experiences for Discovery tab in background
       unawaited(_experienceService.preloadPublicExperiences());
+      // Preload My People data in background (lower priority, after other preloads)
+      _preloadMyPeopleData();
     });
     if (_sharingService.isNavigatingAwayFromShare) {
       _sharingService.shareNavigationComplete();
@@ -238,6 +242,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     setState(() {
       _isCollectionsLoading = isLoading;
+    });
+  }
+
+  /// Preload My People screen data in background with lower priority
+  void _preloadMyPeopleData() {
+    // Delay to prioritize Collections and Discovery preloads first
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final userId = authService.currentUser?.uid;
+      if (userId != null) {
+        unawaited(MyPeoplePreloadService().preload(userId));
+      }
     });
   }
 

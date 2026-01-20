@@ -5,6 +5,7 @@ import '../config/colors.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart'; // Assuming UserService will provide these counts
 import '../services/notification_state_service.dart'; // Import NotificationStateService
+import '../services/my_people_preload_service.dart'; // Import preload service
 import '../widgets/user_list_tab.dart';
 // Import the search delegate
 import '../widgets/notification_dot.dart'; // Import NotificationDot
@@ -56,11 +57,10 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: 1); // Set Followers tab as default
-    _hasVisitedFollowersTab = true; // Since we start on Followers tab, mark as visited
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 1); // Set Following tab as default
     _tabController.addListener(() {
-      // Track when user visits the Followers tab
-      if (_tabController.index == 1) {
+      // Track when user visits the Followers tab (now at index 2)
+      if (_tabController.index == 2) {
         _hasVisitedFollowersTab = true;
       }
     });
@@ -176,12 +176,33 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     });
   }
 
-  Future<void> _loadSocialCounts() async {
+  Future<void> _loadSocialCounts({bool forceRefresh = false}) async {
     if (_authService?.currentUser == null) {
       if (mounted) setState(() => _isLoadingCounts = false);
       return;
     }
     final userId = _authService!.currentUser!.uid;
+    final preloadService = MyPeoplePreloadService();
+    
+    // Check if we have valid preloaded data
+    if (!forceRefresh && preloadService.isCacheValid(userId)) {
+      // Use preloaded data immediately
+      if (mounted) {
+        setState(() {
+          _friendIds = preloadService.friendIds;
+          _followerIds = preloadService.followerIds;
+          _followingIds = preloadService.followingIds;
+          _friendsCount = _friendIds.length;
+          _followersCount = _followerIds.length;
+          _followingCount = _followingIds.length;
+          _isLoadingCounts = false;
+        });
+      }
+      // Handle subscription in finally block equivalent
+      _handleRequestCountSubscription();
+      return;
+    }
+    
     // Do not set _isLoadingCounts to true here if _loadInitialDataAndSubscribe already did.
     // Or, ensure this method is robust to be called independently.
     if (mounted && !_isLoadingCounts) setState(() { _isLoadingCounts = true; });
@@ -206,6 +227,8 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
           _isLoadingCounts = false; 
         });
       }
+      // Invalidate preload cache since we have fresh data
+      preloadService.invalidateCache();
     } catch (e) {
       if (mounted) setState(() => _isLoadingCounts = false);
       print("Error loading social counts: $e");
@@ -215,14 +238,18 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
         );
       }
     } finally {
-        // Ensure request count subscription is active if profile is private
-        // This might be called after _loadCurrentUserProfile so profile should be available
-        if (mounted && (_currentUserProfile?.isPrivate ?? false) && _requestCountSubscription == null){
-             _subscribeToRequestCount();
-        } else if (mounted && !(_currentUserProfile?.isPrivate ?? false) && _requestCountSubscription != null) {
-            _requestCountSubscription?.cancel(); // Cancel if profile becomes public
-            setState(() => _pendingRequestCount = 0);
-        }
+      _handleRequestCountSubscription();
+    }
+  }
+  
+  void _handleRequestCountSubscription() {
+    // Ensure request count subscription is active if profile is private
+    // This might be called after _loadCurrentUserProfile so profile should be available
+    if (mounted && (_currentUserProfile?.isPrivate ?? false) && _requestCountSubscription == null){
+         _subscribeToRequestCount();
+    } else if (mounted && !(_currentUserProfile?.isPrivate ?? false) && _requestCountSubscription != null) {
+        _requestCountSubscription?.cancel(); // Cancel if profile becomes public
+        setState(() => _pendingRequestCount = 0);
     }
   }
 
@@ -450,6 +477,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                     ]
                   : [
                       Tab(text: '$_friendsCount Friends'),
+                      Tab(text: '$_followingCount Following'),
                       Consumer<NotificationStateService>(
                         builder: (context, notificationService, child) {
                           return Tab(
@@ -460,7 +488,6 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                           );
                         },
                       ),
-                      Tab(text: '$_followingCount Following'),
                     ],
             ),
             Expanded(
@@ -476,18 +503,18 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                     onUserTap: _openPublicProfile,
                   ),
                   UserListTab(
-                    userIds: _followerIds,
-                    userService: _userService,
-                    emptyListMessage: "You don't have any followers yet.",
-                    listType: "followers",
-                    onActionCompleted: _loadSocialCounts,
-                    onUserTap: _openPublicProfile,
-                  ),
-                  UserListTab(
                     userIds: _followingIds,
                     userService: _userService,
                     emptyListMessage: "You are not following anyone yet.",
                     listType: "following",
+                    onActionCompleted: _loadSocialCounts,
+                    onUserTap: _openPublicProfile,
+                  ),
+                  UserListTab(
+                    userIds: _followerIds,
+                    userService: _userService,
+                    emptyListMessage: "You don't have any followers yet.",
+                    listType: "followers",
                     onActionCompleted: _loadSocialCounts,
                     onUserTap: _openPublicProfile,
                   ),

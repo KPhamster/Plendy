@@ -27,6 +27,7 @@ import '../models/share_result.dart';
 import 'auth_screen.dart';
 import 'experience_page_screen.dart';
 import 'main_screen.dart';
+import 'public_profile_map_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
@@ -926,6 +927,36 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     return mapValue['fields'] as Map<String, dynamic>?;
   }
 
+  void _openMapView() {
+    // Collect all experiences from all categories
+    final Set<Experience> allExperiences = {};
+    for (final experiences in _categoryExperiences.values) {
+      allExperiences.addAll(experiences);
+    }
+
+    if (allExperiences.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No experiences to display on the map.')),
+      );
+      return;
+    }
+
+    final String userName =
+        _profile?.displayName ?? _profile?.username ?? 'User';
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PublicProfileMapScreen(
+          userName: userName,
+          experiences: allExperiences.toList(),
+          categories: _publicCategories,
+          colorCategories: _publicColorCategories,
+        ),
+      ),
+    );
+  }
+
   Future<void> _shareProfile(UserProfile profile) async {
     if (!mounted) return;
 
@@ -1723,7 +1754,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           actions: [
             if (profile != null)
               IconButton(
-                icon: const Icon(Icons.share_outlined, color: Colors.blue),
+                icon: const Icon(Icons.share_outlined, color: AppColors.teal),
                 tooltip: 'Share Profile',
                 onPressed: () => _shareProfile(profile),
               ),
@@ -2120,7 +2151,26 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           padding: const EdgeInsets.symmetric(horizontal: 7.0, vertical: 8.0),
           child: Row(
             children: [
-              const Expanded(child: SizedBox()),
+              // Map button on the left
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.sage,
+                        visualDensity:
+                            const VisualDensity(horizontal: -2, vertical: -2),
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      ),
+                      icon: const Icon(Icons.map_outlined),
+                      label: const Text('Map'),
+                      onPressed: _openMapView,
+                    ),
+                  ),
+                ),
+              ),
               Flexible(
                 child: Builder(
                   builder: (context) {
