@@ -241,7 +241,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   bool get _canShowPublicContentToggle {
     final String? placeId = _currentExperience.location.placeId;
-    return !widget.readOnlyPreview && placeId != null && placeId.isNotEmpty;
+    // Allow showing public saves toggle in both owned and read-only experiences
+    // as long as we have a valid place ID to query public content
+    return placeId != null && placeId.isNotEmpty;
   }
 
   // REMOVED: Instagram Credentials

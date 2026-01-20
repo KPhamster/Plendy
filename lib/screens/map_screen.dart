@@ -1185,6 +1185,28 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       // Render markers immediately, respecting any saved filters
       await _generateMarkersFromExperiences(_filterExperiences(_experiences));
 
+      // Focus camera appropriately if no initial location/event was provided
+      if (widget.initialExperienceLocation == null && 
+          widget.initialEvent == null &&
+          _markers.isNotEmpty) {
+        if (_hasActiveFilters) {
+          // Filters are applied: focus on densest cluster of filtered markers
+          unawaited(() async {
+            _mapController ??= await _mapControllerCompleter.future;
+            final clusterBounds = _findDensestMarkerClusterBounds(_markers);
+            if (clusterBounds != null && _mapController != null) {
+              await _mapController!.animateCamera(
+                CameraUpdate.newLatLngBounds(clusterBounds, 80.0),
+              );
+              print("🗺️ MAP SCREEN: Initial load with filters - focused on densest cluster");
+            }
+          }());
+        } else {
+          // No filters: focus on user location with max markers
+          unawaited(_focusOnUserLocationWithMaxMarkers());
+        }
+      }
+
       // Kick off shared experiences loading in the background (no await)
       _loadSharedExperiencesInBackground(userId);
 
@@ -1461,6 +1483,94 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not center map on your location: $e')),
+        );
+      }
+    }
+  }
+
+  /// Focuses camera on user location and zooms out to show maximum markers
+  /// within the max viewable area (~50km radius from user).
+  Future<void> _focusOnUserLocationWithMaxMarkers() async {
+    if (_markers.isEmpty) return;
+
+    print("🗺️ MAP SCREEN: Focusing on user location with max markers...");
+    try {
+      _mapController ??= await _mapControllerCompleter.future;
+
+      // Get current location
+      final position = await _mapsService.getCurrentLocation();
+      final userLatLng = LatLng(position.latitude, position.longitude);
+      print("🗺️ MAP SCREEN: User location: $userLatLng");
+
+      // Maximum radius for the viewable area (roughly 25km radius = 50km diameter)
+      // 0.25 degrees latitude ≈ 27.75 km
+      const double maxViewRadius = 0.25;
+
+      // Find all markers within the max view radius from user's location
+      final positions = _markers.values.map((m) => m.position).toList();
+      
+      double clusterMinLat = userLatLng.latitude;
+      double clusterMaxLat = userLatLng.latitude;
+      double clusterMinLng = userLatLng.longitude;
+      double clusterMaxLng = userLatLng.longitude;
+      int markersInView = 0;
+
+      for (final pos in positions) {
+        final latDiff = (userLatLng.latitude - pos.latitude).abs();
+        final lngDiff = (userLatLng.longitude - pos.longitude).abs();
+
+        if (latDiff <= maxViewRadius && lngDiff <= maxViewRadius) {
+          markersInView++;
+          if (pos.latitude < clusterMinLat) clusterMinLat = pos.latitude;
+          if (pos.latitude > clusterMaxLat) clusterMaxLat = pos.latitude;
+          if (pos.longitude < clusterMinLng) clusterMinLng = pos.longitude;
+          if (pos.longitude > clusterMaxLng) clusterMaxLng = pos.longitude;
+        }
+      }
+
+      print("🗺️ MAP SCREEN: Found $markersInView markers within view radius of user");
+
+      if (markersInView > 0) {
+        // Include user location in bounds
+        if (userLatLng.latitude < clusterMinLat) clusterMinLat = userLatLng.latitude;
+        if (userLatLng.latitude > clusterMaxLat) clusterMaxLat = userLatLng.latitude;
+        if (userLatLng.longitude < clusterMinLng) clusterMinLng = userLatLng.longitude;
+        if (userLatLng.longitude > clusterMaxLng) clusterMaxLng = userLatLng.longitude;
+
+        final bounds = LatLngBounds(
+          southwest: LatLng(clusterMinLat, clusterMinLng),
+          northeast: LatLng(clusterMaxLat, clusterMaxLng),
+        );
+
+        await _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 80.0),
+        );
+        print("🗺️ MAP SCREEN: Camera fitted to $markersInView markers around user location");
+      } else {
+        // No markers near user, just center on user with default zoom
+        await _mapController!.animateCamera(
+          CameraUpdate.newLatLngZoom(userLatLng, 14.0),
+        );
+        print("🗺️ MAP SCREEN: No nearby markers, centered on user location");
+      }
+
+      // Update the initial location for the map widget
+      if (mounted) {
+        setState(() {
+          _mapWidgetInitialLocation = Location(
+            latitude: position.latitude,
+            longitude: position.longitude,
+            displayName: "My Current Location",
+          );
+        });
+      }
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Failed to focus on user location with markers: $e");
+      // Fallback to density-based approach if user location fails
+      final clusterBounds = _findDensestMarkerClusterBounds(_markers);
+      if (clusterBounds != null && _mapController != null) {
+        await _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(clusterBounds, 80.0),
         );
       }
     }
@@ -6542,28 +6652,14 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       // Regenerate markers from the filtered list
       await _generateMarkersFromExperiences(filteredExperiences);
 
-      // Animate camera based on number of markers
+      // Animate camera to focus on densest cluster within max zoom limit
       _mapController ??= await _mapControllerCompleter.future;
-      if (_mapController != null) {
-        // For few markers, fit all of them on screen
-        // For many markers, zoom to the densest cluster
-        const int densityThreshold = 20;
-        if (_markers.length <= densityThreshold) {
-          // Fit all markers on screen
-          final bounds = _calculateBoundsFromMarkers(_markers);
-          if (bounds != null) {
-            _mapController!
-                .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80.0));
-          }
-        } else {
-          // Use density-based approach for many markers
-          final densestCluster = _findDensestMarkerCluster(_markers);
-          if (densestCluster != null) {
-            _mapController!.animateCamera(
-              CameraUpdate.newLatLngZoom(
-                  densestCluster.center, densestCluster.zoom),
-            );
-          }
+      if (_mapController != null && _markers.isNotEmpty) {
+        // Find the densest cluster of markers within a reasonable viewing area
+        final clusterBounds = _findDensestMarkerClusterBounds(_markers);
+        if (clusterBounds != null) {
+          _mapController!
+              .animateCamera(CameraUpdate.newLatLngBounds(clusterBounds, 80.0));
         }
       }
     } catch (e, stackTrace) {
@@ -6586,112 +6682,80 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // --- END Apply Filters ---
 
   // --- Helper: Find the densest cluster of markers ---
-  /// Returns the center point and appropriate zoom level for the densest cluster of markers.
-  /// Uses a grid-based approach to find where markers are most concentrated.
-  ({LatLng center, double zoom})? _findDensestMarkerCluster(
-      Map<String, Marker> markers) {
+  /// Finds the optimal viewing area that shows the maximum number of markers
+  /// within a reasonable zoom level (max ~50km / 0.5 degrees viewable area).
+  /// Returns bounds that fit the densest cluster.
+  LatLngBounds? _findDensestMarkerClusterBounds(Map<String, Marker> markers) {
     if (markers.isEmpty) return null;
-    if (markers.length == 1) {
-      return (center: markers.values.first.position, zoom: 14.0);
-    }
 
     final positions = markers.values.map((m) => m.position).toList();
 
-    // Find bounds of all markers
-    double minLat = positions.first.latitude;
-    double maxLat = positions.first.latitude;
-    double minLng = positions.first.longitude;
-    double maxLng = positions.first.longitude;
-
-    for (final pos in positions) {
-      if (pos.latitude < minLat) minLat = pos.latitude;
-      if (pos.latitude > maxLat) maxLat = pos.latitude;
-      if (pos.longitude < minLng) minLng = pos.longitude;
-      if (pos.longitude > maxLng) maxLng = pos.longitude;
+    if (positions.length == 1) {
+      // Single marker - create small bounds around it
+      final pos = positions.first;
+      return LatLngBounds(
+        southwest: LatLng(pos.latitude - 0.01, pos.longitude - 0.01),
+        northeast: LatLng(pos.latitude + 0.01, pos.longitude + 0.01),
+      );
     }
 
-    // Use a grid-based density calculation
-    // Grid size: 10x10 cells
-    const int gridSize = 10;
-    final double latStep = (maxLat - minLat) / gridSize;
-    final double lngStep = (maxLng - minLng) / gridSize;
+    // Maximum radius for the viewable area (roughly 25km radius = 50km diameter)
+    // 0.25 degrees latitude ≈ 27.75 km
+    const double maxViewRadius = 0.25;
 
-    // Handle edge case where all markers are at the same location
-    if (latStep == 0 && lngStep == 0) {
-      return (center: positions.first, zoom: 14.0);
-    }
-
-    // Count markers in each cell
-    final Map<String, List<LatLng>> cellMarkers = {};
-    for (final pos in positions) {
-      final int latIdx =
-          latStep > 0 ? ((pos.latitude - minLat) / latStep).floor().clamp(0, gridSize - 1) : 0;
-      final int lngIdx =
-          lngStep > 0 ? ((pos.longitude - minLng) / lngStep).floor().clamp(0, gridSize - 1) : 0;
-      final cellKey = '$latIdx,$lngIdx';
-      cellMarkers.putIfAbsent(cellKey, () => []);
-      cellMarkers[cellKey]!.add(pos);
-    }
-
-    // Find the cell with the most markers
-    String? densestCell;
+    // For each marker, count how many others are within the max view radius
+    // This finds the center point that would show the most markers
     int maxCount = 0;
-    for (final entry in cellMarkers.entries) {
-      if (entry.value.length > maxCount) {
-        maxCount = entry.value.length;
-        densestCell = entry.key;
+    int bestCenterIndex = 0;
+
+    for (int i = 0; i < positions.length; i++) {
+      final centerPos = positions[i];
+      int count = 1; // Include self
+
+      for (int j = 0; j < positions.length; j++) {
+        if (i == j) continue;
+        final pos = positions[j];
+        final latDiff = (centerPos.latitude - pos.latitude).abs();
+        final lngDiff = (centerPos.longitude - pos.longitude).abs();
+
+        if (latDiff <= maxViewRadius && lngDiff <= maxViewRadius) {
+          count++;
+        }
+      }
+
+      if (count > maxCount) {
+        maxCount = count;
+        bestCenterIndex = i;
       }
     }
 
-    if (densestCell == null) return null;
+    // Get all markers within the max view radius of the best center
+    final bestCenter = positions[bestCenterIndex];
 
-    // Calculate the center of the densest cluster
-    final clusterPositions = cellMarkers[densestCell]!;
-    double sumLat = 0, sumLng = 0;
-    for (final pos in clusterPositions) {
-      sumLat += pos.latitude;
-      sumLng += pos.longitude;
-    }
-    final center = LatLng(
-      sumLat / clusterPositions.length,
-      sumLng / clusterPositions.length,
-    );
+    double clusterMinLat = bestCenter.latitude;
+    double clusterMaxLat = bestCenter.latitude;
+    double clusterMinLng = bestCenter.longitude;
+    double clusterMaxLng = bestCenter.longitude;
 
-    // Calculate appropriate zoom level based on cluster spread
-    double clusterMinLat = clusterPositions.first.latitude;
-    double clusterMaxLat = clusterPositions.first.latitude;
-    double clusterMinLng = clusterPositions.first.longitude;
-    double clusterMaxLng = clusterPositions.first.longitude;
+    for (final pos in positions) {
+      final latDiff = (bestCenter.latitude - pos.latitude).abs();
+      final lngDiff = (bestCenter.longitude - pos.longitude).abs();
 
-    for (final pos in clusterPositions) {
-      if (pos.latitude < clusterMinLat) clusterMinLat = pos.latitude;
-      if (pos.latitude > clusterMaxLat) clusterMaxLat = pos.latitude;
-      if (pos.longitude < clusterMinLng) clusterMinLng = pos.longitude;
-      if (pos.longitude > clusterMaxLng) clusterMaxLng = pos.longitude;
-    }
-
-    final latSpread = clusterMaxLat - clusterMinLat;
-    final lngSpread = clusterMaxLng - clusterMinLng;
-    final maxSpread = latSpread > lngSpread ? latSpread : lngSpread;
-
-    // Determine zoom level based on spread (approximate)
-    double zoom;
-    if (maxSpread < 0.005) {
-      zoom = 16.0; // Very tight cluster
-    } else if (maxSpread < 0.02) {
-      zoom = 14.0; // Neighborhood level
-    } else if (maxSpread < 0.1) {
-      zoom = 12.0; // City level
-    } else if (maxSpread < 0.5) {
-      zoom = 10.0; // Region level
-    } else {
-      zoom = 8.0; // Wide area
+      if (latDiff <= maxViewRadius && lngDiff <= maxViewRadius) {
+        if (pos.latitude < clusterMinLat) clusterMinLat = pos.latitude;
+        if (pos.latitude > clusterMaxLat) clusterMaxLat = pos.latitude;
+        if (pos.longitude < clusterMinLng) clusterMinLng = pos.longitude;
+        if (pos.longitude > clusterMaxLng) clusterMaxLng = pos.longitude;
+      }
     }
 
     print(
-        "🗺️ MAP SCREEN: Densest cluster has $maxCount markers at $center with zoom $zoom");
+        "🗺️ MAP SCREEN: Densest cluster has $maxCount markers out of ${positions.length}");
 
-    return (center: center, zoom: zoom);
+    return LatLngBounds(
+      southwest: LatLng(clusterMinLat, clusterMinLng),
+      northeast: LatLng(clusterMaxLat, clusterMaxLng),
+    );
   }
   // --- END Find Densest Cluster ---
 
