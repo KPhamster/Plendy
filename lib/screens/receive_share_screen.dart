@@ -94,7 +94,8 @@ class _ExperienceCardsSection extends StatelessWidget {
       experienceCards; // ADDED: To receive cards directly
   final GlobalKey? sectionKey; // ADDED for scrolling
   final void Function(String cardId)? onYelpButtonTapped; // ADDED
-  final void Function(ExperienceCardData card)? showSelectEventDialog; // ADDED: Show event selection dialog for a specific card
+  final void Function(ExperienceCardData card)?
+      showSelectEventDialog; // ADDED: Show event selection dialog for a specific card
 
   const _ExperienceCardsSection({
     super.key,
@@ -196,8 +197,8 @@ class _ExperienceCardsSection extends StatelessWidget {
                       },
                       formKey: card.formKey,
                       onYelpButtonTapped: onYelpButtonTapped,
-                      onEventSelect: showSelectEventDialog != null 
-                          ? () => showSelectEventDialog!(card) 
+                      onEventSelect: showSelectEventDialog != null
+                          ? () => showSelectEventDialog!(card)
                           : null,
                       selectedEventTitle: card.selectedEvent?.title,
                     );
@@ -285,6 +286,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Store pending scan results to apply when app returns to foreground
   List<ExtractedLocationData>? _pendingScanResults;
   String? _pendingScanSingleMessage; // Toast message for single result
+  // Store pending deep scan request to run after quick scan cleanup
+  ReceiveShareProvider? _pendingDeepScanProvider;
+  ExtractedEventInfo? _pendingDeepScanEventInfo;
+  // Store confirmed locations from quick scan to preserve during deep scan
+  List<ExtractedLocationData>? _pendingDeepScanConfirmedLocations;
   final ImagePicker _imagePicker = ImagePicker();
   // URL bar controller and focus node
   late final TextEditingController _sharedUrlController;
@@ -364,7 +370,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Experience?
       _quickAddSelectedExperience; // Non-null if saved experience selected
   bool _isQuickAddSavedExperience = false;
-  
+
   // Event detection state - stored for use after successful save
   ExtractedEventInfo? _detectedEventInfo;
 
@@ -441,8 +447,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.all(4.0),
-                              child: const Icon(Icons.content_paste,
-                                  size: 22, color: Color(0xFF1F2A44)),
+                            child: const Icon(Icons.content_paste,
+                                size: 22, color: Color(0xFF1F2A44)),
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -518,7 +524,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _isCategorizing ? 'Categorizing...' : 'Plendy AI analyzing...',
+                              _isCategorizing
+                                  ? 'Categorizing...'
+                                  : 'Plendy AI analyzing...',
                               style: TextStyle(
                                 color: AppColors.wineLight,
                                 fontWeight: FontWeight.w500,
@@ -588,7 +596,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _isCategorizing ? 'Categorizing...' : 'Plendy AI analyzing...',
+                              _isCategorizing
+                                  ? 'Categorizing...'
+                                  : 'Plendy AI analyzing...',
                               style: TextStyle(
                                 color: AppColors.wineLight,
                                 fontWeight: FontWeight.w500,
@@ -734,9 +744,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             buttonText,
             style: TextStyle(
               fontWeight: FontWeight.w500,
-              color: (isLoading || !hasPreview)
-                  ? Colors.grey
-                  : AppColors.teal,
+              color: (isLoading || !hasPreview) ? Colors.grey : AppColors.teal,
             ),
           ),
           style: OutlinedButton.styleFrom(
@@ -1112,31 +1120,33 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print('✅ SCAN PREVIEW: Found ${locations.length} location(s)');
       _updateScanProgress(0.88);
-      
+
       // Try to detect event information from available text content
       // Priority 1: WebView extracted caption (e.g., from Instagram/TikTok)
       // Priority 2: Location metadata's extracted text
       ExtractedEventInfo? detectedEvent;
-      
+
       if (_extractedCaption != null && _extractedCaption!.isNotEmpty) {
         print('📅 SCAN PREVIEW: Checking WebView caption for event info...');
         detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
       }
-      
+
       // Check location metadata for extracted text if no event found yet
       if (detectedEvent == null && locations.isNotEmpty) {
         for (final location in locations) {
           if (location.metadata != null) {
-            final extractedText = location.metadata!['extractedText'] as String?;
+            final extractedText =
+                location.metadata!['extractedText'] as String?;
             if (extractedText != null && extractedText.isNotEmpty) {
-              print('📅 SCAN PREVIEW: Checking location metadata for event info...');
+              print(
+                  '📅 SCAN PREVIEW: Checking location metadata for event info...');
               detectedEvent = await _detectEventFromTextAsync(extractedText);
               if (detectedEvent != null) break;
             }
           }
         }
       }
-      
+
       _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
@@ -1147,10 +1157,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Always show the location selection dialog, even for single results
       // This lets users verify the location is correct before saving
       // Pass detected event info for event designation
+      // Get scanned text from location metadata (OCR) or WebView caption
+      String? scannedTextForDialog = _extractedCaption;
+      if (scannedTextForDialog == null || scannedTextForDialog.isEmpty) {
+        for (final location in locations) {
+          if (location.metadata != null) {
+            final extractedText =
+                location.metadata!['extractedText'] as String?;
+            if (extractedText != null && extractedText.isNotEmpty) {
+              scannedTextForDialog = extractedText;
+              break;
+            }
+          }
+        }
+      }
       await _handleMultipleExtractedLocations(
-        locations, 
+        locations,
         provider,
         detectedEventInfo: detectedEvent,
+        scannedText: scannedTextForDialog,
       );
       _updateScanProgress(1.0);
     } catch (e) {
@@ -1305,14 +1330,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       _updateScanProgress(0.85);
-      
+
       // Try to detect event information from the page content
       ExtractedEventInfo? detectedEvent;
       if (pageContent.isNotEmpty) {
         print('📅 SCAN PAGE: Checking page content for event info...');
         detectedEvent = await _detectEventFromTextAsync(pageContent);
       }
-      
+
       _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
@@ -1323,9 +1348,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Always show the location selection dialog, even for single results
       // Pass detected event info for event designation
       await _handleMultipleExtractedLocations(
-        locations, 
+        locations,
         provider,
         detectedEventInfo: detectedEvent,
+        scannedText: pageContent,
       );
       _updateScanProgress(1.0);
     } catch (e) {
@@ -1455,42 +1481,49 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       _updateScanProgress(0.88);
-      
+
       // Try to detect event information from any available text content
       // Priority 1: Use the OCR extracted text from Gemini (has dates like "April 4-6, 2025")
       // Priority 2: Use the WebView extracted caption
       // Priority 3: Check location metadata
       ExtractedEventInfo? detectedEvent;
-      
+
       // Priority 1: OCR extracted text from Gemini scan (most likely to have dates)
-      if (_lastScanExtractedText != null && _lastScanExtractedText!.isNotEmpty) {
-        print('📅 COMBINED SCAN: Checking OCR extracted text for event info (${_lastScanExtractedText!.length} chars)...');
-        detectedEvent = await _detectEventFromTextAsync(_lastScanExtractedText!);
+      if (_lastScanExtractedText != null &&
+          _lastScanExtractedText!.isNotEmpty) {
+        print(
+            '📅 COMBINED SCAN: Checking OCR extracted text for event info (${_lastScanExtractedText!.length} chars)...');
+        detectedEvent =
+            await _detectEventFromTextAsync(_lastScanExtractedText!);
       }
-      
+
       // Priority 2: WebView extracted caption (might have additional context)
-      if (detectedEvent == null && _extractedCaption != null && _extractedCaption!.isNotEmpty) {
+      if (detectedEvent == null &&
+          _extractedCaption != null &&
+          _extractedCaption!.isNotEmpty) {
         print('📅 COMBINED SCAN: Checking WebView caption for event info...');
         detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
       }
-      
+
       // Priority 3: Check location metadata for event-related text
       if (detectedEvent == null && mergedLocations.isNotEmpty) {
         for (final location in mergedLocations) {
           if (location.metadata != null) {
-            final extractedText = location.metadata!['extractedText'] as String?;
+            final extractedText =
+                location.metadata!['extractedText'] as String?;
             if (extractedText != null && extractedText.isNotEmpty) {
-              print('📅 COMBINED SCAN: Checking location metadata for event info...');
+              print(
+                  '📅 COMBINED SCAN: Checking location metadata for event info...');
               detectedEvent = await _detectEventFromTextAsync(extractedText);
               if (detectedEvent != null) break;
             }
           }
         }
       }
-      
+
       // Clear the stored extracted text after use
       _lastScanExtractedText = null;
-      
+
       _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
@@ -1501,10 +1534,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Always show the location dialog, even for single locations
       // This allows users to verify the extracted location before saving
       // If event info was detected, the dialog will show a second page for event designation
+      // For combined scan, prefer the WebView caption, fall back to OCR extracted text
+      final scannedTextForDialog = _extractedCaption ?? _lastScanExtractedText;
       await _handleMultipleExtractedLocations(
-        mergedLocations, 
+        mergedLocations,
         provider,
         detectedEventInfo: detectedEvent,
+        scannedText: scannedTextForDialog,
       );
       _updateScanProgress(1.0);
     } catch (e) {
@@ -1594,11 +1630,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (result.regionContext != null) {
           print('🌍 COMBINED SCAN: Region context: "${result.regionContext}"');
         }
-        
+
         // Store extracted text for event detection
         if (result.extractedText != null && result.extractedText!.isNotEmpty) {
           _lastScanExtractedText = result.extractedText;
-          print('📝 COMBINED SCAN: Stored extracted text (${result.extractedText!.length} chars) for event detection');
+          print(
+              '📝 COMBINED SCAN: Stored extracted text (${result.extractedText!.length} chars) for event detection');
         }
 
         return result.locations;
@@ -2272,24 +2309,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print('✅ SCREENSHOT: Found ${locations.length} location(s)');
       _updateScanProgress(0.85);
-      
+
       // Try to detect event information from location metadata's extracted text
       // For uploaded screenshots, we don't have WebView caption, but OCR may have extracted text
       ExtractedEventInfo? detectedEvent;
-      
+
       if (locations.isNotEmpty) {
         for (final location in locations) {
           if (location.metadata != null) {
-            final extractedText = location.metadata!['extractedText'] as String?;
+            final extractedText =
+                location.metadata!['extractedText'] as String?;
             if (extractedText != null && extractedText.isNotEmpty) {
-              print('📅 SCREENSHOT: Checking location metadata for event info...');
+              print(
+                  '📅 SCREENSHOT: Checking location metadata for event info...');
               detectedEvent = await _detectEventFromTextAsync(extractedText);
               if (detectedEvent != null) break;
             }
           }
         }
       }
-      
+
       _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
@@ -2297,12 +2336,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       final provider = context.read<ReceiveShareProvider>();
 
+      // For uploaded screenshots, get extracted text from location metadata (OCR result)
+      String? screenshotExtractedText;
+      for (final location in locations) {
+        if (location.metadata != null) {
+          final extractedText = location.metadata!['extractedText'] as String?;
+          if (extractedText != null && extractedText.isNotEmpty) {
+            screenshotExtractedText = extractedText;
+            break;
+          }
+        }
+      }
+
       // Always show the location selection dialog, even for single results
       // Pass detected event info for event designation
       await _handleMultipleExtractedLocations(
-        locations, 
+        locations,
         provider,
         detectedEventInfo: detectedEvent,
+        scannedText: screenshotExtractedText,
       );
       _updateScanProgress(1.0);
     } catch (e) {
@@ -2370,22 +2422,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // ============================================================================
   // These variables store extracted content from Instagram/Facebook posts
   // when shared to Plendy. Use these values in other methods as needed.
-  
+
   /// The full caption text extracted from Instagram/Facebook post
   String? _extractedCaption;
-  
+
   /// List of hashtags found in the caption (without # prefix)
   List<String> _extractedHashtags = [];
-  
+
   /// List of mentions found in the caption (without @ prefix)
   List<String> _extractedMentions = [];
-  
+
   /// The source URL that the content was extracted from
   String? _extractedFromUrl;
-  
+
   /// The platform the content was extracted from ('Instagram' or 'Facebook')
   String? _extractedFromPlatform;
-  
+
   /// Full extracted text from Gemini OCR/image analysis (includes dates, event info, etc.)
   /// This is populated during screenshot scans and contains the raw text from images.
   String? _lastScanExtractedText;
@@ -3145,7 +3197,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(locations, provider);
+      // For URL-based extraction, use the extracted caption if available
+      await _handleMultipleExtractedLocations(
+        locations,
+        provider,
+        scannedText: _extractedCaption,
+      );
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
@@ -3171,13 +3228,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Load Ticketmaster event details and auto-fill experience card
-  Future<void> _loadTicketmasterEventDetails(String url, ExperienceCardData? card) async {
+  Future<void> _loadTicketmasterEventDetails(
+      String url, ExperienceCardData? card) async {
     // Prevent duplicate loading
     if (_ticketmasterUrlsLoading.contains(url)) {
       print('🎫 TICKETMASTER: Already loading $url, skipping');
       return;
     }
-    
+
     // Mark as loading (both preview and location field)
     if (mounted) {
       setState(() {
@@ -3191,7 +3249,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     try {
       print('🎫 TICKETMASTER: Loading event details from URL: $url');
-      
+
       // Extract event ID first to verify URL format
       final eventId = TicketmasterService.extractEventIdFromUrl(url);
       if (eventId == null) {
@@ -3208,22 +3266,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
         return;
       }
-      
+
       print('🎫 TICKETMASTER: Extracted event ID: $eventId');
-      
+
       // Step 1: Try direct event ID lookup
-      TicketmasterEventDetails? details = await _ticketmasterService.getEventFromUrl(url);
-      
+      TicketmasterEventDetails? details =
+          await _ticketmasterService.getEventFromUrl(url);
+
       if (!mounted) return;
-      
+
       // Step 2: If direct lookup failed, try searching by event name + date + city
       if (details == null) {
-        print('🎫 TICKETMASTER: Direct ID lookup failed, trying search fallback...');
+        print(
+            '🎫 TICKETMASTER: Direct ID lookup failed, trying search fallback...');
         details = await _searchTicketmasterEventFromUrl(url);
       }
-      
-      print('🎫 TICKETMASTER: Final result: details=${details != null ? "found" : "null"}');
-      
+
+      print(
+          '🎫 TICKETMASTER: Final result: details=${details != null ? "found" : "null"}');
+
       setState(() {
         _ticketmasterEventDetails[url] = details;
         _ticketmasterUrlsLoading.remove(url);
@@ -3234,7 +3295,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print('🎫 TICKETMASTER: Event found: ${details.name}');
         await _autoFillExperienceCardFromTicketmaster(details, url, card);
       } else {
-        print('🎫 TICKETMASTER: No event details from API or search, using URL fallback');
+        print(
+            '🎫 TICKETMASTER: No event details from API or search, using URL fallback');
         // Fallback: Extract info from URL and still populate card
         await _autoFillExperienceCardFromTicketmasterUrl(url, card);
       }
@@ -3255,7 +3317,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   /// Search Ticketmaster API for an event using info extracted from URL
   /// This is a fallback when direct event ID lookup fails
-  Future<TicketmasterEventDetails?> _searchTicketmasterEventFromUrl(String url) async {
+  Future<TicketmasterEventDetails?> _searchTicketmasterEventFromUrl(
+      String url) async {
     try {
       // Extract event info from URL
       final urlInfo = _extractTicketmasterUrlInfo(url);
@@ -3263,22 +3326,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print('🎫 TICKETMASTER SEARCH: Could not extract info from URL');
         return null;
       }
-      
+
       final eventName = urlInfo['eventName'] as String?;
       final city = urlInfo['city'] as String?;
       final state = urlInfo['state'] as String?;
       final date = urlInfo['date'] as DateTime?;
-      
+
       if (eventName == null || eventName.isEmpty) {
         print('🎫 TICKETMASTER SEARCH: No event name extracted');
         return null;
       }
-      
-      print('🎫 TICKETMASTER SEARCH: Searching for "$eventName" in $city, $state on $date');
-      
+
+      print(
+          '🎫 TICKETMASTER SEARCH: Searching for "$eventName" in $city, $state on $date');
+
       // Get state code for API (e.g., "California" -> "CA", "Illinois" -> "IL")
       final stateCode = _getStateCode(state);
-      
+
       // Search for the event
       final searchResults = await _ticketmasterService.searchEvents(
         keyword: eventName,
@@ -3288,9 +3352,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         endDateTime: date?.add(const Duration(days: 1)),
         size: 5,
       );
-      
+
       if (searchResults.isEmpty) {
-        print('🎫 TICKETMASTER SEARCH: No results with date filter, trying without date');
+        print(
+            '🎫 TICKETMASTER SEARCH: No results with date filter, trying without date');
         // Try again without date filter
         final fallbackResults = await _ticketmasterService.searchEvents(
           keyword: eventName,
@@ -3298,20 +3363,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           stateCode: stateCode,
           size: 5,
         );
-        
+
         if (fallbackResults.isEmpty) {
           print('🎫 TICKETMASTER SEARCH: No results found');
           return null;
         }
-        
+
         // Use the first result
         final bestMatch = fallbackResults.first;
-        print('🎫 TICKETMASTER SEARCH: Found match (no date filter): ${bestMatch.name} at ${bestMatch.venueName}');
-        
+        print(
+            '🎫 TICKETMASTER SEARCH: Found match (no date filter): ${bestMatch.name} at ${bestMatch.venueName}');
+
         // Get full details using the event ID from search
         return await _ticketmasterService.getEventById(bestMatch.id);
       }
-      
+
       // Find best match by date proximity if we have a date
       TicketmasterEventResult bestMatch = searchResults.first;
       if (date != null) {
@@ -3326,16 +3392,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         }
       }
-      
-      print('🎫 TICKETMASTER SEARCH: Found match: ${bestMatch.name} at ${bestMatch.venueName}');
-      
+
+      print(
+          '🎫 TICKETMASTER SEARCH: Found match: ${bestMatch.name} at ${bestMatch.venueName}');
+
       // Get full details using the event ID from search
       final fullDetails = await _ticketmasterService.getEventById(bestMatch.id);
-      
+
       if (fullDetails != null) {
-        print('🎫 TICKETMASTER SEARCH: Got full details with venue: ${fullDetails.venue?.name}');
+        print(
+            '🎫 TICKETMASTER SEARCH: Got full details with venue: ${fullDetails.venue?.name}');
       }
-      
+
       return fullDetails;
     } catch (e) {
       print('🎫 TICKETMASTER SEARCH: Error: $e');
@@ -3349,37 +3417,43 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       final uri = Uri.parse(url);
       final pathSegments = uri.pathSegments;
-      
+
       // Find the segment before "event"
       for (int i = 0; i < pathSegments.length; i++) {
         if (pathSegments[i] == 'event' && i > 0) {
           final slug = pathSegments[i - 1];
           final parts = slug.split('-');
-          
+
           String? eventName;
           String? city;
           String? state;
           DateTime? date;
-          
+
           // Try to extract date from the end (MM-DD-YYYY format)
           if (parts.length >= 3) {
             try {
               final yearStr = parts[parts.length - 1];
               final dayStr = parts[parts.length - 2];
               final monthStr = parts[parts.length - 3];
-              
+
               final year = int.tryParse(yearStr);
               final day = int.tryParse(dayStr);
               final month = int.tryParse(monthStr);
-              
-              if (year != null && year > 2000 && year < 2100 &&
-                  month != null && month >= 1 && month <= 12 &&
-                  day != null && day >= 1 && day <= 31) {
+
+              if (year != null &&
+                  year > 2000 &&
+                  year < 2100 &&
+                  month != null &&
+                  month >= 1 &&
+                  month <= 12 &&
+                  day != null &&
+                  day >= 1 &&
+                  day <= 31) {
                 date = DateTime(year, month, day);
-                
+
                 // Remove date parts from the list
                 final partsWithoutDate = parts.sublist(0, parts.length - 3);
-                
+
                 // Extract state (usually the last word before date)
                 if (partsWithoutDate.isNotEmpty) {
                   final possibleState = partsWithoutDate.last.toLowerCase();
@@ -3388,13 +3462,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     partsWithoutDate.removeLast();
                   }
                 }
-                
+
                 // Extract city (usually the word before state)
                 if (partsWithoutDate.isNotEmpty) {
                   city = _capitalizeWord(partsWithoutDate.last);
                   partsWithoutDate.removeLast();
                 }
-                
+
                 // The rest is the event name
                 if (partsWithoutDate.isNotEmpty) {
                   eventName = partsWithoutDate
@@ -3406,7 +3480,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               // Date parsing failed
             }
           }
-          
+
           // Fallback: just use the whole slug as event name
           if (eventName == null) {
             eventName = parts
@@ -3414,7 +3488,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 .join(' ')
                 .replaceAll(RegExp(r'\s+\d{2}\s+\d{2}\s+\d{4}$'), '');
           }
-          
+
           return {
             'eventName': eventName,
             'city': city,
@@ -3433,23 +3507,61 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// Convert full state name to state code
   String? _getStateCode(String? stateName) {
     if (stateName == null) return null;
-    
+
     const stateCodeMap = {
-      'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
-      'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
-      'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
-      'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
-      'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
-      'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
-      'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
-      'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
-      'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
-      'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
-      'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
-      'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
-      'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+      'alabama': 'AL',
+      'alaska': 'AK',
+      'arizona': 'AZ',
+      'arkansas': 'AR',
+      'california': 'CA',
+      'colorado': 'CO',
+      'connecticut': 'CT',
+      'delaware': 'DE',
+      'florida': 'FL',
+      'georgia': 'GA',
+      'hawaii': 'HI',
+      'idaho': 'ID',
+      'illinois': 'IL',
+      'indiana': 'IN',
+      'iowa': 'IA',
+      'kansas': 'KS',
+      'kentucky': 'KY',
+      'louisiana': 'LA',
+      'maine': 'ME',
+      'maryland': 'MD',
+      'massachusetts': 'MA',
+      'michigan': 'MI',
+      'minnesota': 'MN',
+      'mississippi': 'MS',
+      'missouri': 'MO',
+      'montana': 'MT',
+      'nebraska': 'NE',
+      'nevada': 'NV',
+      'new hampshire': 'NH',
+      'new jersey': 'NJ',
+      'new mexico': 'NM',
+      'new york': 'NY',
+      'north carolina': 'NC',
+      'north dakota': 'ND',
+      'ohio': 'OH',
+      'oklahoma': 'OK',
+      'oregon': 'OR',
+      'pennsylvania': 'PA',
+      'rhode island': 'RI',
+      'south carolina': 'SC',
+      'south dakota': 'SD',
+      'tennessee': 'TN',
+      'texas': 'TX',
+      'utah': 'UT',
+      'vermont': 'VT',
+      'virginia': 'VA',
+      'washington': 'WA',
+      'west virginia': 'WV',
+      'wisconsin': 'WI',
+      'wyoming': 'WY',
+      'district of columbia': 'DC',
     };
-    
+
     return stateCodeMap[stateName.toLowerCase()];
   }
 
@@ -3461,14 +3573,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   ) async {
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
-    
+
     // Find the target card to update
     ExperienceCardData? targetCard = card;
     if (targetCard == null && experienceCards.isNotEmpty) {
       // Use the first card if no specific card provided
       targetCard = experienceCards.first;
     }
-    
+
     if (targetCard == null) {
       print('🎫 TICKETMASTER: No experience card to update');
       return;
@@ -3498,43 +3610,48 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final venue = details.venue!;
       Location? location;
       String? placeId;
-      
+
       // Build search query for Google Places to get the actual place with placeId
       // We always search Google Places even if Ticketmaster provides coordinates,
       // because we need the placeId for duplicate detection and photo retrieval
       String? searchQuery;
       if (venue.name != null && venue.name!.isNotEmpty) {
-        searchQuery = venue.fullAddress != null 
+        searchQuery = venue.fullAddress != null
             ? '${venue.name}, ${venue.fullAddress}'
-            : venue.city != null 
+            : venue.city != null
                 ? '${venue.name}, ${venue.city}'
                 : venue.name;
       } else if (venue.fullAddress != null && venue.fullAddress!.isNotEmpty) {
         searchQuery = venue.fullAddress;
       } else if (venue.city != null) {
-        searchQuery = venue.state != null 
-            ? '${venue.city}, ${venue.state}'
-            : venue.city;
+        searchQuery =
+            venue.state != null ? '${venue.city}, ${venue.state}' : venue.city;
       }
-      
+
       if (searchQuery != null) {
         print('🎫 TICKETMASTER: Searching Google Places for: $searchQuery');
         try {
-          final results = await _mapsService.searchPlacesTextSearch(searchQuery);
+          final results =
+              await _mapsService.searchPlacesTextSearch(searchQuery);
           if (results.isNotEmpty) {
             final firstResult = results.first;
             placeId = firstResult['placeId'] as String?;
-            
+
             // If we got a placeId, fetch full place details for better data
             if (placeId != null && placeId.isNotEmpty) {
-              print('🎫 TICKETMASTER: Found place ID: $placeId, fetching details...');
+              print(
+                  '🎫 TICKETMASTER: Found place ID: $placeId, fetching details...');
               try {
-                final placeDetails = await _mapsService.getPlaceDetails(placeId);
+                final placeDetails =
+                    await _mapsService.getPlaceDetails(placeId);
                 location = placeDetails;
-                print('🎫 TICKETMASTER: Got full place details: ${placeDetails.displayName}');
-                print('🎫 TICKETMASTER: Photo resource: ${placeDetails.photoResourceName}');
+                print(
+                    '🎫 TICKETMASTER: Got full place details: ${placeDetails.displayName}');
+                print(
+                    '🎫 TICKETMASTER: Photo resource: ${placeDetails.photoResourceName}');
               } catch (e) {
-                print('🎫 TICKETMASTER: Error fetching place details, using search result: $e');
+                print(
+                    '🎫 TICKETMASTER: Error fetching place details, using search result: $e');
                 // Fallback to search result data
                 final lat = firstResult['latitude'] as double?;
                 final lng = firstResult['longitude'] as double?;
@@ -3542,7 +3659,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   location = Location(
                     placeId: placeId,
                     displayName: venue.name ?? searchQuery,
-                    address: venue.fullAddress ?? firstResult['address'] as String? ?? searchQuery,
+                    address: venue.fullAddress ??
+                        firstResult['address'] as String? ??
+                        searchQuery,
                     city: venue.city,
                     state: venue.state,
                     country: venue.country,
@@ -3559,7 +3678,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               if (lat != null && lng != null) {
                 location = Location(
                   displayName: venue.name ?? searchQuery,
-                  address: venue.fullAddress ?? firstResult['address'] as String? ?? searchQuery,
+                  address: venue.fullAddress ??
+                      firstResult['address'] as String? ??
+                      searchQuery,
                   city: venue.city,
                   state: venue.state,
                   country: venue.country,
@@ -3567,7 +3688,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   latitude: lat,
                   longitude: lng,
                 );
-                print('🎫 TICKETMASTER: Created location from search (no placeId): ${venue.name ?? searchQuery}');
+                print(
+                    '🎫 TICKETMASTER: Created location from search (no placeId): ${venue.name ?? searchQuery}');
               }
             }
           }
@@ -3575,11 +3697,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print('🎫 TICKETMASTER: Error searching Google Places: $e');
         }
       }
-      
+
       // Fallback: If Google Places search failed but Ticketmaster has coordinates,
       // use those as a last resort (won't have placeId or photos)
-      if (location == null && venue.latitude != null && venue.longitude != null) {
-        print('🎫 TICKETMASTER: Falling back to Ticketmaster coordinates (no Google Place found)');
+      if (location == null &&
+          venue.latitude != null &&
+          venue.longitude != null) {
+        print(
+            '🎫 TICKETMASTER: Falling back to Ticketmaster coordinates (no Google Place found)');
         location = Location(
           displayName: venue.name ?? details.name,
           address: venue.fullAddress ?? '',
@@ -3591,12 +3716,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           longitude: venue.longitude!,
         );
       }
-      
+
       // Check for duplicate if we have a location
       if (location != null && mounted) {
         final venueName = venue.name ?? location.displayName;
         final locationPlaceId = location.placeId ?? placeId;
-        
+
         // Check by placeId first (use location.placeId which has the Google Place ID)
         if (locationPlaceId != null && locationPlaceId.isNotEmpty) {
           final existingByPlaceId = await _checkForDuplicateExperienceDialog(
@@ -3604,10 +3729,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             card: targetCard,
             placeIdToCheck: locationPlaceId,
           );
-          
+
           if (existingByPlaceId != null) {
-            provider.updateCardWithExistingExperience(targetCard.id, existingByPlaceId);
-            print('🎫 TICKETMASTER: Using existing experience by placeId: ${existingByPlaceId.name}');
+            provider.updateCardWithExistingExperience(
+                targetCard.id, existingByPlaceId);
+            print(
+                '🎫 TICKETMASTER: Using existing experience by placeId: ${existingByPlaceId.name}');
             // Clear location loading state and set event info for calendar
             targetCard.isSelectingLocation = false;
             if (mounted) setState(() {});
@@ -3615,7 +3742,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             return;
           }
         }
-        
+
         // Check by venue name
         if (venueName != null && venueName.isNotEmpty) {
           final existingByName = await _checkForDuplicateExperienceDialog(
@@ -3623,10 +3750,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             card: targetCard,
             titleToCheck: venueName,
           );
-          
+
           if (existingByName != null) {
-            provider.updateCardWithExistingExperience(targetCard.id, existingByName);
-            print('🎫 TICKETMASTER: Using existing experience by name: ${existingByName.name}');
+            provider.updateCardWithExistingExperience(
+                targetCard.id, existingByName);
+            print(
+                '🎫 TICKETMASTER: Using existing experience by name: ${existingByName.name}');
             // Clear location loading state and set event info for calendar
             targetCard.isSelectingLocation = false;
             if (mounted) setState(() {});
@@ -3634,19 +3763,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             return;
           }
         }
-        
+
         // No duplicate found - set the location
         targetCard.selectedLocation = location;
         targetCard.locationController.text = venueName ?? '';
-        
+
         // Also set the title to the venue name
         if (targetCard.titleController.text.isEmpty && venueName != null) {
           targetCard.titleController.text = venueName;
           print('🎫 TICKETMASTER: Set title to venue: $venueName');
         }
-        
-        print('🎫 TICKETMASTER: Set location with placeId: ${locationPlaceId ?? "none"}');
-        print('🎫 TICKETMASTER: Location: ${venueName ?? location.displayName}');
+
+        print(
+            '🎫 TICKETMASTER: Set location with placeId: ${locationPlaceId ?? "none"}');
+        print(
+            '🎫 TICKETMASTER: Location: ${venueName ?? location.displayName}');
       }
     }
 
@@ -3666,7 +3797,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Show a toast notification
     Fluttertoast.showToast(
-      msg: details.startDateTime != null 
+      msg: details.startDateTime != null
           ? '🎫 Event loaded! Date info will be saved.'
           : 'Event details loaded from Ticketmaster',
       toastLength: Toast.LENGTH_SHORT,
@@ -3678,8 +3809,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   void _setTicketmasterEventInfo(TicketmasterEventDetails details, String url) {
     if (details.startDateTime != null) {
       // Determine end time (use endDateTime if available, otherwise default to 2 hours after start)
-      final endTime = details.endDateTime ?? details.startDateTime!.add(const Duration(hours: 2));
-      
+      final endTime = details.endDateTime ??
+          details.startDateTime!.add(const Duration(hours: 2));
+
       _detectedEventInfo = ExtractedEventInfo(
         eventName: details.name,
         startDateTime: details.startDateTime!,
@@ -3687,10 +3819,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         confidence: 0.95, // High confidence since it's from Ticketmaster API
         ticketmasterUrl: details.url ?? url,
         ticketmasterId: details.id,
-        ticketmasterImageUrl: details.imageUrl, // Include image URL for event cover
+        ticketmasterImageUrl:
+            details.imageUrl, // Include image URL for event cover
       );
-      
-      print('📅 TICKETMASTER EVENT: Detected event "${details.name}" at ${details.startDateTime}');
+
+      print(
+          '📅 TICKETMASTER EVENT: Detected event "${details.name}" at ${details.startDateTime}');
       print('📅 TICKETMASTER EVENT: Image URL: ${details.imageUrl}');
       print('📅 TICKETMASTER EVENT: Event info stored for post-save flow');
     }
@@ -3704,13 +3838,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   ) async {
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
-    
+
     // Find the target card to update
     ExperienceCardData? targetCard = card;
     if (targetCard == null && experienceCards.isNotEmpty) {
       targetCard = experienceCards.first;
     }
-    
+
     if (targetCard == null) {
       print('🎫 TICKETMASTER FALLBACK: No experience card to update');
       return;
@@ -3725,38 +3859,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? city;
     String? state;
     DateTime? eventDate;
-    
+
     try {
       final uri = Uri.parse(url);
       final pathSegments = uri.pathSegments;
-      
+
       // Find the segment before "event"
       for (int i = 0; i < pathSegments.length; i++) {
         if (pathSegments[i] == 'event' && i > 0) {
           // The previous segment is the event slug
           final slug = pathSegments[i - 1];
           final parts = slug.split('-');
-          
+
           // Try to extract date from the end (MM-DD-YYYY format)
           if (parts.length >= 3) {
             try {
               final yearStr = parts[parts.length - 1];
               final dayStr = parts[parts.length - 2];
               final monthStr = parts[parts.length - 3];
-              
+
               final year = int.tryParse(yearStr);
               final day = int.tryParse(dayStr);
               final month = int.tryParse(monthStr);
-              
-              if (year != null && year > 2000 && year < 2100 &&
-                  month != null && month >= 1 && month <= 12 &&
-                  day != null && day >= 1 && day <= 31) {
+
+              if (year != null &&
+                  year > 2000 &&
+                  year < 2100 &&
+                  month != null &&
+                  month >= 1 &&
+                  month <= 12 &&
+                  day != null &&
+                  day >= 1 &&
+                  day <= 31) {
                 eventDate = DateTime(year, month, day);
                 print('🎫 TICKETMASTER FALLBACK: Extracted date: $eventDate');
-                
+
                 // Remove date parts from the list
                 final partsWithoutDate = parts.sublist(0, parts.length - 3);
-                
+
                 // Try to extract state (usually the last word before date)
                 // Common US state names: california, texas, new-york, florida, etc.
                 if (partsWithoutDate.isNotEmpty) {
@@ -3767,14 +3907,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     print('🎫 TICKETMASTER FALLBACK: Extracted state: $state');
                   }
                 }
-                
+
                 // Try to extract city (usually the word before state)
                 if (partsWithoutDate.isNotEmpty) {
                   city = _capitalizeWord(partsWithoutDate.last);
                   partsWithoutDate.removeLast();
                   print('🎫 TICKETMASTER FALLBACK: Extracted city: $city');
                 }
-                
+
                 // The rest is the event name
                 if (partsWithoutDate.isNotEmpty) {
                   eventName = partsWithoutDate
@@ -3786,16 +3926,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print('🎫 TICKETMASTER FALLBACK: Error parsing date: $e');
             }
           }
-          
+
           // Fallback: just convert the whole slug to a readable name
           if (eventName == null) {
-            eventName = parts
-                .map((word) => _capitalizeWord(word))
-                .join(' ');
+            eventName = parts.map((word) => _capitalizeWord(word)).join(' ');
             // Try to clean up: remove date patterns at the end (like "02 22 2026")
-            eventName = eventName.replaceAll(RegExp(r'\s+\d{2}\s+\d{2}\s+\d{4}$'), '');
+            eventName =
+                eventName.replaceAll(RegExp(r'\s+\d{2}\s+\d{2}\s+\d{4}$'), '');
           }
-          
+
           print('🎫 TICKETMASTER FALLBACK: Extracted event name: $eventName');
           break;
         }
@@ -3821,8 +3960,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         eventDate.day,
         19, 0, // 7:00 PM
       );
-      final endTime = startTime.add(const Duration(hours: 3)); // Default 3 hour duration
-      
+      final endTime =
+          startTime.add(const Duration(hours: 3)); // Default 3 hour duration
+
       _detectedEventInfo = ExtractedEventInfo(
         eventName: eventName,
         startDateTime: startTime,
@@ -3830,14 +3970,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         confidence: 0.7, // Lower confidence since extracted from URL, not API
         ticketmasterUrl: url,
       );
-      
-      print('📅 TICKETMASTER FALLBACK EVENT: Detected event "$eventName" on $eventDate');
-      print('📅 TICKETMASTER FALLBACK EVENT: Event info stored for post-save flow');
+
+      print(
+          '📅 TICKETMASTER FALLBACK EVENT: Detected event "$eventName" on $eventDate');
+      print(
+          '📅 TICKETMASTER FALLBACK EVENT: Event info stored for post-save flow');
     }
 
     // Geocode and update location if we have city/state
-    if (targetCard != null && targetCard.selectedLocation == null && city != null) {
-      await _geocodeAndSetTicketmasterLocation(targetCard, city, state, eventName: eventName);
+    if (targetCard != null &&
+        targetCard.selectedLocation == null &&
+        city != null) {
+      await _geocodeAndSetTicketmasterLocation(targetCard, city, state,
+          eventName: eventName);
     }
 
     // Clear location loading state and trigger UI update
@@ -3853,9 +3998,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Show a toast notification
     Fluttertoast.showToast(
-      msg: eventDate != null 
+      msg: eventDate != null
           ? '🎫 Event loaded! Date info will be saved.'
-          : city != null 
+          : city != null
               ? '🎫 Ticketmaster event loaded!'
               : 'Ticketmaster link saved (event details unavailable)',
       toastLength: Toast.LENGTH_SHORT,
@@ -3873,16 +4018,55 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _isLikelyUSState(String word) {
     // Common US state names that appear in Ticketmaster URLs
     const usStates = {
-      'alabama', 'alaska', 'arizona', 'arkansas', 'california',
-      'colorado', 'connecticut', 'delaware', 'florida', 'georgia',
-      'hawaii', 'idaho', 'illinois', 'indiana', 'iowa',
-      'kansas', 'kentucky', 'louisiana', 'maine', 'maryland',
-      'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri',
-      'montana', 'nebraska', 'nevada', 'hampshire', 'jersey',
-      'mexico', 'york', 'carolina', 'dakota', 'ohio',
-      'oklahoma', 'oregon', 'pennsylvania', 'island', 'tennessee',
-      'texas', 'utah', 'vermont', 'virginia', 'washington',
-      'wisconsin', 'wyoming', 'dc', 'columbia',
+      'alabama',
+      'alaska',
+      'arizona',
+      'arkansas',
+      'california',
+      'colorado',
+      'connecticut',
+      'delaware',
+      'florida',
+      'georgia',
+      'hawaii',
+      'idaho',
+      'illinois',
+      'indiana',
+      'iowa',
+      'kansas',
+      'kentucky',
+      'louisiana',
+      'maine',
+      'maryland',
+      'massachusetts',
+      'michigan',
+      'minnesota',
+      'mississippi',
+      'missouri',
+      'montana',
+      'nebraska',
+      'nevada',
+      'hampshire',
+      'jersey',
+      'mexico',
+      'york',
+      'carolina',
+      'dakota',
+      'ohio',
+      'oklahoma',
+      'oregon',
+      'pennsylvania',
+      'island',
+      'tennessee',
+      'texas',
+      'utah',
+      'vermont',
+      'virginia',
+      'washington',
+      'wisconsin',
+      'wyoming',
+      'dc',
+      'columbia',
     };
     return usStates.contains(word.toLowerCase());
   }
@@ -3891,45 +4075,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// First tries to find the specific venue by searching event name + city,
   /// then falls back to just city/state if no venue found
   Future<void> _geocodeAndSetTicketmasterLocation(
-    ExperienceCardData targetCard,
-    String city,
-    String? state,
-    {String? eventName}
-  ) async {
+      ExperienceCardData targetCard, String city, String? state,
+      {String? eventName}) async {
     try {
       // Step 1: Try to find the specific venue by searching "event name city"
       // This often returns the venue (e.g., "Lady Gaga Inglewood" -> Kia Forum)
       if (eventName != null && eventName.isNotEmpty) {
         final venueSearchQuery = '$eventName $city';
-        print('🎫 TICKETMASTER FALLBACK: Searching for venue: $venueSearchQuery');
-        
-        final venueResults = await _mapsService.searchPlacesTextSearch(venueSearchQuery);
-        
+        print(
+            '🎫 TICKETMASTER FALLBACK: Searching for venue: $venueSearchQuery');
+
+        final venueResults =
+            await _mapsService.searchPlacesTextSearch(venueSearchQuery);
+
         if (venueResults.isNotEmpty) {
           final firstResult = venueResults.first;
           final types = firstResult['types'] as List<String>?;
           final name = firstResult['name'] as String?;
-          
+
           // Check if this is a specific venue/establishment, not just the city
-          final isVenue = types != null && 
-              !types.contains('locality') && 
+          final isVenue = types != null &&
+              !types.contains('locality') &&
               !types.contains('administrative_area_level_1') &&
               !types.contains('administrative_area_level_2') &&
-              (types.contains('establishment') || 
-               types.contains('point_of_interest') ||
-               types.contains('stadium') ||
-               types.contains('concert_hall') ||
-               types.contains('performing_arts_theater') ||
-               types.contains('night_club') ||
-               types.contains('bar') ||
-               types.contains('restaurant'));
-          
+              (types.contains('establishment') ||
+                  types.contains('point_of_interest') ||
+                  types.contains('stadium') ||
+                  types.contains('concert_hall') ||
+                  types.contains('performing_arts_theater') ||
+                  types.contains('night_club') ||
+                  types.contains('bar') ||
+                  types.contains('restaurant'));
+
           if (isVenue && name != null) {
             final lat = firstResult['latitude'] as double?;
             final lng = firstResult['longitude'] as double?;
             final address = firstResult['address'] as String?;
             final placeId = firstResult['placeId'] as String?;
-            
+
             if (lat != null && lng != null) {
               // Check for duplicates before setting
               final usedExisting = await _checkAndSetTicketmasterVenue(
@@ -3943,42 +4126,50 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 placeId: placeId,
               );
               if (usedExisting != null) {
-                print('🎫 TICKETMASTER FALLBACK: Using existing experience: ${usedExisting.name}');
+                print(
+                    '🎫 TICKETMASTER FALLBACK: Using existing experience: ${usedExisting.name}');
               } else {
-                print('🎫 TICKETMASTER FALLBACK: Found venue "$name" at $lat, $lng');
+                print(
+                    '🎫 TICKETMASTER FALLBACK: Found venue "$name" at $lat, $lng');
               }
               return;
             }
           } else {
-            print('🎫 TICKETMASTER FALLBACK: Search result is not a venue (types: $types), trying city search');
+            print(
+                '🎫 TICKETMASTER FALLBACK: Search result is not a venue (types: $types), trying city search');
           }
         }
       }
-      
+
       // Step 2: Try searching for "concert venue city" or "arena city"
-      final venueTypeSearches = ['concert venue $city', 'arena $city', 'stadium $city'];
+      final venueTypeSearches = [
+        'concert venue $city',
+        'arena $city',
+        'stadium $city'
+      ];
       for (final searchQuery in venueTypeSearches) {
-        print('🎫 TICKETMASTER FALLBACK: Trying venue type search: $searchQuery');
+        print(
+            '🎫 TICKETMASTER FALLBACK: Trying venue type search: $searchQuery');
         final results = await _mapsService.searchPlacesTextSearch(searchQuery);
-        
+
         if (results.isNotEmpty) {
           final firstResult = results.first;
           final types = firstResult['types'] as List<String>?;
           final name = firstResult['name'] as String?;
-          
+
           // Check if this is a specific venue
-          final isVenue = types != null && 
-              !types.contains('locality') && 
-              (types.contains('establishment') || 
-               types.contains('point_of_interest') ||
-               types.contains('stadium'));
-          
+          final isVenue = types != null &&
+              !types.contains('locality') &&
+              (types.contains('establishment') ||
+                  types.contains('point_of_interest') ||
+                  types.contains('stadium'));
+
           if (isVenue && name != null) {
             final lat = firstResult['latitude'] as double?;
             final lng = firstResult['longitude'] as double?;
             final address = firstResult['address'] as String?;
             final placeId = firstResult['placeId'] as String?;
-            
+
             if (lat != null && lng != null) {
               // Check for duplicates before setting
               final usedExisting = await _checkAndSetTicketmasterVenue(
@@ -3992,44 +4183,50 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 placeId: placeId,
               );
               if (usedExisting != null) {
-                print('🎫 TICKETMASTER FALLBACK: Using existing experience: ${usedExisting.name}');
+                print(
+                    '🎫 TICKETMASTER FALLBACK: Using existing experience: ${usedExisting.name}');
               } else {
-                print('🎫 TICKETMASTER FALLBACK: Found venue "$name" via type search at $lat, $lng');
+                print(
+                    '🎫 TICKETMASTER FALLBACK: Found venue "$name" via type search at $lat, $lng');
               }
               return;
             }
           }
         }
       }
-      
+
       // Step 3: Fall back to just city/state (don't set title - no specific venue found)
       final citySearchQuery = state != null ? '$city, $state' : city;
-      print('🎫 TICKETMASTER FALLBACK: No venue found, falling back to city: $citySearchQuery');
-      
-      final results = await _mapsService.searchPlacesTextSearch(citySearchQuery);
-      
+      print(
+          '🎫 TICKETMASTER FALLBACK: No venue found, falling back to city: $citySearchQuery');
+
+      final results =
+          await _mapsService.searchPlacesTextSearch(citySearchQuery);
+
       if (results.isNotEmpty) {
         final firstResult = results.first;
         final placeId = firstResult['placeId'] as String?;
-        
+
         Location? location;
-        
+
         // Try to get full place details if we have a placeId
         if (placeId != null && placeId.isNotEmpty) {
           try {
-            print('🎫 TICKETMASTER FALLBACK: Fetching place details for city: $placeId');
+            print(
+                '🎫 TICKETMASTER FALLBACK: Fetching place details for city: $placeId');
             location = await _mapsService.getPlaceDetails(placeId);
           } catch (e) {
-            print('🎫 TICKETMASTER FALLBACK: Error fetching city place details: $e');
+            print(
+                '🎫 TICKETMASTER FALLBACK: Error fetching city place details: $e');
           }
         }
-        
+
         // Fallback to search result data
         if (location == null) {
           final lat = firstResult['latitude'] as double?;
           final lng = firstResult['longitude'] as double?;
           final address = firstResult['address'] as String?;
-          
+
           if (lat != null && lng != null) {
             location = Location(
               placeId: placeId,
@@ -4042,18 +4239,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             );
           }
         }
-        
+
         if (location != null) {
           targetCard.selectedLocation = location;
-          targetCard.locationController.text = location.displayName ?? citySearchQuery;
-          
-          print('🎫 TICKETMASTER FALLBACK: Set location to city ${location.displayName ?? citySearchQuery}');
-          print('🎫 TICKETMASTER FALLBACK: PlaceId: ${location.placeId ?? "none"}');
+          targetCard.locationController.text =
+              location.displayName ?? citySearchQuery;
+
+          print(
+              '🎫 TICKETMASTER FALLBACK: Set location to city ${location.displayName ?? citySearchQuery}');
+          print(
+              '🎫 TICKETMASTER FALLBACK: PlaceId: ${location.placeId ?? "none"}');
         } else {
           print('🎫 TICKETMASTER FALLBACK: No coordinates in geocode result');
         }
       } else {
-        print('🎫 TICKETMASTER FALLBACK: No geocode results for $citySearchQuery');
+        print(
+            '🎫 TICKETMASTER FALLBACK: No geocode results for $citySearchQuery');
       }
     } catch (e) {
       print('🎫 TICKETMASTER FALLBACK: Error geocoding location: $e');
@@ -4073,7 +4274,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? placeId,
   }) async {
     final provider = context.read<ReceiveShareProvider>();
-    
+
     // Check for duplicate by placeId
     if (placeId != null && placeId.isNotEmpty && mounted) {
       final existingByPlaceId = await _checkForDuplicateExperienceDialog(
@@ -4081,13 +4282,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         card: targetCard,
         placeIdToCheck: placeId,
       );
-      
+
       if (existingByPlaceId != null) {
-        provider.updateCardWithExistingExperience(targetCard.id, existingByPlaceId);
+        provider.updateCardWithExistingExperience(
+            targetCard.id, existingByPlaceId);
         return existingByPlaceId;
       }
     }
-    
+
     // Check for duplicate by venue name
     if (mounted) {
       final existingByName = await _checkForDuplicateExperienceDialog(
@@ -4095,27 +4297,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         card: targetCard,
         titleToCheck: name,
       );
-      
+
       if (existingByName != null) {
-        provider.updateCardWithExistingExperience(targetCard.id, existingByName);
+        provider.updateCardWithExistingExperience(
+            targetCard.id, existingByName);
         return existingByName;
       }
     }
-    
+
     // No duplicate found - fetch full place details if we have a placeId
     Location? location;
-    
+
     if (placeId != null && placeId.isNotEmpty) {
       try {
-        print('🎫 TICKETMASTER FALLBACK: Fetching full place details for $placeId');
+        print(
+            '🎫 TICKETMASTER FALLBACK: Fetching full place details for $placeId');
         location = await _mapsService.getPlaceDetails(placeId);
-        print('🎫 TICKETMASTER FALLBACK: Got place details: ${location.displayName}');
-        print('🎫 TICKETMASTER FALLBACK: Photo resource: ${location.photoResourceName}');
+        print(
+            '🎫 TICKETMASTER FALLBACK: Got place details: ${location.displayName}');
+        print(
+            '🎫 TICKETMASTER FALLBACK: Photo resource: ${location.photoResourceName}');
       } catch (e) {
         print('🎫 TICKETMASTER FALLBACK: Error fetching place details: $e');
       }
     }
-    
+
     // Fallback to basic location if place details fetch failed
     location ??= Location(
       placeId: placeId,
@@ -4126,16 +4332,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       latitude: lat,
       longitude: lng,
     );
-    
+
     targetCard.selectedLocation = location;
     targetCard.locationController.text = location.displayName ?? name;
-    
+
     // Also set the title to the venue name
     if (targetCard.titleController.text.isEmpty) {
       targetCard.titleController.text = location.displayName ?? name;
-      print('🎫 TICKETMASTER FALLBACK: Set title to venue: ${location.displayName ?? name}');
+      print(
+          '🎫 TICKETMASTER FALLBACK: Set title to venue: ${location.displayName ?? name}');
     }
-    
+
     return null;
   }
 
@@ -4198,14 +4405,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       _updateScanProgress(0.25);
 
-      // Extract locations from the TikTok caption
+      // Extract locations from the TikTok caption using quick extraction
+      // Deep scan option available in the results dialog if needed
       final locations = await _locationExtractor.extractLocationsFromCaption(
         data.title ?? '',
         platform: 'TikTok',
-        authorName: data.authorName,
-        sourceUrl: url,
         userLocation: userLocation,
-        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -4242,8 +4447,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(locations, provider);
+      final deepScanRequested = await _handleMultipleExtractedLocations(
+        locations,
+        provider,
+        scannedText: _extractedCaption,
+      );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = null;
+      }
     } catch (e) {
       print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
       if (mounted) {
@@ -4264,6 +4479,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
     }
   }
 
@@ -4351,13 +4575,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           '📘 FACEBOOK AUTO-EXTRACT: Content preview: ${pageContent.substring(0, pageContent.length > 200 ? 200 : pageContent.length)}...');
       _updateScanProgress(0.45);
 
-      // Use LinkLocationExtractionService (same as TikTok) for proper grounding with Places API
+      // Extract locations using quick extraction
+      // Deep scan option available in the results dialog if needed
       final locations = await _locationExtractor.extractLocationsFromCaption(
         pageContent,
         platform: 'Facebook',
-        sourceUrl: url,
         userLocation: userLocation,
-        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -4394,8 +4617,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(locations, provider);
+      final deepScanRequested = await _handleMultipleExtractedLocations(
+        locations,
+        provider,
+        scannedText: pageContent,
+      );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = null;
+      }
     } catch (e) {
       print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
       if (mounted) {
@@ -4417,15 +4650,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         });
       }
     }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
+    }
   }
 
   // ============================================================================
   // INSTAGRAM/FACEBOOK OEMBED CONTENT EXTRACTION & AUTO LOCATION EXTRACTION
   // ============================================================================
-  
+
   /// Extract caption, hashtags, and mentions from an Instagram URL using Meta oEmbed API
   /// AND automatically extract locations from the caption (like TikTok auto-extract)
-  /// 
+  ///
   /// This method fetches the post content and parses it into usable components.
   /// The extracted data is stored in:
   /// - [_extractedCaption]: Full caption text
@@ -4433,7 +4675,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// - [_extractedMentions]: List of mentions (without @)
   /// - [_extractedFromUrl]: Source URL
   /// - [_extractedFromPlatform]: 'Instagram' or 'Facebook'
-  /// 
+  ///
   /// After extraction, automatically triggers location extraction using AI.
   /// Goes directly to WebView extraction (skips oEmbed API since it rarely works for Reels).
   Future<void> _extractInstagramContent(String url) async {
@@ -4444,51 +4686,63 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     print('📸 INSTAGRAM: Scheduling WebView content extraction for $url');
-    
+
     // Mark as processed to prevent duplicate extractions
     _instagramUrlsProcessed.add(url);
-    
+
     // Go directly to WebView extraction (oEmbed rarely works for Reels)
     _scheduleInstagramWebViewExtraction(url);
   }
-  
+
   /// Extract content from Instagram WebView after it loads
-  /// 
+  ///
   /// Waits for the WebView to fully render before extracting visible text.
   /// This is more reliable than oEmbed API, especially for Reels.
   void _scheduleInstagramWebViewExtraction(String url) {
     print('📸 INSTAGRAM: Waiting 5 seconds for WebView to load...');
-    
+
     // Wait for WebView to fully load before attempting extraction
     Future.delayed(const Duration(seconds: 5), () async {
       if (!mounted) return;
-      
+
       // Skip if we already got caption from somewhere else
       if (_extractedCaption != null && _extractedFromUrl == url) {
         print('📸 INSTAGRAM: Caption already extracted, skipping');
         return;
       }
-      
+
       // Skip if location extraction is already in progress
       if (_isExtractingLocation || _isProcessingScreenshot) {
         print('📸 INSTAGRAM: Extraction already in progress, skipping');
         return;
       }
-      
+
       print('📸 INSTAGRAM: Extracting content from WebView...');
-      
+
       // Try to get content from the Instagram preview WebView
       final previewKey = _instagramPreviewKeys[url];
       if (previewKey?.currentState != null) {
         try {
           final content = await previewKey!.currentState!.extractPageContent();
-          
+
           if (content != null && content.isNotEmpty && content.length > 20) {
-            print('✅ INSTAGRAM: Got content from WebView (${content.length} chars)');
-            
+            print(
+                '✅ INSTAGRAM: Got content from WebView (${content.length} chars)');
+
             // Clean up the content - remove boilerplate using dedicated Instagram cleaner
             String caption = _cleanInstagramCaption(content);
-            
+
+            // DEBUG: Log raw vs cleaned content for comparison
+            print('📸 INSTAGRAM DEBUG: Raw content (${content.length} chars):');
+            print('--- RAW START ---');
+            print(content);
+            print('--- RAW END ---');
+            print(
+                '📸 INSTAGRAM DEBUG: Cleaned caption (${caption.length} chars):');
+            print('--- CLEANED START ---');
+            print(caption);
+            print('--- CLEANED END ---');
+
             if (caption.length > 10) {
               // Store the extracted content
               _storeExtractedContent(
@@ -4496,11 +4750,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 sourceUrl: url,
                 platform: 'Instagram',
               );
-              
+
               print('📸 INSTAGRAM: Cleaned caption: ${caption.length} chars');
               print('📸 INSTAGRAM: Hashtags: $_extractedHashtags');
               print('📸 INSTAGRAM: Mentions: $_extractedMentions');
-              
+
               // Use text extraction with Maps grounding (no city context bias)
               // This is the same approach as Preview Scan's text path, but without OCR
               print('📸 INSTAGRAM: Using Maps-grounded text extraction...');
@@ -4523,75 +4777,79 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     });
   }
-  
+
   /// Show a hint toast when automatic Instagram extraction fails
   void _showInstagramScanHint() {
     if (!mounted) return;
     Fluttertoast.showToast(
-      msg: '💡 Tip: Use "Scan Preview" button to extract location from visible content.',
+      msg:
+          '💡 Tip: Use "Scan Preview" button to extract location from visible content.',
       toastLength: Toast.LENGTH_LONG,
       backgroundColor: Colors.blue[700],
     );
   }
-  
+
   /// Clean Instagram caption by removing UI boilerplate and formatting nicely
-  /// 
+  ///
   /// Instagram WebView content often includes lots of UI text like:
   /// - "username and otheraccount Original audio View profile" (Reels)
   /// - "username and otheraccount Location Name Verified N," (Photo posts with location)
   /// - "Verified NNN posts · NNNK followers View more on Instagram"
   /// - "Like Comment Share Save NNN"
   /// - "View all NNN comments Add a comment... Instagram"
-  /// 
+  ///
   /// The MOST RELIABLE pattern is that the username appears TWICE consecutively
   /// right before the actual caption text: "{username} {username} {caption}"
-  /// 
+  ///
   /// This extracts just the username and actual caption content.
   String _cleanInstagramCaption(String rawContent) {
     String content = rawContent;
-    
+
     // Extract username from the beginning (first word is usually the poster's username)
     // Handle case where content might already have a dash (from previous processing)
     final firstWord = content.split(RegExp(r'[\s\-]+')).first;
     final username = firstWord.replaceAll(RegExp(r'[^a-zA-Z0-9._]'), '');
-    
+
     if (username.isEmpty) {
       return content;
     }
-    
-    // MOST RELIABLE: Find the LAST occurrence of "{username} {username}" 
+
+    // MOST RELIABLE: Find the LAST occurrence of "{username} {username}"
     // This pattern appears right before the actual caption in almost all Instagram posts
     final doubleUsernamePattern = RegExp(
       RegExp.escape(username) + r'\s+' + RegExp.escape(username) + r'\s+',
       caseSensitive: false,
     );
-    
+
     // Find ALL matches and use the LAST one (closest to the actual caption)
     final allMatches = doubleUsernamePattern.allMatches(content).toList();
     if (allMatches.isNotEmpty) {
       final lastMatch = allMatches.last;
       String captionText = content.substring(lastMatch.end).trim();
       captionText = _removeInstagramTrailingUI(captionText);
-      
+
       // Remove any duplicate username at the start of caption if still present
       while (captionText.startsWith(username)) {
         captionText = captionText.substring(username.length).trim();
       }
-      
+
       if (captionText.isNotEmpty) {
         return '$username - $captionText';
       }
     }
-    
+
     // FALLBACK: Try other patterns if double-username wasn't found
     final captionStartPatterns = [
       // Match: "Save NNN, username caption" (engagement count before username)
-      RegExp(r'Save\s+[\d,]+\s+likes?\s*' + RegExp.escape(username) + r'\s+', caseSensitive: false),
-      RegExp(r'Save\s+[\d,]+\s*' + RegExp.escape(username) + r'\s+', caseSensitive: false),
+      RegExp(r'Save\s+[\d,]+\s+likes?\s*' + RegExp.escape(username) + r'\s+',
+          caseSensitive: false),
+      RegExp(r'Save\s+[\d,]+\s*' + RegExp.escape(username) + r'\s+',
+          caseSensitive: false),
       // Match: "Location Name Verified N, username caption" (Photo posts with tagged location)
-      RegExp(r'Verified\s+[\d,]+\s*' + RegExp.escape(username) + r'\s+', caseSensitive: false),
+      RegExp(r'Verified\s+[\d,]+\s*' + RegExp.escape(username) + r'\s+',
+          caseSensitive: false),
     ];
-    
+
     String? captionText;
     for (final pattern in captionStartPatterns) {
       final match = pattern.firstMatch(content);
@@ -4600,46 +4858,69 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         break;
       }
     }
-    
+
     // Clean up trailing Instagram UI elements from the caption
     if (captionText != null && captionText.isNotEmpty) {
       captionText = _removeInstagramTrailingUI(captionText);
-      
+
       // Remove duplicate username at the start of caption if present
       while (captionText != null && captionText.startsWith(username)) {
         captionText = captionText.substring(username.length).trim();
       }
-      
+
       if (captionText != null && captionText.isNotEmpty) {
         return '$username - $captionText';
       }
     }
-    
+
     // Fallback: Remove known UI patterns and return cleaned content
     content = content
         // Remove audio info for Reels (Original audio format)
-        .replaceAll(RegExp(r'\s+and\s+\w+\s+Original audio', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'\s+and\s+\w+\s+Original audio', caseSensitive: false), '')
         .replaceAll(RegExp(r'Original audio', caseSensitive: false), '')
         // Remove music info for Reels (Artist · Song Title Watch on Instagram)
-        .replaceAll(RegExp(r"Verified\s+[\w\s]+·[^W]+Watch on Instagram", caseSensitive: false), '')
-        .replaceAll(RegExp(r"[\w\s]+·[^W]+Watch on Instagram", caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r"Verified\s+[\w\s]+·[^W]+Watch on Instagram",
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r"[\w\s]+·[^W]+Watch on Instagram", caseSensitive: false),
+            '')
         .replaceAll(RegExp(r'Watch on Instagram', caseSensitive: false), '')
         // Remove tagged accounts and locations before caption
-        .replaceAll(RegExp(r'\s+and\s+\w+\s+[\w\s]+Verified\s+\d+,?', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'\s+and\s+\w+\s+[\w\s]+Verified\s+\d+,?',
+                caseSensitive: false),
+            '')
         // Remove profile view patterns
         .replaceAll(RegExp(r'View profile\s+\w+', caseSensitive: false), '')
         .replaceAll(RegExp(r'View profile', caseSensitive: false), '')
         // Remove verified badge and stats
-        .replaceAll(RegExp(r'Verified\s+\d+\s+posts\s+·\s+[\d.]+[KMB]?\s+followers', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\d+\s+posts\s+·\s+[\d.]+[KMB]?\s+followers', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'Verified\s+\d+\s+posts\s+·\s+[\d.]+[KMB]?\s+followers',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r'\d+\s+posts\s+·\s+[\d.]+[KMB]?\s+followers',
+                caseSensitive: false),
+            '')
         // Remove "View more on Instagram"
         .replaceAll(RegExp(r'View more on Instagram', caseSensitive: false), '')
         // Remove action buttons
-        .replaceAll(RegExp(r'Like\s+Comment\s+Share\s+Save\s*\d*,?', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'Like\s+Comment\s+Share\s+Save\s*\d*,?',
+                caseSensitive: false),
+            '')
         // Remove "View this post/reel on Instagram"
-        .replaceAll(RegExp(r'View this (post|reel) on Instagram', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'View this (post|reel) on Instagram', caseSensitive: false),
+            '')
         // Remove "A post/reel shared by..." footer
-        .replaceAll(RegExp(r'A (post|reel) shared by.*$', caseSensitive: false, dotAll: true), '')
+        .replaceAll(
+            RegExp(r'A (post|reel) shared by.*$',
+                caseSensitive: false, dotAll: true),
+            '')
         // Remove engagement metrics
         .replaceAll(RegExp(r'liked by.*and.*others', caseSensitive: false), '')
         .replaceAll(RegExp(r'\d+\s+likes', caseSensitive: false), '')
@@ -4649,10 +4930,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Clean up whitespace
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    
+
     // Remove trailing UI elements
     content = _removeInstagramTrailingUI(content);
-    
+
     // If we have a clean content that starts with username, format it nicely
     if (content.startsWith(username) && content.length > username.length + 5) {
       final afterUsername = content.substring(username.length).trim();
@@ -4660,29 +4941,35 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return '$username - $afterUsername';
       }
     }
-    
+
     return content;
   }
-  
+
   /// Remove trailing Instagram UI elements like comments section
   String _removeInstagramTrailingUI(String text) {
     return text
         // Remove "View all NNN comments Add a comment... Instagram"
-        .replaceAll(RegExp(r'\s*View all \d+ comments.*$', caseSensitive: false, dotAll: true), '')
+        .replaceAll(
+            RegExp(r'\s*View all \d+ comments.*$',
+                caseSensitive: false, dotAll: true),
+            '')
         // Remove "Add a comment... Instagram" without view all
-        .replaceAll(RegExp(r'\s*Add a comment\.{0,3}\s*Instagram\s*$', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'\s*Add a comment\.{0,3}\s*Instagram\s*$',
+                caseSensitive: false),
+            '')
         // Remove trailing "Instagram" label
         .replaceAll(RegExp(r'\s+Instagram\s*$', caseSensitive: false), '')
         .trim();
   }
-  
+
   /// Extract caption, hashtags, and mentions from a Facebook URL using Meta oEmbed API
   /// AND automatically extract locations from the caption (like TikTok auto-extract)
-  /// 
+  ///
   /// This method fetches the post content and parses it into usable components.
   Future<void> _extractFacebookContent(String url) async {
     // Skip if already processed this URL for content extraction
-    // Note: _facebookUrlsProcessed is used for WebView-based extraction, 
+    // Note: _facebookUrlsProcessed is used for WebView-based extraction,
     // this uses oEmbed API which is faster and more reliable
     if (_extractedFromUrl == url && _extractedFromPlatform == 'Facebook') {
       print('📘 FACEBOOK OEMBED: Already extracted content from $url');
@@ -4690,38 +4977,40 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     print('📘 FACEBOOK OEMBED: Extracting content from $url');
-    
+
     try {
       final oembedService = FacebookOEmbedService();
-      
+
       if (!oembedService.isConfigured) {
-        print('⚠️ FACEBOOK OEMBED: Service not configured (missing Facebook App credentials)');
+        print(
+            '⚠️ FACEBOOK OEMBED: Service not configured (missing Facebook App credentials)');
         return;
       }
-      
+
       // Fetch oEmbed data
       final oembedData = await oembedService.getOEmbedData(url);
-      
+
       if (oembedData != null && oembedData['html'] != null) {
         // Extract text from the HTML response
         final html = oembedData['html'] as String;
         final caption = oembedService.extractTextFromHtml(html);
-        
+
         if (caption != null && caption.isNotEmpty) {
           print('✅ FACEBOOK OEMBED: Got caption (${caption.length} chars)');
-          
+
           // Parse and store the extracted content
           _storeExtractedContent(
             caption: caption,
             sourceUrl: url,
             platform: 'Facebook',
           );
-          
-          print('📘 FACEBOOK OEMBED: Extracted ${_extractedHashtags.length} hashtags, ${_extractedMentions.length} mentions');
-          
+
+          print(
+              '📘 FACEBOOK OEMBED: Extracted ${_extractedHashtags.length} hashtags, ${_extractedMentions.length} mentions');
+
           // Mark as processed to prevent duplicate WebView-based extraction
           _facebookUrlsProcessed.add(url);
-          
+
           // Automatically extract locations from the caption (like TikTok)
           await _autoExtractLocationsFromCaption(
             caption: caption,
@@ -4738,9 +5027,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('❌ FACEBOOK OEMBED ERROR: $e');
     }
   }
-  
+
   /// Auto-extract locations from caption text using AI (same flow as TikTok)
-  /// 
+  ///
   /// This method:
   /// 1. Shows scan progress UI
   /// 2. Uses LinkLocationExtractionService to extract locations via AI + Places API
@@ -4756,7 +5045,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('📍 $platform AUTO-EXTRACT: Caption too short to analyze');
       return;
     }
-    
+
     // Skip if already extracting
     if (_isExtractingLocation || _isProcessingScreenshot) {
       print('📍 $platform AUTO-EXTRACT: Extraction already in progress');
@@ -4768,8 +5057,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
-    print('📍 $platform AUTO-EXTRACT: Starting automatic location extraction from oEmbed caption...');
-    print('📍 Caption preview: ${caption.substring(0, caption.length > 100 ? 100 : caption.length)}...');
+    print(
+        '📍 $platform AUTO-EXTRACT: Starting automatic location extraction from oEmbed caption...');
+    print(
+        '📍 Caption preview: ${caption.substring(0, caption.length > 100 ? 100 : caption.length)}...');
 
     setState(() {
       _isExtractingLocation = true;
@@ -4797,13 +5088,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       _updateScanProgress(0.25);
 
-      // Extract locations from the caption using AI + Places API grounding
+      // Extract locations using quick extraction
+      // Deep scan option available in the results dialog if needed
       final locations = await _locationExtractor.extractLocationsFromCaption(
         caption,
         platform: platform,
-        sourceUrl: sourceUrl,
         userLocation: userLocation,
-        maxLocations: null, // No limit
       );
       _updateScanProgress(0.8);
 
@@ -4833,7 +5123,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print('✅ $platform AUTO-EXTRACT: Found ${locations.length} location(s)');
       _updateScanProgress(0.85);
-      
+
       // Try to detect event information from the caption
       final detectedEvent = await _detectEventFromTextAsync(caption);
       _updateScanProgress(0.95);
@@ -4845,12 +5135,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Always show the location selection dialog, even for single results
       // If event info was detected, the dialog will show a second page for event designation
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
+        scannedText: caption,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = detectedEvent;
+      }
     } catch (e) {
       print('❌ $platform AUTO-EXTRACT ERROR: $e');
       if (mounted) {
@@ -4872,15 +5169,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         });
       }
     }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
+    }
   }
-  
+
   /// Auto-extract locations using Gemini with Maps grounding (no city context bias)
-  /// 
+  ///
   /// This method uses the same approach as Preview Scan's text extraction path:
   /// - Extracts page text from WebView
   /// - Sends to Gemini with Google Maps grounding enabled
   /// - Returns locations with verified placeIds and coordinates
-  /// 
+  ///
   /// Unlike [_autoExtractLocationsFromCaption], this does NOT detect city context
   /// from the caption and apply it to all searches, which avoids incorrect results
   /// when locations are not in the detected city.
@@ -4908,8 +5214,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
-    print('📍 MAPS GROUNDING: Starting location extraction with Maps grounding...');
-    print('📍 MAPS GROUNDING: Using pre-extracted caption (${_extractedCaption!.length} chars)');
+    print(
+        '📍 MAPS GROUNDING: Starting location extraction with Maps grounding...');
+    print(
+        '📍 MAPS GROUNDING: Using pre-extracted caption (${_extractedCaption!.length} chars)');
 
     setState(() {
       _isExtractingLocation = true;
@@ -4935,187 +5243,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.25);
+      _updateScanProgress(0.2);
 
-      // Send the already-extracted caption directly to Gemini with Maps grounding
-      // This avoids the city context bias that extractLocationsFromCaption has
-      final geminiService = GeminiService();
-      final result = await geminiService.extractLocationsFromWebPage(
+      // ========== USE QUICK EXTRACTION ==========
+      // Fast extraction using Gemini's Maps grounding directly
+      // Deep scan option available in the results dialog if needed
+      print('📍 AUTO SCAN: Using quick extraction...');
+
+      final locations = await _locationExtractor.extractLocationsFromCaption(
         _extractedCaption!,
-        pageUrl: sourceUrl,
+        platform: 'social media',
         userLocation: userLocation,
       );
-      _updateScanProgress(0.5);
-
-      // Extract geographic hints from the full caption for disambiguation
-      // This helps pick the right location when same-name places exist in multiple countries
-      // e.g., "Jurassic World: The Experience" exists in London, Bangkok, Madrid
-      final geographicHints = _locationExtractor.extractGeographicHints(_extractedCaption!);
-      if (geographicHints.isNotEmpty) {
-        print('🌍 MAPS GROUNDING: Extracted geographic hints: $geographicHints');
-      }
-
-      // Convert Gemini results and verify via Places API if needed
-      List<ExtractedLocationData> locations = [];
-      if (result != null && result.locations.isNotEmpty) {
-        print('✅ MAPS GROUNDING: Gemini found ${result.locations.length} location(s)');
-        
-        // Process each location - verify via Places API if no grounding
-        final totalLocations = result.locations.length;
-        for (int i = 0; i < totalLocations; i++) {
-          final loc = result.locations[i];
-          final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
-          final hasGrounding = loc.placeId.isNotEmpty;
-          
-          // Update progress as we verify each location
-          _updateScanProgress(0.5 + (0.3 * (i + 1) / totalLocations));
-          
-          if (hasGrounding && hasValidCoords) {
-            // Location already has grounding - use directly
-            print('✅ MAPS GROUNDING: "${loc.name}" already verified via grounding');
-            locations.add(ExtractedLocationData(
-              name: loc.name,
-              address: loc.formattedAddress,
-              placeId: loc.placeId,
-              coordinates: loc.coordinates,
-              type: ExtractedLocationData.inferPlaceType(loc.types),
-              source: ExtractionSource.geminiGrounding,
-              confidence: 0.9,
-              googleMapsUri: loc.uri,
-              placeTypes: loc.types,
-              originalQuery: loc.name, // Store original name from caption
-            ));
-          } else {
-            // No grounding - verify via Places API (WITHOUT city context bias)
-            // BUT pass geographic hints from the full caption for disambiguation
-            print('🔍 MAPS GROUNDING: Verifying "${loc.name}" via Places API...');
-            
-            // Build search string with address/city context from Gemini's extraction
-            // This helps disambiguate same-name locations (e.g., Mokkoji in San Diego vs Orange County)
-            String searchStringWithContext = loc.name;
-            if (loc.formattedAddress != null && loc.formattedAddress!.isNotEmpty) {
-              // Use full address if available (e.g., "Mokkoji, 8981 Mira Mesa Blvd, San Diego")
-              searchStringWithContext = '${loc.name}, ${loc.formattedAddress}';
-              print('🔍 MAPS GROUNDING: Using address context: "$searchStringWithContext"');
-            } else if (loc.city != null && loc.city!.isNotEmpty) {
-              // Fall back to city if no full address
-              searchStringWithContext = '${loc.name}, ${loc.city}';
-              print('🔍 MAPS GROUNDING: Using city context: "$searchStringWithContext"');
-            }
-            
-            // Use _locationExtractor to resolve - pass geographic hints for disambiguation
-            // This helps pick Bangkok over London when caption mentions Thailand
-            final verifiedLocations = await _locationExtractor.extractLocationsFromCaption(
-              searchStringWithContext, // Include address/city context for better disambiguation
-              platform: 'Instagram',
-              maxLocations: 1,
-              geographicHints: geographicHints, // Pass hints for country/city disambiguation
-            );
-            
-            if (verifiedLocations.isNotEmpty) {
-              final verified = verifiedLocations.first;
-              print('✅ MAPS GROUNDING: Verified "${loc.name}" → "${verified.name}" (placeId: ${verified.placeId != null})');
-              
-              // Use verified data but keep original query
-              locations.add(ExtractedLocationData(
-                name: verified.name,
-                address: verified.address ?? loc.formattedAddress,
-                placeId: verified.placeId,
-                coordinates: verified.coordinates ?? loc.coordinates,
-                type: verified.type,
-                source: verified.placeId != null 
-                    ? ExtractionSource.placesSearch 
-                    : ExtractionSource.geminiGrounding,
-                confidence: verified.placeId != null ? 0.85 : 0.5,
-                googleMapsUri: verified.googleMapsUri ?? loc.uri,
-                placeTypes: verified.placeTypes ?? loc.types,
-                originalQuery: loc.name, // Store original name from caption
-                website: verified.website, // Pass through website from Places API
-              ));
-            } else {
-              // Could not verify location via Places API - skip it entirely
-              // We never return results without actual coordinates (e.g., generic regions like "Vancouver", "Banff", "Utah")
-              print('⏭️ MAPS GROUNDING: Skipping "${loc.name}" - could not resolve to a place with coordinates');
-            }
-          }
-        }
-      }
-
-      // ========== FALLBACK: TRY INSTAGRAM HANDLE LOOKUP ==========
-      // If Maps grounding found nothing and this is Instagram content,
-      // try to look up the poster's username as a business handle.
-      // Instagram captions are formatted as "username - caption text"
-      if (locations.isEmpty && 
-          _extractedFromPlatform == 'Instagram' && 
-          _extractedCaption != null) {
-        print('📸 MAPS GROUNDING: No locations from text, trying Instagram handle lookup...');
-        
-        // Extract username from caption (format: "username - caption text")
-        final dashIndex = _extractedCaption!.indexOf(' - ');
-        if (dashIndex > 0) {
-          final username = _extractedCaption!.substring(0, dashIndex).trim();
-          
-          // Only try if it looks like a valid username (alphanumeric, dots, underscores)
-          if (username.isNotEmpty && 
-              RegExp(r'^[a-zA-Z0-9._]+$').hasMatch(username) &&
-              username.length >= 3 &&
-              username.length <= 30) {
-            print('📸 MAPS GROUNDING: Extracted username: @$username');
-            _updateScanProgress(0.6);
-            
-            try {
-              // Use Gemini to look up what business this Instagram handle belongs to
-              final businessName = await geminiService.lookupInstagramHandle(
-                username,
-                city: null, // Let it search globally
-              );
-              
-              if (businessName != null && businessName.isNotEmpty) {
-                print('✅ MAPS GROUNDING: Instagram handle @$username → "$businessName"');
-                _updateScanProgress(0.7);
-                
-                // Search for this business via Places API
-                final verifiedLocations = await _locationExtractor.extractLocationsFromCaption(
-                  businessName,
-                  platform: 'Instagram',
-                  maxLocations: 1,
-                );
-                
-                if (verifiedLocations.isNotEmpty) {
-                  final verified = verifiedLocations.first;
-                  print('✅ MAPS GROUNDING: Found business via handle: "${verified.name}" at ${verified.address}');
-                  
-                  locations.add(ExtractedLocationData(
-                    name: verified.name,
-                    address: verified.address,
-                    placeId: verified.placeId,
-                    coordinates: verified.coordinates,
-                    type: verified.type,
-                    source: ExtractionSource.placesSearch,
-                    confidence: 0.85,
-                    googleMapsUri: verified.googleMapsUri,
-                    placeTypes: verified.placeTypes,
-                    originalQuery: '@$username', // Store the handle as original query
-                    website: verified.website,
-                  ));
-                } else {
-                  print('⚠️ MAPS GROUNDING: Could not find "$businessName" in Places API');
-                }
-              } else {
-                print('⚠️ MAPS GROUNDING: Could not identify business for @$username');
-              }
-            } catch (e) {
-              print('⚠️ MAPS GROUNDING: Handle lookup error: $e');
-            }
-          }
-        }
-      }
       _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
-          print('📍 MAPS GROUNDING: App backgrounded, storing ${locations.length} result(s) for later');
+          print(
+              '📍 AUTO SCAN: App backgrounded, storing ${locations.length} result(s) for later');
           _pendingScanResults = locations;
           if (locations.length == 1) {
             _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
@@ -5125,18 +5271,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       if (locations.isEmpty) {
-        print('⚠️ MAPS GROUNDING: No locations found');
-        Fluttertoast.showToast(
-          msg: '💡 No location found. Try the "Scan Preview" button to analyze visible text.',
-          toastLength: Toast.LENGTH_LONG,
-          backgroundColor: Colors.orange[700],
-        );
-        return;
+        print(
+            '⚠️ AUTO SCAN: No locations found - showing dialog with Deep Scan option');
+      } else {
+        print(
+            '✅ AUTO SCAN: Found ${locations.length} location(s) via quick extraction');
       }
-
-      print('✅ MAPS GROUNDING: Found ${locations.length} location(s)');
       _updateScanProgress(0.85);
-      
+
       // Try to detect event information from the extracted caption
       ExtractedEventInfo? detectedEvent;
       if (_extractedCaption != null && _extractedCaption!.isNotEmpty) {
@@ -5150,12 +5292,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
+        scannedText: _extractedCaption,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        // Store provider and event info for use after finally block
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = detectedEvent;
+      }
     } catch (e) {
       print('❌ MAPS GROUNDING ERROR: $e');
       if (mounted) {
@@ -5177,8 +5327,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         });
       }
     }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
+    }
   }
-  
+
   /// Store extracted content and parse hashtags/mentions from caption
   void _storeExtractedContent({
     required String caption,
@@ -5193,9 +5352,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _extractedMentions = _parseMentions(caption);
     });
   }
-  
+
   /// Parse hashtags from text (returns list without # prefix)
-  /// 
+  ///
   /// Example: "#pizza #nyc #foodie" → ["pizza", "nyc", "foodie"]
   List<String> _parseHashtags(String text) {
     final hashtagRegex = RegExp(r'#(\w+)', unicode: true);
@@ -5205,9 +5364,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         .where((tag) => tag.isNotEmpty)
         .toList();
   }
-  
+
   /// Parse mentions from text (returns list without @ prefix)
-  /// 
+  ///
   /// Example: "@foodblogger @chef_joe" → ["foodblogger", "chef_joe"]
   List<String> _parseMentions(String text) {
     final mentionRegex = RegExp(r'@([\w.]+)', unicode: true);
@@ -5217,7 +5376,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         .where((mention) => mention.isNotEmpty)
         .toList();
   }
-  
+
   /// Clear extracted social media content
   /// Call this when processing new shared content
   void _clearExtractedSocialContent() {
@@ -5229,7 +5388,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _extractedFromPlatform = null;
     });
   }
-  
+
   /// Get the extracted content as a structured map
   /// Useful for passing to other methods or services
   Map<String, dynamic> getExtractedSocialContent() {
@@ -5242,11 +5401,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       'hasContent': _extractedCaption != null && _extractedCaption!.isNotEmpty,
     };
   }
-  
+
   /// Check if we have extracted social content available
-  bool get hasExtractedSocialContent => 
+  bool get hasExtractedSocialContent =>
       _extractedCaption != null && _extractedCaption!.isNotEmpty;
-  
+
   /// Auto-extract content when Instagram/Facebook URL is detected
   /// Called from _processSharedContent when social media URLs are found
   Future<void> _autoExtractSocialMediaContent(String url) async {
@@ -5405,35 +5564,64 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// Handle multiple extracted locations - show dialog with checklist to user
   /// If [detectedEventInfo] is provided, the dialog will show a second page
   /// for the user to select which locations should be designated as events.
-  Future<void> _handleMultipleExtractedLocations(
+  /// If [isDeepScan] is true, the deep scan option will not be shown in the dialog.
+  /// If [scannedText] is provided, it will be shown in an expandable section.
+  /// Returns true if the user requested a deep scan (caller should handle running it).
+  Future<bool> _handleMultipleExtractedLocations(
     List<ExtractedLocationData> locations,
     ReceiveShareProvider provider, {
     ExtractedEventInfo? detectedEventInfo,
+    bool isDeepScan = false,
+    String? scannedText,
   }) async {
-    // Check for duplicates before showing dialog
-    final duplicates = await _checkLocationsForDuplicates(locations);
+    // Sort locations by order of appearance in the scanned text
+    // This ensures the dialog shows locations in the same order as the original content
+    final sortedLocations = _sortLocationsByTextAppearance(locations, scannedText);
 
-    if (!mounted) return;
+    // Check for duplicates before showing dialog (using sorted list)
+    final duplicates = await _checkLocationsForDuplicates(sortedLocations);
+
+    if (!mounted) return false;
 
     // Show dialog with selectable checklist (including duplicate info)
     // If event info is detected, the dialog will show a second page for event designation
     final result = await showDialog<_MultiLocationSelectionResult>(
       context: context,
-      builder: (context) => _MultiLocationSelectionDialog(
-        locations: locations,
+      builder: (dialogContext) => _MultiLocationSelectionDialog(
+        locations: sortedLocations,
         duplicates: duplicates,
         detectedEventInfo: detectedEventInfo,
+        isDeepScan: isDeepScan,
+        onDeepScanRequested: isDeepScan
+            ? null
+            : () {}, // Placeholder, not used - result handles this
+        scannedText: scannedText,
       ),
     );
+
+    // Check if user requested deep scan
+    if (result?.deepScanRequested == true) {
+      // Store confirmed locations from quick scan to preserve during deep scan
+      // These are locations the user has already selected/verified as correct
+      if (result!.selectedLocations.isNotEmpty) {
+        _pendingDeepScanConfirmedLocations = result.selectedLocations;
+        print(
+            '📍 DEEP SCAN: Preserving ${result.selectedLocations.length} confirmed location(s) from quick scan');
+      } else {
+        _pendingDeepScanConfirmedLocations = null;
+      }
+      return true; // Caller should run deep scan AFTER cleanup
+    }
 
     // Handle the result (which now includes both locations and their duplicate info)
     final selectedLocations = result?.selectedLocations;
     final selectedDuplicates = result?.selectedDuplicates;
-    
+
     // Store event info for use after successful save
     if (result?.eventInfo != null) {
       _detectedEventInfo = result!.eventInfo;
-      print('📅 EVENT: Detected event info stored for post-save handling: ${_detectedEventInfo?.eventName ?? 'Event'}');
+      print(
+          '📅 EVENT: Detected event info stored for post-save handling: ${_detectedEventInfo?.eventName ?? 'Event'}');
     }
 
     if (selectedLocations != null && selectedLocations.isNotEmpty) {
@@ -5489,29 +5677,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final String? wantToGoColorCategoryId = wantToGoCategory?.id;
 
       // Check if auto-set categories is enabled
-      final shouldAutoSetCategories = await _aiSettingsService.shouldAutoSetCategories();
-      
+      final shouldAutoSetCategories =
+          await _aiSettingsService.shouldAutoSetCategories();
+
       // Set categorizing state if auto-set categories is enabled
       if (shouldAutoSetCategories && mounted) {
         setState(() {
           _isCategorizing = true;
         });
       }
-      
+
       // Fill existing empty cards with new locations
       for (int i = 0; i < locationsForEmptyCards.length; i++) {
         final locationData = locationsForEmptyCards[i];
         final cardId = emptyCards[i].id;
-        
+
         provider.updateCardWithExtractedLocation(cardId, locationData);
-        
+
         // Auto-set categories only if enabled in settings
         if (shouldAutoSetCategories) {
           // Set color category to 'Want to go' for new locations (not from saved experiences)
           if (wantToGoColorCategoryId != null) {
             provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
           }
-          
+
           // Determine and set the best primary category based on place types
           final bestCategoryId = await _determineBestCategoryForLocation(
             locationData,
@@ -5522,9 +5711,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             provider.updateCardTextCategory(cardId, bestCategoryId);
           }
         }
-        
-        print(
-            '📍 Filled existing card with: ${locationData.name}');
+
+        print('📍 Filled existing card with: ${locationData.name}');
       }
 
       // Create all new cards for remaining new locations in one batch
@@ -5535,7 +5723,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         cardsCreated += locationsNeedingNewCards.length;
         print(
             '📍 Created ${locationsNeedingNewCards.length} new cards for new locations');
-        
+
         // Set color category and primary category for all newly created cards (only if enabled)
         if (shouldAutoSetCategories) {
           for (int i = 0; i < locationsNeedingNewCards.length; i++) {
@@ -5543,12 +5731,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (cardIndex < provider.experienceCards.length) {
               final cardId = provider.experienceCards[cardIndex].id;
               final locationData = locationsNeedingNewCards[i];
-              
+
               // Set color category to 'Want to go'
               if (wantToGoColorCategoryId != null) {
-                provider.updateCardColorCategory(cardId, wantToGoColorCategoryId);
+                provider.updateCardColorCategory(
+                    cardId, wantToGoColorCategoryId);
               }
-              
+
               // Determine and set the best primary category based on place types
               final bestCategoryId = await _determineBestCategoryForLocation(
                 locationData,
@@ -5642,6 +5831,336 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Scroll to the top-most experience card after a brief delay for UI to update
       _scrollToExperienceCardsTop();
     }
+
+    return false; // No deep scan requested
+  }
+
+  /// Run deep scan using unified extraction (more accurate but slower)
+  /// This is called when user requests deep scan from the quick scan results dialog
+  Future<void> _runDeepScan(
+    ReceiveShareProvider provider, {
+    ExtractedEventInfo? detectedEventInfo,
+  }) async {
+    // Make sure widget is still mounted
+    if (!mounted) return;
+
+    // Make sure we have caption text to scan
+    if (_extractedCaption == null || _extractedCaption!.isEmpty) {
+      Fluttertoast.showToast(
+        msg: '❌ No content to scan. Please try again.',
+        toastLength: Toast.LENGTH_LONG,
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+
+    // Get confirmed locations from quick scan (user-verified correct locations)
+    final confirmedLocations = _pendingDeepScanConfirmedLocations;
+    _pendingDeepScanConfirmedLocations = null; // Clear after retrieval
+
+    // Build set of confirmed place IDs for efficient deduplication after scan
+    final confirmedPlaceIds = <String>{};
+    // Build set of confirmed ORIGINAL QUERY NAMES to skip verification during scan
+    // IMPORTANT: Use originalQuery (e.g., "Lovesong") not the verified name (e.g., "Lovesong Coffee + Market")
+    // because Gemini will extract the original text from the caption, not the verified name
+    final confirmedOriginalQueries = <String>{};
+    if (confirmedLocations != null) {
+      for (final loc in confirmedLocations) {
+        // PRIORITY: Use originalQuery (the original extracted text from caption)
+        // This matches what Gemini will extract during deep scan
+        if (loc.originalQuery != null && loc.originalQuery!.isNotEmpty) {
+          confirmedOriginalQueries.add(loc.originalQuery!);
+        } else if (loc.name.isNotEmpty) {
+          // Fallback to verified name if no originalQuery
+          confirmedOriginalQueries.add(loc.name);
+        }
+        // Add placeId for post-scan deduplication
+        if (loc.placeId != null && loc.placeId!.isNotEmpty) {
+          // Handle 'places/' prefix that may come from grounding chunks
+          final cleanPlaceId = loc.placeId!.startsWith('places/')
+              ? loc.placeId!.substring(7)
+              : loc.placeId!;
+          confirmedPlaceIds.add(cleanPlaceId);
+        }
+      }
+      print(
+          '📍 DEEP SCAN: Will preserve ${confirmedLocations.length} confirmed location(s)');
+      print(
+          '📍 DEEP SCAN: Will skip verification for ${confirmedOriginalQueries.length} original query(s): ${confirmedOriginalQueries.take(5).join(", ")}${confirmedOriginalQueries.length > 5 ? "..." : ""}');
+    }
+
+    try {
+      // Show scanning indicator
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = true;
+          _isAiScanInProgress = true;
+          _scanProgress = 0.0;
+        });
+      }
+
+      // Enable wakelock to prevent screen from sleeping during deep scan
+      WakelockPlus.enable();
+      await _foregroundScanService.startScanService();
+
+      print('🔍 DEEP SCAN: Starting unified extraction...');
+      _updateScanProgress(0.1);
+
+      // Get user location for better results
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      _updateScanProgress(0.2);
+
+      // Run unified extraction (deep scan)
+      // Pass confirmed location names to skip verification for those locations
+      // This saves Gemini API calls for locations user has already confirmed
+      final unifiedResult =
+          await _locationExtractor.extractLocationsFromTextUnified(
+        _extractedCaption!,
+        userLocation: userLocation,
+        onProgress: (current, total, message) {
+          // Map progress from 0.2 to 0.8
+          _updateScanProgress(0.2 + (0.6 * current / total));
+        },
+        skipLocationNames: confirmedOriginalQueries.isNotEmpty
+            ? confirmedOriginalQueries
+            : null,
+      );
+
+      var deepScanLocations = unifiedResult.locations;
+      _updateScanProgress(0.8);
+
+      // Check if mounted
+      if (!mounted) {
+        // Merge confirmed + deep scan for pending results
+        final mergedLocations = _mergeLocationsWithConfirmed(
+          deepScanLocations,
+          confirmedLocations,
+          confirmedPlaceIds,
+        );
+        if (mergedLocations.isNotEmpty) {
+          print(
+              '🔍 DEEP SCAN: App backgrounded, storing ${mergedLocations.length} result(s) for later');
+          _pendingScanResults = mergedLocations;
+          if (mergedLocations.length == 1) {
+            _pendingScanSingleMessage =
+                '📍 Found: ${mergedLocations.first.name}';
+          }
+        }
+        return;
+      }
+
+      // Merge confirmed locations with deep scan results
+      final mergedLocations = _mergeLocationsWithConfirmed(
+        deepScanLocations,
+        confirmedLocations,
+        confirmedPlaceIds,
+      );
+
+      // Log what we found
+      final newFromDeepScan =
+          mergedLocations.length - (confirmedLocations?.length ?? 0);
+      if (confirmedLocations != null && confirmedLocations.isNotEmpty) {
+        print(
+            '✅ DEEP SCAN: ${confirmedLocations.length} confirmed + $newFromDeepScan new = ${mergedLocations.length} total location(s)');
+      } else {
+        print(
+            '✅ DEEP SCAN: Found ${mergedLocations.length} location(s) via unified extraction');
+      }
+
+      if (mergedLocations.isEmpty) {
+        print('⚠️ DEEP SCAN: No locations found');
+        Fluttertoast.showToast(
+          msg:
+              '💡 Deep scan found no locations. Try the "Scan Preview" button.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      _updateScanProgress(0.9);
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
+
+      // Show results dialog - isDeepScan=true hides the deep scan option
+      await _handleMultipleExtractedLocations(
+        mergedLocations,
+        provider,
+        detectedEventInfo: detectedEventInfo,
+        isDeepScan: true,
+        scannedText: _extractedCaption,
+      );
+      _updateScanProgress(1.0);
+    } catch (e) {
+      print('❌ DEEP SCAN ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Deep scan failed. Please try again.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      // Disable wakelock and stop foreground service
+      WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = false;
+          _isAiScanInProgress = false;
+          _scanProgress = 0.0;
+        });
+      }
+    }
+  }
+
+  /// Merge confirmed locations (from quick scan) with deep scan results
+  /// Confirmed locations are placed first, then new locations from deep scan
+  /// Duplicates (matching placeId) from deep scan are filtered out
+  List<ExtractedLocationData> _mergeLocationsWithConfirmed(
+    List<ExtractedLocationData> deepScanLocations,
+    List<ExtractedLocationData>? confirmedLocations,
+    Set<String> confirmedPlaceIds,
+  ) {
+    if (confirmedLocations == null || confirmedLocations.isEmpty) {
+      return deepScanLocations;
+    }
+
+    // Filter deep scan results to exclude already-confirmed locations
+    final newLocations = deepScanLocations.where((loc) {
+      if (loc.placeId == null || loc.placeId!.isEmpty) {
+        return true; // Keep locations without placeId (couldn't dedupe)
+      }
+      // Handle 'places/' prefix
+      final cleanPlaceId = loc.placeId!.startsWith('places/')
+          ? loc.placeId!.substring(7)
+          : loc.placeId!;
+      return !confirmedPlaceIds.contains(cleanPlaceId);
+    }).toList();
+
+    // Merge: confirmed locations first, then new locations from deep scan
+    final merged = <ExtractedLocationData>[
+      ...confirmedLocations,
+      ...newLocations,
+    ];
+
+    if (newLocations.length < deepScanLocations.length) {
+      final filtered = deepScanLocations.length - newLocations.length;
+      print(
+          '📍 DEEP SCAN: Filtered out $filtered duplicate(s) already confirmed by user');
+    }
+
+    return merged;
+  }
+
+  /// Sort locations by their order of appearance in the scanned text
+  /// This ensures the Locations Found dialog shows locations in the same order
+  /// they appear in the original content (e.g., a numbered list of places)
+  ///
+  /// Uses the `originalQuery` field which stores the original extracted text
+  /// before Places API verification. Falls back to the verified name if not set.
+  List<ExtractedLocationData> _sortLocationsByTextAppearance(
+    List<ExtractedLocationData> locations,
+    String? scannedText,
+  ) {
+    if (scannedText == null || scannedText.isEmpty || locations.length <= 1) {
+      return locations;
+    }
+
+    final lowerText = scannedText.toLowerCase();
+
+    // Create a list of (location, firstIndex) pairs
+    final locationsWithIndex = locations.map((loc) {
+      var index = -1;
+      String? matchedOn;
+
+      // PRIORITY 1: Use originalQuery if available
+      // This is the original text extracted from the caption before verification
+      // e.g., "S3 Coffee" before it became "S3 Coffee Bar"
+      if (loc.originalQuery != null && loc.originalQuery!.isNotEmpty) {
+        final lowerOriginal = loc.originalQuery!.toLowerCase();
+        index = lowerText.indexOf(lowerOriginal);
+        if (index != -1) {
+          matchedOn = 'originalQuery: "${loc.originalQuery}"';
+        }
+
+        // Also try without @ prefix for handle-based queries
+        if (index == -1 && lowerOriginal.startsWith('@')) {
+          final withoutAt = lowerOriginal.substring(1);
+          index = lowerText.indexOf(withoutAt);
+          if (index != -1) {
+            matchedOn = 'originalQuery (no @): "$withoutAt"';
+          }
+        }
+      }
+
+      // PRIORITY 2: Try the verified name
+      if (index == -1) {
+        final lowerName = loc.name.toLowerCase();
+        index = lowerText.indexOf(lowerName);
+        if (index != -1) {
+          matchedOn = 'name: "${loc.name}"';
+        }
+
+        // Strategy 2a: Try progressive prefix matching
+        // e.g., "S3 Coffee Bar" → try "S3 Coffee", then "S3"
+        if (index == -1) {
+          final words = lowerName.split(' ');
+          for (var wordCount = words.length - 1; wordCount >= 1; wordCount--) {
+            final prefix = words.take(wordCount).join(' ');
+            if (prefix.length >= 2) {
+              final prefixIndex = lowerText.indexOf(prefix);
+              if (prefixIndex != -1) {
+                index = prefixIndex;
+                matchedOn = 'prefix: "$prefix"';
+                break;
+              }
+            }
+          }
+        }
+
+        // Strategy 2b: Try first distinctive word only
+        // Skip common words like "the", "cafe", "coffee", etc.
+        if (index == -1) {
+          const commonWords = [
+            'the', 'and', '&', 'bar', 'cafe', 'café', 'coffee', 'house',
+            'restaurant', 'shop', 'market', 'bakery', 'dessert', 'tea',
+            'room', 'north', 'south', 'east', 'west', 'park', 'mesa',
+            'mira', 'beach',
+          ];
+          final words = lowerName.split(' ');
+          final distinctiveWords = words
+              .where((w) => w.length > 1 && !commonWords.contains(w))
+              .toList();
+
+          if (distinctiveWords.isNotEmpty) {
+            final firstWord = distinctiveWords.first;
+            index = lowerText.indexOf(firstWord);
+            if (index != -1) {
+              matchedOn = 'distinctive word: "$firstWord"';
+            }
+          }
+        }
+      }
+
+      print('📍 SORT: "${loc.name}" → index $index (matched on $matchedOn)');
+      return (location: loc, index: index == -1 ? 999999 : index);
+    }).toList();
+
+    // Sort by index (order of appearance)
+    locationsWithIndex.sort((a, b) => a.index.compareTo(b.index));
+
+    print('📍 SORT: Final order: ${locationsWithIndex.map((e) => '"${e.location.name}" @${e.index}').join(', ')}');
+
+    return locationsWithIndex.map((e) => e.location).toList();
   }
 
   /// Scroll to the top of the experience cards section
@@ -5664,14 +6183,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   /// Show dialog asking user if they want to create an event from detected event info
   /// [savedExperiences] is used to get a fallback title if event name wasn't detected
-  Future<bool?> _showEventConfirmationDialog({List<Experience>? savedExperiences}) async {
+  Future<bool?> _showEventConfirmationDialog(
+      {List<Experience>? savedExperiences}) async {
     if (_detectedEventInfo == null) return false;
-    
+
     // Determine the event title for display
     String eventName;
-    if (_detectedEventInfo!.eventName != null && _detectedEventInfo!.eventName!.isNotEmpty) {
+    if (_detectedEventInfo!.eventName != null &&
+        _detectedEventInfo!.eventName!.isNotEmpty) {
       eventName = _detectedEventInfo!.eventName!;
-    } else if (savedExperiences != null && savedExperiences.isNotEmpty && savedExperiences.first.name.isNotEmpty) {
+    } else if (savedExperiences != null &&
+        savedExperiences.isNotEmpty &&
+        savedExperiences.first.name.isNotEmpty) {
       eventName = savedExperiences.first.name;
     } else {
       eventName = 'Event';
@@ -5713,7 +6236,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               ),
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(8),
@@ -5747,7 +6271,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       },
     );
   }
-  
+
   String _formatTimeOfDay(TimeOfDay time) {
     final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
     final minute = time.minute.toString().padLeft(2, '0');
@@ -5765,16 +6289,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('⚠️ Cannot create event: user not logged in');
       return;
     }
-    
+
     final now = DateTime.now();
-    
+
     // Create event entries from the saved experiences
     final experienceEntries = experiences.map((exp) {
       return EventExperienceEntry(
         experienceId: exp.id,
       );
     }).toList();
-    
+
     // Determine the event title:
     // 1. Use detected event name from Gemini if available
     // 2. Otherwise use the first experience's name as fallback
@@ -5787,26 +6311,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } else {
       eventTitle = 'Untitled Event';
     }
-    
+
     // Automatically set cover image
     // Priority: 1. Ticketmaster image (if available), 2. First experience's photo
     String? coverImageUrl;
-    
+
     // For Ticketmaster events, use the event image as the cover
-    if (eventInfo.ticketmasterImageUrl != null && eventInfo.ticketmasterImageUrl!.isNotEmpty) {
+    if (eventInfo.ticketmasterImageUrl != null &&
+        eventInfo.ticketmasterImageUrl!.isNotEmpty) {
       coverImageUrl = eventInfo.ticketmasterImageUrl;
       print('📷 EVENT COVER: Using Ticketmaster image: $coverImageUrl');
     }
     // Fall back to the first experience's photo
     else if (experiences.isNotEmpty) {
       final firstExp = experiences.first;
-      
+
       // First try to get photo from existing data
       coverImageUrl = _buildCoverImageUrlFromExperience(firstExp);
-      
+
       // If no photo data but we have a placeId, fetch from Google Places API
-      if (coverImageUrl == null && 
-          firstExp.location.placeId != null && 
+      if (coverImageUrl == null &&
+          firstExp.location.placeId != null &&
           firstExp.location.placeId!.isNotEmpty) {
         try {
           coverImageUrl = await _mapsService.getPlaceImageUrl(
@@ -5819,7 +6344,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
     }
-    
+
     // Create a new Event with the detected info
     final newEvent = Event(
       id: '', // Will be generated on save
@@ -5835,9 +6360,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       ticketmasterUrl: eventInfo.ticketmasterUrl,
       ticketmasterSearchTerm: eventInfo.ticketmasterSearchTerm,
     );
-    
+
     if (!mounted) return;
-    
+
     // Open the EventEditorModal
     await showModalBottomSheet<EventEditorResult>(
       context: context,
@@ -5887,14 +6412,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Auto-categorize a card with Color Category (Want to go) and Primary Category.
-  /// 
+  ///
   /// This method sets:
-  /// 1. Color Category to 'Want to go' 
+  /// 1. Color Category to 'Want to go'
   /// 2. Primary Category based on location name (using AI if needed)
-  /// 
+  ///
   /// Used when selecting a location from LocationPickerScreen or Quick Add dialog.
   /// Delegates to CategoryAutoAssignService for shared logic.
-  /// 
+  ///
   /// Respects the "Automatically set categories" user setting.
   Future<void> _autoCategorizeCardForNewLocation(
     String cardId,
@@ -5902,15 +6427,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     ReceiveShareProvider provider,
   ) async {
     // Check if auto-set categories is enabled in settings
-    final shouldAutoSetCategories = await _aiSettingsService.shouldAutoSetCategories();
+    final shouldAutoSetCategories =
+        await _aiSettingsService.shouldAutoSetCategories();
     if (!shouldAutoSetCategories) {
       print('🏷️ AUTO-CATEGORIZE: Skipped (disabled in settings)');
       return;
     }
-    
+
     final locationName = location.displayName ?? location.getPlaceName();
     print('🏷️ AUTO-CATEGORIZE: Setting categories for "$locationName"');
-    
+
     // Build location context for AI disambiguation (city, country helps with common place names)
     final locationContextParts = <String>[];
     if (location.city != null && location.city!.isNotEmpty) {
@@ -5922,28 +6448,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (location.country != null && location.country!.isNotEmpty) {
       locationContextParts.add(location.country!);
     }
-    final locationContext = locationContextParts.isNotEmpty 
+    final locationContext = locationContextParts.isNotEmpty
         ? locationContextParts.join(', ')
         : null;
-    
-    final categorization = await _categoryAutoAssignService.autoCategorizeForNewLocation(
+
+    final categorization =
+        await _categoryAutoAssignService.autoCategorizeForNewLocation(
       locationName: locationName,
       userCategories: _userCategories,
       colorCategories: _userColorCategories,
-      placeTypes: location.placeTypes, // Use stored placeTypes for better accuracy
+      placeTypes:
+          location.placeTypes, // Use stored placeTypes for better accuracy
       placeId: location.placeId, // API fallback if placeTypes not stored
       locationContext: locationContext, // City/country for AI disambiguation
     );
-    
+
     // Set Color Category to 'Want to go'
     if (categorization.colorCategoryId != null) {
       provider.updateCardColorCategory(cardId, categorization.colorCategoryId!);
       print('   ✅ Color Category set to "Want to go"');
     }
-    
+
     // Set Primary Category based on location name
     if (categorization.primaryCategoryId != null) {
-      provider.updateCardTextCategory(cardId, categorization.primaryCategoryId!);
+      provider.updateCardTextCategory(
+          cardId, categorization.primaryCategoryId!);
       final categoryName = _userCategories
           .firstWhereOrNull((c) => c.id == categorization.primaryCategoryId)
           ?.name;
@@ -6431,7 +6960,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      await _handleMultipleExtractedLocations(results, provider);
+      // Use extracted caption if available for resumed scans
+      await _handleMultipleExtractedLocations(
+        results,
+        provider,
+        scannedText: _extractedCaption,
+      );
     } catch (e) {
       print('❌ SCAN RESUME ERROR: $e');
       if (mounted) {
@@ -6596,7 +7130,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const MainScreen(initialIndex: 1)),
+      MaterialPageRoute(
+          builder: (context) => const MainScreen(initialIndex: 1)),
       (Route<dynamic> route) => false,
     );
   }
@@ -6677,7 +7212,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (_isInstagramUrl(foundUrl) || _isFacebookUrl(foundUrl)) {
             _autoExtractSocialMediaContent(foundUrl);
           }
-          
+
           if (_isSpecialUrl(foundUrl)) {
             // SPECIAL CASE: If this is a Yelp URL and we already have cards, treat it as an update
             String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
@@ -6830,7 +7365,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _isExtractingLocation = false;
           _scanProgress = 0.0;
           if (mounted) {
-            setState(() {}); // Trigger rebuild to hide loading indicator and chip
+            setState(
+                () {}); // Trigger rebuild to hide loading indicator and chip
           }
         }
         return result;
@@ -7220,15 +7756,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             userLatLng = LatLng(userPosition.latitude, userPosition.longitude);
           }
 
-          // Use LinkLocationExtractionService to extract location with Gemini
-          final geminiLocations =
-              await _locationExtractor.extractLocationsFromCaption(
+          // Use UNIFIED extraction (same as Preview Scan) to extract location with Gemini
+          final unifiedResult =
+              await _locationExtractor.extractLocationsFromTextUnified(
             'Find the restaurant/business: $searchContext',
-            platform: 'Yelp',
-            sourceUrl: url,
             userLocation: userLatLng,
-            maxLocations: null, // No limit
           );
+          final geminiLocations = unifiedResult.locations;
 
           if (geminiLocations.isNotEmpty) {
             final firstResult = geminiLocations.first;
@@ -7857,7 +8391,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Debounce the update to prevent rapid rebuilds
     _locationUpdateDebounce?.cancel();
-    _locationUpdateDebounce = Timer(const Duration(milliseconds: 100), () async {
+    _locationUpdateDebounce =
+        Timer(const Duration(milliseconds: 100), () async {
       if (!mounted) return;
       provider.updateCardFromShareDetails(
         cardId: cardId,
@@ -7871,14 +8406,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       if (mounted) {
         // Check if auto-categorization is enabled before clearing the chip
-        final shouldAutoSetCategories = location.placeId != null 
+        final shouldAutoSetCategories = location.placeId != null
             ? await _aiSettingsService.shouldAutoSetCategories()
             : false;
-        
+
         setState(() {
           // Clear location field loading state
           firstCard.isSelectingLocation = false;
-          
+
           // Update progress bar - extraction done
           _scanProgress = 0.8;
 
@@ -7897,7 +8432,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             };
             _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
           } else {}
-          
+
           // If auto-categorization is enabled, switch chip to "Categorizing..."
           // Keep _isExtractingLocation true so the chip stays visible
           if (shouldAutoSetCategories) {
@@ -7908,12 +8443,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             _scanProgress = 0.0;
           }
         });
-        
+
         // Auto-set Color Category to 'Want to go' and determine Primary Category
         // for the newly extracted location from Google Maps URL
         if (shouldAutoSetCategories) {
           await _autoCategorizeCardForNewLocation(cardId, location, provider);
-          
+
           // Hide chip after categorization completes
           if (mounted) {
             setState(() {
@@ -7980,7 +8515,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     List<String> errors = [];
     bool shouldAttemptNavigation =
         false; // Renamed from navigateAway for clarity
-    
+
     // Track saved experience IDs for potential event creation
     final List<String> savedExperienceIds = [];
     final List<Experience> savedExperiences = [];
@@ -8044,7 +8579,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (path.contains('tiktok.com') || path.contains('vm.tiktok.com')) {
               isTiktokPhoto = _tiktokPhotoStatus[path];
             }
-            
+
             // Check if this is a Ticketmaster URL and get cached event details
             String? ticketmasterEventName;
             String? ticketmasterVenueName;
@@ -8062,12 +8597,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ticketmasterEventDate = details.startDateTime;
                   ticketmasterImageUrl = details.imageUrl;
                   ticketmasterEventId = details.id;
-                  print('🎫 TICKETMASTER SAVE: Caching event details for "${details.name}"');
+                  print(
+                      '🎫 TICKETMASTER SAVE: Caching event details for "${details.name}"');
                 } else {
-                  print('🎫 TICKETMASTER SAVE: No cached details found for URL: $ticketmasterUrl');
+                  print(
+                      '🎫 TICKETMASTER SAVE: No cached details found for URL: $ticketmasterUrl');
                 }
               } else {
-                print('🎫 TICKETMASTER SAVE: Could not extract URL from path: $path');
+                print(
+                    '🎫 TICKETMASTER SAVE: Could not extract URL from path: $path');
               }
             }
 
@@ -8143,7 +8681,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             String descriptionToSave;
             if (notes.isNotEmpty) {
               descriptionToSave = notes;
-            } else if (card.fetchedDescription != null && card.fetchedDescription!.isNotEmpty) {
+            } else if (card.fetchedDescription != null &&
+                card.fetchedDescription!.isNotEmpty) {
               descriptionToSave = card.fetchedDescription!;
             } else {
               descriptionToSave = '';
@@ -8153,10 +8692,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 card.existingExperienceId!.isEmpty) {
               isNewExperience = true;
               // Include placeTypes in location for auto-categorization optimization
-              final locationWithPlaceTypes = card.placeTypes != null && card.placeTypes!.isNotEmpty
-                  ? locationToSave.copyWith(placeTypes: card.placeTypes)
-                  : locationToSave;
-              
+              final locationWithPlaceTypes =
+                  card.placeTypes != null && card.placeTypes!.isNotEmpty
+                      ? locationToSave.copyWith(placeTypes: card.placeTypes)
+                      : locationToSave;
+
               Experience newExperience = Experience(
                 id: '',
                 name: cardTitle,
@@ -8306,9 +8846,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               if (existingPublicExp == null) {
                 String publicName = locationToSave.getPlaceName();
                 // Include placeTypes for auto-categorization when users save from Discovery
-                final locationWithPlaceTypesForPublic = card.placeTypes != null && card.placeTypes!.isNotEmpty
-                    ? locationToSave.copyWith(placeTypes: card.placeTypes)
-                    : locationToSave;
+                final locationWithPlaceTypesForPublic =
+                    card.placeTypes != null && card.placeTypes!.isNotEmpty
+                        ? locationToSave.copyWith(placeTypes: card.placeTypes)
+                        : locationToSave;
                 PublicExperience newPublicExperience = PublicExperience(
                     id: '',
                     name: publicName,
@@ -8319,7 +8860,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     allMediaPaths: uniqueMediaPaths,
                     icon: selectedCategoryObject?.icon,
                     placeTypes: card.placeTypes,
-                    description: descriptionToSave.isNotEmpty ? descriptionToSave : null);
+                    description: descriptionToSave.isNotEmpty
+                        ? descriptionToSave
+                        : null);
                 await _experienceService
                     .createPublicExperience(newPublicExperience);
                 if (!mounted) return;
@@ -8420,51 +8963,52 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Group experiences by their selected event
       final Map<String, List<String>> eventToExperienceIds = {};
       final Map<String, Event> eventCache = {};
-      
+
       for (int i = 0; i < experienceCards.length; i++) {
         final card = experienceCards[i];
         if (card.selectedEvent != null && i < savedExperienceIds.length) {
           final eventId = card.selectedEvent!.id;
           final experienceId = savedExperienceIds[i];
-          
+
           eventToExperienceIds.putIfAbsent(eventId, () => []);
           eventToExperienceIds[eventId]!.add(experienceId);
           eventCache[eventId] = card.selectedEvent!;
         }
       }
-      
+
       // Add experiences to their respective events
       for (final entry in eventToExperienceIds.entries) {
         final eventId = entry.key;
         final experienceIdsForEvent = entry.value;
         final cachedEvent = eventCache[eventId]!;
-        
+
         try {
           // Refresh the event to get the latest data
           final freshEvent = await _eventService.getEvent(eventId);
           if (freshEvent != null && mounted) {
             // Create new itinerary entries for the experiences
-            final newEntries = experienceIdsForEvent.map((expId) => 
-              EventExperienceEntry(experienceId: expId)
-            ).toList();
-            
+            final newEntries = experienceIdsForEvent
+                .map((expId) => EventExperienceEntry(experienceId: expId))
+                .toList();
+
             // Add to existing experiences
             final updatedExperiences = [
               ...freshEvent.experiences,
               ...newEntries,
             ];
-            
+
             // Update the event
             final updatedEvent = freshEvent.copyWith(
               experiences: updatedExperiences,
               updatedAt: DateTime.now(),
             );
-            
+
             await _eventService.updateEvent(updatedEvent);
-            
+
             if (mounted) {
               Fluttertoast.showToast(
-                msg: '${experienceIdsForEvent.length} experience${experienceIdsForEvent.length != 1 ? 's' : ''} added to "${cachedEvent.title}"',
+                msg:
+                    '${experienceIdsForEvent.length} experience${experienceIdsForEvent.length != 1 ? 's' : ''} added to "${cachedEvent.title}"',
                 toastLength: Toast.LENGTH_LONG,
                 gravity: ToastGravity.BOTTOM,
               );
@@ -8474,14 +9018,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           debugPrint('Error adding experiences to event $eventId: $e');
           if (mounted) {
             Fluttertoast.showToast(
-              msg: 'Experiences saved, but could not add to "${cachedEvent.title}"',
+              msg:
+                  'Experiences saved, but could not add to "${cachedEvent.title}"',
               toastLength: Toast.LENGTH_LONG,
               gravity: ToastGravity.BOTTOM,
             );
           }
         }
       }
-      
+
       // Clear selected events from all cards after handling
       for (final card in experienceCards) {
         card.selectedEvent = null;
@@ -8492,7 +9037,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
         // Check if we should offer to create an event
         if (_detectedEventInfo != null && savedExperienceIds.isNotEmpty) {
-          final shouldCreateEvent = await _showEventConfirmationDialog(savedExperiences: savedExperiences);
+          final shouldCreateEvent = await _showEventConfirmationDialog(
+              savedExperiences: savedExperiences);
           if (shouldCreateEvent == true && mounted) {
             // Open EventEditorModal with the saved experiences
             await _openEventEditorWithExperiences(
@@ -8684,7 +9230,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // Fetch summary for the location (editorialSummary → reviewSummary → generativeSummary)
           String? fetchedSummary;
           try {
-            fetchedSummary = await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
+            fetchedSummary =
+                await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
           } catch (e) {
             print("ReceiveShareScreen: Error fetching summary: $e");
           }
@@ -8752,7 +9299,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // Fetch summary for the location (editorialSummary → reviewSummary → generativeSummary)
           String? fetchedSummary;
           try {
-            fetchedSummary = await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
+            fetchedSummary =
+                await _mapsService.fetchPlaceSummary(selectedLocation.placeId!);
           } catch (e) {
             print("ReceiveShareScreen: Error fetching summary: $e");
           }
@@ -8806,12 +9354,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               searchQuery: selectedLocation.address ?? 'Selected Location');
         }
       }
-      
+
       // Auto-set Color Category to 'Want to go' and determine Primary Category
       // for the newly selected location (only if we reach here - not if existing experience was used)
       // Use card.selectedLocation which has been updated with detailedLocation (including placeTypes from API)
-      if (mounted && card.selectedLocation != null && card.selectedLocation!.placeId != null) {
-        await _autoCategorizeCardForNewLocation(card.id, card.selectedLocation!, provider);
+      if (mounted &&
+          card.selectedLocation != null &&
+          card.selectedLocation!.placeId != null) {
+        await _autoCategorizeCardForNewLocation(
+            card.id, card.selectedLocation!, provider);
         // Force UI rebuild after category changes
         if (mounted) {
           setState(() {});
@@ -9072,7 +9623,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
 
       // Auto-set Color Category to 'Want to go' and determine Primary Category
-      await _autoCategorizeCardForNewLocation(targetCard.id, location, provider);
+      await _autoCategorizeCardForNewLocation(
+          targetCard.id, location, provider);
 
       // Force UI rebuild after category changes (provider notifyListeners doesn't trigger rebuild
       // because _ExperienceCardsSection doesn't watch the provider)
@@ -9372,156 +9924,144 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             // Re-enable the shared files preview list
                                             Container(
                                               color: AppColors.backgroundColor,
-                                              child:
-                                                  _currentSharedFiles.isEmpty
-                                                      ? const Padding(
-                                                          padding:
-                                                              EdgeInsets.all(
-                                                                  16.0),
-                                                          child: Center(
-                                                              child: Text(
-                                                                  'No shared content received')),
-                                                        )
-                                                      : Consumer<
-                                                              ReceiveShareProvider>(
-                                                          key:
-                                                              _mediaPreviewListKey, // MOVED KEY HERE
-                                                          builder: (context,
-                                                              provider,
-                                                              child) {
-                                                            final experienceCards =
-                                                                provider
-                                                                    .experienceCards;
-                                                            final firstCard =
-                                                                experienceCards
-                                                                        .isNotEmpty
-                                                                    ? experienceCards
-                                                                        .first
-                                                                    : null;
+                                              child: _currentSharedFiles.isEmpty
+                                                  ? const Padding(
+                                                      padding:
+                                                          EdgeInsets.all(16.0),
+                                                      child: Center(
+                                                          child: Text(
+                                                              'No shared content received')),
+                                                    )
+                                                  : Consumer<
+                                                      ReceiveShareProvider>(
+                                                      key:
+                                                          _mediaPreviewListKey, // MOVED KEY HERE
+                                                      builder: (context,
+                                                          provider, child) {
+                                                        final experienceCards =
+                                                            provider
+                                                                .experienceCards;
+                                                        final firstCard =
+                                                            experienceCards
+                                                                    .isNotEmpty
+                                                                ? experienceCards
+                                                                    .first
+                                                                : null;
 
-                                                            return ListView
-                                                                .builder(
+                                                        return ListView.builder(
+                                                          padding:
+                                                              EdgeInsets.zero,
+                                                          shrinkWrap: true,
+                                                          physics:
+                                                              const NeverScrollableScrollPhysics(),
+                                                          itemCount:
+                                                              _currentSharedFiles
+                                                                  .length,
+                                                          itemBuilder:
+                                                              (context, index) {
+                                                            final file =
+                                                                _currentSharedFiles[
+                                                                    index];
+
+                                                            bool isInstagram =
+                                                                false;
+                                                            bool isTikTok =
+                                                                false;
+                                                            if (file.type ==
+                                                                    SharedMediaType
+                                                                        .text ||
+                                                                file.type ==
+                                                                    SharedMediaType
+                                                                        .url) {
+                                                              String? url =
+                                                                  _extractFirstUrl(
+                                                                      file.path);
+                                                              if (url != null) {
+                                                                if (url.contains(
+                                                                    'instagram.com')) {
+                                                                  isInstagram =
+                                                                      true;
+                                                                } else if (url
+                                                                        .contains(
+                                                                            'tiktok.com') ||
+                                                                    url.contains(
+                                                                        'vm.tiktok.com')) {
+                                                                  isTikTok =
+                                                                      true;
+                                                                }
+                                                              }
+                                                            }
+                                                            final double
+                                                                horizontalPadding =
+                                                                (isInstagram ||
+                                                                        isTikTok)
+                                                                    ? 0.0
+                                                                    : 16.0;
+                                                            final double
+                                                                verticalPadding =
+                                                                8.0;
+                                                            final bool
+                                                                isLastItem =
+                                                                index ==
+                                                                    _currentSharedFiles
+                                                                            .length -
+                                                                        1;
+
+                                                            return Padding(
+                                                              key: ValueKey(
+                                                                  file.path),
                                                               padding:
                                                                   EdgeInsets
-                                                                      .zero,
-                                                              shrinkWrap: true,
-                                                              physics:
-                                                                  const NeverScrollableScrollPhysics(),
-                                                              itemCount:
-                                                                  _currentSharedFiles
-                                                                      .length,
-                                                              itemBuilder:
-                                                                  (context,
-                                                                      index) {
-                                                                final file =
-                                                                    _currentSharedFiles[
-                                                                        index];
-
-                                                                bool isInstagram =
-                                                                    false;
-                                                                bool isTikTok =
-                                                                    false;
-                                                                if (file.type ==
-                                                                        SharedMediaType
-                                                                            .text ||
-                                                                    file.type ==
-                                                                        SharedMediaType
-                                                                            .url) {
-                                                                  String? url =
-                                                                      _extractFirstUrl(
-                                                                          file
-                                                                              .path);
-                                                                  if (url !=
-                                                                      null) {
-                                                                    if (url.contains(
-                                                                        'instagram.com')) {
-                                                                      isInstagram =
-                                                                          true;
-                                                                    } else if (url.contains(
-                                                                            'tiktok.com') ||
-                                                                        url.contains(
-                                                                            'vm.tiktok.com')) {
-                                                                      isTikTok =
-                                                                          true;
-                                                                    }
-                                                                  }
-                                                                }
-                                                                final double
-                                                                    horizontalPadding =
-                                                                    (isInstagram ||
-                                                                            isTikTok)
-                                                                        ? 0.0
-                                                                        : 16.0;
-                                                                final double
-                                                                    verticalPadding =
-                                                                    8.0;
-                                                                final bool
-                                                                    isLastItem =
-                                                                    index ==
-                                                                        _currentSharedFiles
-                                                                                .length -
-                                                                            1;
-
-                                                                return Padding(
-                                                                  key: ValueKey(
-                                                                      file
-                                                                          .path),
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .fromLTRB(
-                                                                    horizontalPadding,
-                                                                    verticalPadding,
-                                                                    horizontalPadding,
-                                                                    isLastItem
-                                                                        ? 0.0
-                                                                        : verticalPadding,
-                                                                  ),
-                                                                  child: Card(
-                                                                    color: Colors
-                                                                        .white,
-                                                                    elevation:
-                                                                        2.0,
-                                                                    margin: (isInstagram ||
-                                                                            isTikTok)
-                                                                        ? EdgeInsets
-                                                                            .zero
-                                                                        : const EdgeInsets
-                                                                            .only(
-                                                                            bottom:
-                                                                                0),
-                                                                    shape:
-                                                                        RoundedRectangleBorder(
-                                                                      borderRadius:
-                                                                          BorderRadius.circular(
-                                                                              (isInstagram || isTikTok)
-                                                                                  ? 0
-                                                                                  : 8),
-                                                                    ),
-                                                                    clipBehavior:
-                                                                        (isInstagram ||
-                                                                                isTikTok)
-                                                                            ? Clip
-                                                                                .antiAlias
-                                                                            : Clip
-                                                                                .none,
-                                                                    child:
-                                                                        Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      children: [
-                                                                        _buildMediaPreview(
-                                                                            file,
-                                                                            firstCard,
-                                                                            index),
-                                                                      ],
-                                                                    ),
-                                                                  ),
-                                                                );
-                                                              },
+                                                                      .fromLTRB(
+                                                                horizontalPadding,
+                                                                verticalPadding,
+                                                                horizontalPadding,
+                                                                isLastItem
+                                                                    ? 0.0
+                                                                    : verticalPadding,
+                                                              ),
+                                                              child: Card(
+                                                                color: Colors
+                                                                    .white,
+                                                                elevation: 2.0,
+                                                                margin: (isInstagram ||
+                                                                        isTikTok)
+                                                                    ? EdgeInsets
+                                                                        .zero
+                                                                    : const EdgeInsets
+                                                                        .only(
+                                                                        bottom:
+                                                                            0),
+                                                                shape:
+                                                                    RoundedRectangleBorder(
+                                                                  borderRadius: BorderRadius.circular(
+                                                                      (isInstagram ||
+                                                                              isTikTok)
+                                                                          ? 0
+                                                                          : 8),
+                                                                ),
+                                                                clipBehavior: (isInstagram ||
+                                                                        isTikTok)
+                                                                    ? Clip
+                                                                        .antiAlias
+                                                                    : Clip.none,
+                                                                child: Column(
+                                                                  crossAxisAlignment:
+                                                                      CrossAxisAlignment
+                                                                          .start,
+                                                                  children: [
+                                                                    _buildMediaPreview(
+                                                                        file,
+                                                                        firstCard,
+                                                                        index),
+                                                                  ],
+                                                                ),
+                                                              ),
                                                             );
                                                           },
-                                                        ),
+                                                        );
+                                                      },
+                                                    ),
                                             ),
                                             Container(
                                               height: 8,
@@ -9797,7 +10337,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (_isTicketmasterUrl(url)) {
       // Trigger loading event details if not already cached
       // Use addPostFrameCallback to avoid calling setState during build
-      if (!_ticketmasterEventDetails.containsKey(url) && 
+      if (!_ticketmasterEventDetails.containsKey(url) &&
           !_ticketmasterUrlsLoading.contains(url)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -9805,10 +10345,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         });
       }
-      
+
       final details = _ticketmasterEventDetails[url];
       final isLoading = _ticketmasterUrlsLoading.contains(url);
-      
+
       return TicketmasterPreviewWidget(
         ticketmasterUrl: url,
         launchUrlCallback: _launchUrl,
@@ -10780,7 +11320,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 return ListTile(
                   title: Text(name),
                   subtitle: Text(address, style: TextStyle(fontSize: 12)),
-                  onTap: withHeavyTap(() => Navigator.of(dialogContext).pop(result)),
+                  onTap: withHeavyTap(
+                      () => Navigator.of(dialogContext).pop(result)),
                 );
               }),
             ],
@@ -10939,55 +11480,80 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return null; // No duplicate found, or user chose to create new
   }
   // END ADDED
-  
+
   /// Attempt to detect event information from text content (captions, descriptions, etc.)
   /// Returns ExtractedEventInfo if an event is detected, null otherwise.
-  /// 
+  ///
   /// Uses a two-step approach:
   /// 1. Quick regex check for explicit date/time patterns
   /// 2. AI-based detection for natural language event references
   Future<ExtractedEventInfo?> _detectEventFromTextAsync(String? text) async {
     if (text == null || text.isEmpty) return null;
-    
+
     // Step 1: Try quick regex-based detection first
     final regexResult = _detectEventFromTextRegex(text);
     if (regexResult != null) {
-      print('📅 EVENT DETECTION: Found event via regex - ${regexResult.startDateTime}');
+      print(
+          '📅 EVENT DETECTION: Found event via regex - ${regexResult.startDateTime}');
       // Try to enrich with Ticketmaster information
       final enrichedResult = await _searchTicketmasterForEvent(regexResult);
       return enrichedResult;
     }
-    
+
     // Step 2: Check for event-related keywords before calling AI
     final eventKeywords = [
-      'event', 'festival', 'fair', 'concert', 'show', 'exhibition',
-      'happening', 'this weekend', 'this saturday', 'this sunday',
-      'next week', 'tickets', 'admission', 'doors open', 'starts at',
-      'march', 'april', 'may', 'june', 'july', 'august', 'september',
-      'october', 'november', 'december', 'january', 'february',
+      'event',
+      'festival',
+      'fair',
+      'concert',
+      'show',
+      'exhibition',
+      'happening',
+      'this weekend',
+      'this saturday',
+      'this sunday',
+      'next week',
+      'tickets',
+      'admission',
+      'doors open',
+      'starts at',
+      'march',
+      'april',
+      'may',
+      'june',
+      'july',
+      'august',
+      'september',
+      'october',
+      'november',
+      'december',
+      'january',
+      'february',
     ];
-    
+
     final lowerText = text.toLowerCase();
     final hasEventKeywords = eventKeywords.any((kw) => lowerText.contains(kw));
-    
+
     if (!hasEventKeywords) {
-      print('📅 EVENT DETECTION: No event keywords found, skipping AI detection');
+      print(
+          '📅 EVENT DETECTION: No event keywords found, skipping AI detection');
       return null;
     }
-    
+
     // Step 3: Use Gemini AI to detect event information
     try {
       print('📅 EVENT DETECTION: Using AI to analyze text for event info...');
       final geminiService = GeminiService();
-      
+
       if (!geminiService.isConfigured) {
         print('⚠️ EVENT DETECTION: Gemini not configured');
         return null;
       }
-      
+
       final result = await geminiService.detectEventFromText(text);
       if (result != null) {
-        print('📅 EVENT DETECTION: AI found event - ${result.startDateTime} to ${result.endDateTime}');
+        print(
+            '📅 EVENT DETECTION: AI found event - ${result.startDateTime} to ${result.endDateTime}');
         // Try to enrich with Ticketmaster information
         final enrichedResult = await _searchTicketmasterForEvent(result);
         return enrichedResult;
@@ -11000,27 +11566,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return null;
     }
   }
-  
+
   /// Search Ticketmaster for a matching event and enrich the event info with URL
-  Future<ExtractedEventInfo> _searchTicketmasterForEvent(ExtractedEventInfo eventInfo) async {
+  Future<ExtractedEventInfo> _searchTicketmasterForEvent(
+      ExtractedEventInfo eventInfo) async {
     // Only search if we have an event name
     if (eventInfo.eventName == null || eventInfo.eventName!.isEmpty) {
       print('🎫 TICKETMASTER: No event name to search for');
       return eventInfo;
     }
-    
+
     try {
       print('🎫 TICKETMASTER: Searching for "${eventInfo.eventName}"...');
-      
+
       // Track the search term that found results
       String? successfulSearchTerm;
-      
+
       // Try full event name first
-      var ticketmasterResult = await _ticketmasterService.findEventByNameAndDate(
+      var ticketmasterResult =
+          await _ticketmasterService.findEventByNameAndDate(
         eventName: eventInfo.eventName!,
         eventDate: eventInfo.startDateTime,
       );
-      
+
       if (ticketmasterResult != null && ticketmasterResult.url != null) {
         successfulSearchTerm = eventInfo.eventName;
       } else {
@@ -11029,7 +11597,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final simplifiedName = _simplifyEventName(eventInfo.eventName!);
         if (simplifiedName != eventInfo.eventName) {
           print('🎫 TICKETMASTER: Trying simplified name: "$simplifiedName"');
-          ticketmasterResult = await _ticketmasterService.findEventByNameAndDate(
+          ticketmasterResult =
+              await _ticketmasterService.findEventByNameAndDate(
             eventName: simplifiedName,
             eventDate: eventInfo.startDateTime,
           );
@@ -11038,12 +11607,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         }
       }
-      
-      if (ticketmasterResult != null && ticketmasterResult.url != null && successfulSearchTerm != null) {
+
+      if (ticketmasterResult != null &&
+          ticketmasterResult.url != null &&
+          successfulSearchTerm != null) {
         print('🎫 TICKETMASTER: Found match - ${ticketmasterResult.name}');
         print('🎫 TICKETMASTER: URL - ${ticketmasterResult.url}');
-        print('🎫 TICKETMASTER: Search term that worked: "$successfulSearchTerm"');
-        
+        print(
+            '🎫 TICKETMASTER: Search term that worked: "$successfulSearchTerm"');
+
         // Return enriched event info with Ticketmaster URL and the search term that worked
         return eventInfo.copyWith(
           ticketmasterUrl: ticketmasterResult.url,
@@ -11056,27 +11628,33 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('🎫 TICKETMASTER: Search error - $e');
     }
-    
+
     return eventInfo;
   }
-  
+
   /// Simplify event name for better Ticketmaster search results
   String _simplifyEventName(String eventName) {
     // Remove common suffixes like " - The Mountain Live", " Live", " Tour", etc.
     var simplified = eventName
-        .replaceAll(RegExp(r'\s*-\s*(The\s+)?\w+\s+(Live|Tour|Concert|Show|Festival).*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\s+(Live|Tour|Concert|Show|Festival)$', caseSensitive: false), '')
+        .replaceAll(
+            RegExp(r'\s*-\s*(The\s+)?\w+\s+(Live|Tour|Concert|Show|Festival).*',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r'\s+(Live|Tour|Concert|Show|Festival)$',
+                caseSensitive: false),
+            '')
         .trim();
-    
+
     // If we stripped too much, use the first part before " - "
     if (simplified.isEmpty || simplified.length < 3) {
       final parts = eventName.split(' - ');
       simplified = parts.first.trim();
     }
-    
+
     return simplified;
   }
-  
+
   /// Quick regex-based event detection for explicit date/time patterns
   /// This looks for patterns like:
   /// - "December 31, 2024 at 8:00 PM"
@@ -11091,28 +11669,38 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       r'(?:at|@)\s*(\d{1,2}):?(\d{2})?\s*(am|pm|AM|PM)?',
       caseSensitive: false,
     );
-    
+
     // Pattern 2: "MM/DD/YYYY" or "MM-DD-YYYY" with optional time
     final slashDatePattern = RegExp(
       r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s*(?:(?:at|@)\s*(\d{1,2}):?(\d{2})?\s*(am|pm|AM|PM)?)?',
     );
-    
+
     // Pattern 3: ISO format "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM"
     final isoPattern = RegExp(
       r'(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?',
     );
-    
+
     // Try to find a date pattern
     DateTime? startDateTime;
     String? rawMatch;
-    
+
     // Try Pattern 1
     final monthMatch = monthDayYearTimePattern.firstMatch(text);
     if (monthMatch != null) {
       rawMatch = monthMatch.group(0);
       final monthNames = {
-        'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
-        'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+        'january': 1,
+        'february': 2,
+        'march': 3,
+        'april': 4,
+        'may': 5,
+        'june': 6,
+        'july': 7,
+        'august': 8,
+        'september': 9,
+        'october': 10,
+        'november': 11,
+        'december': 12,
       };
       final month = monthNames[monthMatch.group(1)!.toLowerCase()] ?? 1;
       final day = int.tryParse(monthMatch.group(2)!) ?? 1;
@@ -11120,13 +11708,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       var hour = int.tryParse(monthMatch.group(4) ?? '12') ?? 12;
       final minute = int.tryParse(monthMatch.group(5) ?? '0') ?? 0;
       final ampm = monthMatch.group(6)?.toLowerCase() ?? 'pm';
-      
+
       if (ampm == 'pm' && hour != 12) hour += 12;
       if (ampm == 'am' && hour == 12) hour = 0;
-      
+
       startDateTime = DateTime(year, month, day, hour, minute);
     }
-    
+
     // Try Pattern 2 if Pattern 1 didn't match
     if (startDateTime == null) {
       final slashMatch = slashDatePattern.firstMatch(text);
@@ -11136,18 +11724,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final day = int.tryParse(slashMatch.group(2)!) ?? 1;
         var year = int.tryParse(slashMatch.group(3)!) ?? DateTime.now().year;
         if (year < 100) year += 2000; // Convert 2-digit year
-        
+
         var hour = int.tryParse(slashMatch.group(4) ?? '12') ?? 12;
         final minute = int.tryParse(slashMatch.group(5) ?? '0') ?? 0;
         final ampm = slashMatch.group(6)?.toLowerCase();
-        
+
         if (ampm == 'pm' && hour != 12) hour += 12;
         if (ampm == 'am' && hour == 12) hour = 0;
-        
+
         startDateTime = DateTime(year, month, day, hour, minute);
       }
     }
-    
+
     // Try Pattern 3 (ISO format)
     if (startDateTime == null) {
       final isoMatch = isoPattern.firstMatch(text);
@@ -11158,21 +11746,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final day = int.tryParse(isoMatch.group(3)!) ?? 1;
         final hour = int.tryParse(isoMatch.group(4) ?? '12') ?? 12;
         final minute = int.tryParse(isoMatch.group(5) ?? '0') ?? 0;
-        
+
         startDateTime = DateTime(year, month, day, hour, minute);
       }
     }
-    
+
     // If we found a date, create event info
     if (startDateTime != null) {
       // Check if the date is in the future or recent past (within last 7 days)
       final now = DateTime.now();
       final weekAgo = now.subtract(const Duration(days: 7));
-      
+
       if (startDateTime.isAfter(weekAgo)) {
         // Default end time is 2 hours after start
         final endDateTime = startDateTime.add(const Duration(hours: 2));
-        
+
         return ExtractedEventInfo(
           startDateTime: startDateTime,
           endDateTime: endDateTime,
@@ -11181,14 +11769,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     }
-    
+
     return null;
   }
 
   // --- Select Event Dialog for adding experience to event itinerary ---
-  
+
   /// Helper class to represent either a date header or an event in the list
-  
 
   // Group events by date and create a list with headers
   List<_EventListItem> _buildEventListWithHeaders(List<Event> events) {
@@ -11278,12 +11865,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Widget _buildSelectEventCard(
-    Event event, 
-    ThemeData theme, 
-    bool isDark, 
-    bool isSelected,
-    {VoidCallback? onTap}
-  ) {
+      Event event, ThemeData theme, bool isDark, bool isSelected,
+      {VoidCallback? onTap}) {
     final cardColor = isDark ? const Color(0xFF2B2930) : Colors.white;
     final borderColor = _getEventColor(event);
 
@@ -11327,7 +11910,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            event.title.isEmpty ? 'Untitled Event' : event.title,
+                            event.title.isEmpty
+                                ? 'Untitled Event'
+                                : event.title,
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w600,
                               fontFamily: 'Google Sans',
@@ -11347,7 +11932,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                               Text(
                                 _formatEventTime(event),
                                 style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: isDark ? Colors.white60 : Colors.black54,
+                                  color:
+                                      isDark ? Colors.white60 : Colors.black54,
                                 ),
                               ),
                             ],
@@ -11451,7 +12037,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       // Fetch user's events
       final events = await _eventService.getEventsForUser(currentUserId);
-      
+
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
 
@@ -11462,11 +12048,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Find the index to scroll to
       int anchorIndex = -1;
-      
+
       // First priority: scroll to selected event for this card if there is one
       if (card.selectedEvent != null) {
         for (int i = 0; i < eventListItems.length; i++) {
-          if (!eventListItems[i].isHeader && 
+          if (!eventListItems[i].isHeader &&
               eventListItems[i].event != null &&
               eventListItems[i].event!.id == card.selectedEvent!.id) {
             anchorIndex = i;
@@ -11474,7 +12060,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         }
       }
-      
+
       // Second priority: scroll to first upcoming event
       if (anchorIndex == -1 && events.isNotEmpty) {
         final now = DateTime.now();
@@ -11532,7 +12118,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 }
               }
 
-              Future.delayed(const Duration(milliseconds: 150), tryEnsureVisible);
+              Future.delayed(
+                  const Duration(milliseconds: 150), tryEnsureVisible);
             }
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -11550,8 +12137,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 backgroundColor: AppColors.backgroundColor,
                 insetPadding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-                shape:
-                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.of(dialogContext).size.width * 0.95,
@@ -11593,22 +12180,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                     Icon(
                                       Icons.event_outlined,
                                       size: 48,
-                                      color: isDark ? Colors.white38 : Colors.black45,
+                                      color: isDark
+                                          ? Colors.white38
+                                          : Colors.black45,
                                     ),
                                     const SizedBox(height: 12),
                                     Text(
                                       'No events yet',
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        color:
-                                            isDark ? Colors.white70 : Colors.black54,
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
+                                        color: isDark
+                                            ? Colors.white70
+                                            : Colors.black54,
                                       ),
                                     ),
                                     const SizedBox(height: 8),
                                     Text(
                                       'Create events from the Map screen',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color:
-                                            isDark ? Colors.white54 : Colors.black45,
+                                      style:
+                                          theme.textTheme.bodySmall?.copyWith(
+                                        color: isDark
+                                            ? Colors.white54
+                                            : Colors.black45,
                                       ),
                                     ),
                                   ],
@@ -11616,24 +12209,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                               )
                             : ListView.builder(
                                 controller: scrollController,
-                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
                                 itemCount: eventListItems.length,
                                 itemBuilder: (context, index) {
                                   final item = eventListItems[index];
                                   return Container(
                                     key: itemKeys[index],
                                     child: item.isHeader
-                                        ? _buildEventDateHeader(item.date!, theme, isDark)
+                                        ? _buildEventDateHeader(
+                                            item.date!, theme, isDark)
                                         : _buildSelectEventCard(
                                             item.event!,
                                             theme,
                                             isDark,
-                                            card.selectedEvent?.id == item.event!.id,
+                                            card.selectedEvent?.id ==
+                                                item.event!.id,
                                             onTap: () {
                                               triggerHeavyHaptic();
                                               final tappedEvent = item.event!;
-                                              
-                                              if (card.selectedEvent?.id == tappedEvent.id) {
+
+                                              if (card.selectedEvent?.id ==
+                                                  tappedEvent.id) {
                                                 // Deselect if already selected
                                                 setState(() {
                                                   card.selectedEvent = null;
@@ -11641,21 +12238,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                 setDialogState(() {});
                                                 Fluttertoast.showToast(
                                                   msg: 'Event deselected',
-                                                  toastLength: Toast.LENGTH_SHORT,
+                                                  toastLength:
+                                                      Toast.LENGTH_SHORT,
                                                   gravity: ToastGravity.BOTTOM,
                                                 );
                                               } else {
                                                 // Select the event for this card
                                                 setState(() {
-                                                  card.selectedEvent = tappedEvent;
+                                                  card.selectedEvent =
+                                                      tappedEvent;
                                                 });
                                                 setDialogState(() {});
-                                                
+
                                                 // Close dialog and show toast
-                                                Navigator.of(dialogContext).pop();
+                                                Navigator.of(dialogContext)
+                                                    .pop();
                                                 Fluttertoast.showToast(
-                                                  msg: 'Experience will be saved to "${tappedEvent.title}"',
-                                                  toastLength: Toast.LENGTH_LONG,
+                                                  msg:
+                                                      'Experience will be saved to "${tappedEvent.title}"',
+                                                  toastLength:
+                                                      Toast.LENGTH_LONG,
                                                   gravity: ToastGravity.BOTTOM,
                                                 );
                                               }
@@ -11722,6 +12324,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   bool _isExpanded = false;
   bool _isDisposed = false;
   inapp.InAppWebViewController? _controller;
+
   /// Display mode: true = web view, false = default (oEmbed HTML)
   /// Always starts as false (default/oEmbed) regardless of user's global settings
   bool _isWebViewMode = false;
@@ -11769,7 +12372,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   }
 
   /// Extract text content from the Instagram WebView
-  /// 
+  ///
   /// This is useful as a fallback when oEmbed doesn't return caption data.
   /// For Reels especially, the caption may only be available after JavaScript renders.
   Future<String?> extractPageContent() async {
@@ -11777,10 +12380,10 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
       print('⚠️ INSTAGRAM WRAPPER: Controller is null, cannot extract content');
       return null;
     }
-    
+
     try {
       print('📸 INSTAGRAM WRAPPER: Extracting page content...');
-      
+
       // Try to extract text from the WebView
       final result = await _controller!.evaluateJavascript(source: '''
         (function() {
@@ -11816,12 +12419,16 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           return allText;
         })();
       ''');
-      
-      if (result != null && result.toString().isNotEmpty && result.toString() != 'null') {
+
+      if (result != null &&
+          result.toString().isNotEmpty &&
+          result.toString() != 'null') {
         final content = result.toString().trim();
-        print('✅ INSTAGRAM WRAPPER: Extracted content (${content.length} chars)');
+        print(
+            '✅ INSTAGRAM WRAPPER: Extracted content (${content.length} chars)');
         if (content.length > 200) {
-          print('📸 INSTAGRAM WRAPPER: Content preview: ${content.substring(0, 200)}...');
+          print(
+              '📸 INSTAGRAM WRAPPER: Content preview: ${content.substring(0, 200)}...');
         }
         return content;
       } else {
@@ -11850,7 +12457,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   @override
   Widget build(BuildContext context) {
     final double height = _isExpanded ? 2800.0 : 910.0;
-    
+
     // Use a consistent key to prevent widget recreation across rebuilds
     final widgetKey = ValueKey('instagram_preview_${widget.url}');
 
@@ -11889,7 +12496,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
                 onTap: _toggleDisplayMode,
                 child: Container(
                   margin: const EdgeInsets.only(left: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: _isWebViewMode
                         ? AppColors.teal.withOpacity(0.15)
@@ -11915,7 +12523,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w500,
-                          color: _isWebViewMode ? AppColors.teal : AppColors.sage,
+                          color:
+                              _isWebViewMode ? AppColors.teal : AppColors.sage,
                         ),
                       ),
                     ],
@@ -11937,7 +12546,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
             child: Align(
               alignment: Alignment.centerRight,
               child: IconButton(
-                icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                icon: Icon(
+                    _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
                 iconSize: 24,
                 color: AppColors.teal,
                 tooltip: _isExpanded ? 'Collapse' : 'Expand',
@@ -11962,14 +12572,33 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 class _MultiLocationSelectionResult {
   final List<ExtractedLocationData> selectedLocations;
   final Map<ExtractedLocationData, Experience> selectedDuplicates;
+
   /// Event info if detected (passed through for post-save handling)
   final ExtractedEventInfo? eventInfo;
+
+  /// Whether the user requested a deep scan
+  final bool deepScanRequested;
 
   _MultiLocationSelectionResult({
     required this.selectedLocations,
     required this.selectedDuplicates,
     this.eventInfo,
+    this.deepScanRequested = false,
   });
+
+  /// Factory for creating a deep scan request result
+  /// [confirmedLocations] are locations the user has selected/confirmed from quick scan
+  /// [confirmedDuplicates] maps confirmed locations to their existing experiences
+  factory _MultiLocationSelectionResult.deepScanRequest({
+    List<ExtractedLocationData> confirmedLocations = const [],
+    Map<ExtractedLocationData, Experience> confirmedDuplicates = const {},
+  }) {
+    return _MultiLocationSelectionResult(
+      selectedLocations: confirmedLocations,
+      selectedDuplicates: confirmedDuplicates,
+      deepScanRequested: true,
+    );
+  }
 }
 
 /// Dialog for selecting multiple locations from AI extraction results
@@ -11980,10 +12609,22 @@ class _MultiLocationSelectionDialog extends StatefulWidget {
   /// Optional event info detected from the content
   final ExtractedEventInfo? detectedEventInfo;
 
+  /// Whether this is showing results from deep scan (hides deep scan option if true)
+  final bool isDeepScan;
+
+  /// Callback when user requests deep scan
+  final VoidCallback? onDeepScanRequested;
+
+  /// Optional raw scanned text to show in expandable section
+  final String? scannedText;
+
   const _MultiLocationSelectionDialog({
     required this.locations,
     this.duplicates = const {},
     this.detectedEventInfo,
+    this.isDeepScan = false,
+    this.onDeepScanRequested,
+    this.scannedText,
   });
 
   @override
@@ -11994,12 +12635,15 @@ class _MultiLocationSelectionDialog extends StatefulWidget {
 class _MultiLocationSelectionDialogState
     extends State<_MultiLocationSelectionDialog> {
   late Set<int> _selectedIndices;
-  
+
   /// Maps location index to business status from Places API
   final Map<int, String?> _businessStatusMap = {};
-  
+
   /// Service for fetching place details
   final GoogleMapsService _mapsService = GoogleMapsService();
+
+  /// Whether the scanned text section is expanded
+  bool _isScannedTextExpanded = false;
 
   /// Confidence threshold - locations below this should be verified by user
   /// Note: Good matches from extraction service get 0.85 confidence, so threshold
@@ -12010,15 +12654,15 @@ class _MultiLocationSelectionDialogState
   void initState() {
     super.initState();
     // Start with all valid locations selected (those with coordinates)
-    _selectedIndices = Set<int>.from(
-      widget.locations.asMap().entries
-          .where((e) => e.value.coordinates != null)
-          .map((e) => e.key)
-    );
+    _selectedIndices = Set<int>.from(widget.locations
+        .asMap()
+        .entries
+        .where((e) => e.value.coordinates != null)
+        .map((e) => e.key));
     // Fetch business status for all locations with place IDs
     _fetchBusinessStatuses();
   }
-  
+
   /// Fetch business status for all locations that have a placeId
   Future<void> _fetchBusinessStatuses() async {
     for (int i = 0; i < widget.locations.length; i++) {
@@ -12029,7 +12673,7 @@ class _MultiLocationSelectionDialogState
       }
     }
   }
-  
+
   /// Fetch business status for a single location by index
   Future<void> _fetchBusinessStatusForIndex(int index, String placeId) async {
     try {
@@ -12038,7 +12682,7 @@ class _MultiLocationSelectionDialogState
       if (placeId.startsWith('places/')) {
         cleanPlaceId = placeId.substring(7); // Remove 'places/' prefix
       }
-      
+
       final detailsMap = await _mapsService.fetchPlaceDetailsData(cleanPlaceId);
       final businessStatus = detailsMap?['businessStatus'] as String?;
       if (mounted) {
@@ -12050,27 +12694,27 @@ class _MultiLocationSelectionDialogState
       print('⚠️ BUSINESS STATUS: Error fetching for index $index: $e');
     }
   }
-  
+
   /// Check if a location at index is permanently closed
   bool _isPermanentlyClosed(int index) {
     return _businessStatusMap[index] == 'CLOSED_PERMANENTLY';
   }
-  
+
   bool get _hasEventInfo => widget.detectedEventInfo != null;
 
   /// Count of valid locations (those with coordinates - excludes "No results" items)
-  int get _validLocationCount => widget.locations
-      .where((loc) => loc.coordinates != null)
-      .length;
-  
-  /// Indices of valid locations (those with coordinates)
-  Set<int> get _validLocationIndices => Set<int>.from(
-    widget.locations.asMap().entries
-        .where((e) => e.value.coordinates != null)
-        .map((e) => e.key)
-  );
+  int get _validLocationCount =>
+      widget.locations.where((loc) => loc.coordinates != null).length;
 
-  bool get _allSelected => _selectedIndices.length == _validLocationCount && _validLocationCount > 0;
+  /// Indices of valid locations (those with coordinates)
+  Set<int> get _validLocationIndices => Set<int>.from(widget.locations
+      .asMap()
+      .entries
+      .where((e) => e.value.coordinates != null)
+      .map((e) => e.key));
+
+  bool get _allSelected =>
+      _selectedIndices.length == _validLocationCount && _validLocationCount > 0;
   bool get _noneSelected => _selectedIndices.isEmpty;
 
   int get _duplicateCount => widget.duplicates.length;
@@ -12111,7 +12755,7 @@ class _MultiLocationSelectionDialogState
       }
     });
   }
-  
+
   void _finishSelection() {
     // Sort indices and map to locations
     final sortedIndices = _selectedIndices.toList()..sort();
@@ -12119,20 +12763,18 @@ class _MultiLocationSelectionDialogState
         sortedIndices.map((i) => widget.locations[i]).toList();
 
     // Filter out locations without coordinates (not found in Google Places)
-    final validLocations = allSelectedLocations
-        .where((loc) => loc.coordinates != null)
-        .toList();
-    final skippedLocations = allSelectedLocations
-        .where((loc) => loc.coordinates == null)
-        .toList();
+    final validLocations =
+        allSelectedLocations.where((loc) => loc.coordinates != null).toList();
+    final skippedLocations =
+        allSelectedLocations.where((loc) => loc.coordinates == null).toList();
 
     // Show warning if any locations were skipped
     if (skippedLocations.isNotEmpty) {
-      final skippedNames = skippedLocations
-          .map((loc) => '"${loc.name}"')
-          .join(', ');
+      final skippedNames =
+          skippedLocations.map((loc) => '"${loc.name}"').join(', ');
       Fluttertoast.showToast(
-        msg: '⚠️ Skipped ${skippedLocations.length} location(s) not found in Google Places: $skippedNames',
+        msg:
+            '⚠️ Skipped ${skippedLocations.length} location(s) not found in Google Places: $skippedNames',
         toastLength: Toast.LENGTH_LONG,
         backgroundColor: Colors.orange[700],
       );
@@ -12141,7 +12783,8 @@ class _MultiLocationSelectionDialogState
     // If no valid locations remain, don't proceed
     if (validLocations.isEmpty) {
       Fluttertoast.showToast(
-        msg: '❌ No valid locations selected. Please select locations that were found in Google Places.',
+        msg:
+            '❌ No valid locations selected. Please select locations that were found in Google Places.',
         toastLength: Toast.LENGTH_LONG,
         backgroundColor: Colors.red[700],
       );
@@ -12149,8 +12792,7 @@ class _MultiLocationSelectionDialogState
     }
 
     // Build map of selected locations that are duplicates (only for valid locations)
-    final selectedDuplicates =
-        <ExtractedLocationData, Experience>{};
+    final selectedDuplicates = <ExtractedLocationData, Experience>{};
     for (final index in sortedIndices) {
       final loc = widget.locations[index];
       if (loc.coordinates != null && widget.duplicates.containsKey(index)) {
@@ -12168,6 +12810,40 @@ class _MultiLocationSelectionDialogState
         ));
   }
 
+  /// Get the currently selected valid locations (for deep scan request)
+  /// Returns only locations with coordinates that are selected
+  List<ExtractedLocationData> _getConfirmedLocations() {
+    final sortedIndices = _selectedIndices.toList()..sort();
+    return sortedIndices
+        .map((i) => widget.locations[i])
+        .where((loc) => loc.coordinates != null)
+        .toList();
+  }
+
+  /// Get duplicates map for confirmed locations (for deep scan request)
+  Map<ExtractedLocationData, Experience> _getConfirmedDuplicates() {
+    final sortedIndices = _selectedIndices.toList()..sort();
+    final confirmedDuplicates = <ExtractedLocationData, Experience>{};
+    for (final index in sortedIndices) {
+      final loc = widget.locations[index];
+      if (loc.coordinates != null && widget.duplicates.containsKey(index)) {
+        confirmedDuplicates[loc] = widget.duplicates[index]!;
+      }
+    }
+    return confirmedDuplicates;
+  }
+
+  /// Request deep scan while preserving confirmed selections
+  void _requestDeepScanWithConfirmed() {
+    Navigator.pop(
+      context,
+      _MultiLocationSelectionResult.deepScanRequest(
+        confirmedLocations: _getConfirmedLocations(),
+        confirmedDuplicates: _getConfirmedDuplicates(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -12181,22 +12857,28 @@ class _MultiLocationSelectionDialogState
       actions: _buildLocationActions(),
     );
   }
-  
+
   Widget _buildLocationTitle() {
     final primaryColor = Theme.of(context).primaryColor;
+    final bool isEmpty = _validLocationCount == 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Row(
           children: [
-            const Icon(Icons.location_on, color: AppColors.sage),
+            Icon(
+              isEmpty ? Icons.search_off : Icons.location_on,
+              color: isEmpty ? Colors.orange[700] : AppColors.sage,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                _validLocationCount == 1
-                    ? '1 Location Found'
-                    : '$_validLocationCount Locations Found',
+                isEmpty
+                    ? 'No Locations Found'
+                    : _validLocationCount == 1
+                        ? '1 Location Found'
+                        : '$_validLocationCount Locations Found',
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -12252,9 +12934,78 @@ class _MultiLocationSelectionDialogState
       ],
     );
   }
-  
+
   Widget _buildLocationSelectionPage() {
     final primaryColor = Theme.of(context).primaryColor;
+    final bool isEmpty = widget.locations.isEmpty;
+
+    // Show empty state message when no locations found
+    if (isEmpty) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(height: 16),
+          Icon(
+            Icons.location_searching,
+            size: 48,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Auto-scan couldn\'t find any locations in this content.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.sage.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.sage.withOpacity(0.2)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.lightbulb_outline,
+                        size: 16, color: AppColors.sage),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Try Deep Scan',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.sage,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Deep Scan analyzes screenshots and visible text to find locations that auto-scan missed. Your selected locations will be preserved.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Expandable scanned text section for empty state too
+          if (widget.scannedText != null && widget.scannedText!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildScannedTextSection(),
+          ],
+          const SizedBox(height: 8),
+        ],
+      );
+    }
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -12267,8 +13018,7 @@ class _MultiLocationSelectionDialogState
         if (_duplicateCount > 0) ...[
           const SizedBox(height: 8),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: AppColors.teal.withOpacity(0.12),
               borderRadius: BorderRadius.circular(8),
@@ -12316,8 +13066,8 @@ class _MultiLocationSelectionDialogState
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: AppColors.sage.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
@@ -12353,11 +13103,14 @@ class _MultiLocationSelectionDialogState
                 final existingExp = widget.duplicates[index];
                 final isLowConfidence = _isLowConfidence(location);
                 final hasNoCoordinates = location.coordinates == null;
-                final isDisabled = hasNoCoordinates; // Can't select locations without coordinates
+                final isDisabled =
+                    hasNoCoordinates; // Can't select locations without coordinates
                 final isPermanentlyClosed = _isPermanentlyClosed(index);
 
                 return InkWell(
-                  onTap: isDisabled ? null : withHeavyTap(() => _toggleLocation(index)),
+                  onTap: isDisabled
+                      ? null
+                      : withHeavyTap(() => _toggleLocation(index)),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 4),
@@ -12375,15 +13128,16 @@ class _MultiLocationSelectionDialogState
                                           : AppColors.sage.withOpacity(0.08))
                               : null,
                       borderRadius: BorderRadius.circular(8),
-                      border: (isPermanentlyClosed || isLowConfidence) && isSelected
-                          ? Border.all(
-                              color: primaryColor.withOpacity(0.3),
-                              width: 1)
-                          : isDisabled
+                      border:
+                          (isPermanentlyClosed || isLowConfidence) && isSelected
                               ? Border.all(
-                                  color: Colors.red.withOpacity(0.2),
+                                  color: primaryColor.withOpacity(0.3),
                                   width: 1)
-                              : null,
+                              : isDisabled
+                                  ? Border.all(
+                                      color: Colors.red.withOpacity(0.2),
+                                      width: 1)
+                                  : null,
                     ),
                     child: Row(
                       children: [
@@ -12394,10 +13148,10 @@ class _MultiLocationSelectionDialogState
                             onChanged: (_) => _toggleLocation(index),
                             // Permanently closed and low confidence use primaryColor
                             activeColor: isPermanentlyClosed || isLowConfidence
-                              ? primaryColor
-                              : isDuplicate
-                                  ? AppColors.teal
-                                  : AppColors.sage,
+                                ? primaryColor
+                                : isDuplicate
+                                    ? AppColors.teal
+                                    : AppColors.sage,
                           ),
                         ] else ...[
                           // Show empty space to align with other items
@@ -12462,116 +13216,112 @@ class _MultiLocationSelectionDialogState
                                         ),
                                       ),
                                     ),
-                                  if (isDuplicate)
-                                    Container(
-                                      margin:
-                                          const EdgeInsets.only(left: 4),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.teal
-                                            .withOpacity(0.18),
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        'Saved',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.teal,
-                                        ),
-                                      ),
-                                    ),
-                                  // Show closed badge for permanently closed locations
-                                  if (isPermanentlyClosed)
-                                    Container(
-                                      margin:
-                                          const EdgeInsets.only(left: 4),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            primaryColor.withOpacity(0.12),
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                        border: Border.all(
+                                    if (isDuplicate)
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 4),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
                                           color:
-                                              primaryColor.withOpacity(0.35),
-                                          width: 1,
+                                              AppColors.teal.withOpacity(0.18),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          'Saved',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.teal,
+                                          ),
                                         ),
                                       ),
-                                      child: Text(
-                                        'Closed',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: primaryColor,
+                                    // Show closed badge for permanently closed locations
+                                    if (isPermanentlyClosed)
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 4),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor.withOpacity(0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color:
+                                                primaryColor.withOpacity(0.35),
+                                            width: 1,
+                                          ),
                                         ),
-                                      ),
-                                    ),
-                                  // Show verify badge for low confidence locations (even if also a duplicate)
-                                  if (isLowConfidence)
-                                    Container(
-                                      margin:
-                                          const EdgeInsets.only(left: 4),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            primaryColor.withOpacity(0.12),
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color:
-                                              primaryColor.withOpacity(0.35),
-                                          width: 1,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.warning_amber_rounded,
-                                            size: 10,
+                                        child: Text(
+                                          'Closed',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
                                             color: primaryColor,
                                           ),
-                                          const SizedBox(width: 2),
-                                          Text(
-                                            'Verify',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w600,
-                                              color: primaryColor,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  // Show confident badge for sage-colored locations (not duplicate, not low confidence, not closed)
-                                  if (!isDuplicate && !isLowConfidence && !isPermanentlyClosed)
-                                    Container(
-                                      margin:
-                                          const EdgeInsets.only(left: 4),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.sage
-                                            .withOpacity(0.18),
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        'Confident',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.sage,
                                         ),
                                       ),
-                                    ),
-                                ],
-                              ),
+                                    // Show verify badge for low confidence locations (even if also a duplicate)
+                                    if (isLowConfidence)
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 4),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor.withOpacity(0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color:
+                                                primaryColor.withOpacity(0.35),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.warning_amber_rounded,
+                                              size: 10,
+                                              color: primaryColor,
+                                            ),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              'Verify',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w600,
+                                                color: primaryColor,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    // Show confident badge for sage-colored locations (not duplicate, not low confidence, not closed)
+                                    if (!isDuplicate &&
+                                        !isLowConfidence &&
+                                        !isPermanentlyClosed)
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 4),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color:
+                                              AppColors.sage.withOpacity(0.18),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          'Confident',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.sage,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               // Show details only for enabled items
                               if (!isDisabled) ...[
                                 if (location.address != null &&
@@ -12660,20 +13410,198 @@ class _MultiLocationSelectionDialogState
             ),
           ),
         ),
+        // Expandable scanned text section
+        if (widget.scannedText != null && widget.scannedText!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildScannedTextSection(),
+        ],
       ],
     );
   }
-  
+
+  /// Build the expandable scanned text section
+  Widget _buildScannedTextSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with expand/collapse tap area
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isScannedTextExpanded = !_isScannedTextExpanded;
+              });
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    _isScannedTextExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    size: 20,
+                    color: Colors.grey[600],
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _isScannedTextExpanded
+                          ? 'Hide scanned text'
+                          : 'Show scanned text to double check',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.text_snippet_outlined,
+                    size: 16,
+                    color: Colors.grey[500],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Expanded content
+          if (_isScannedTextExpanded) ...[
+            Divider(height: 1, color: Colors.grey[300]),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 150),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  widget.scannedText!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[800],
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   List<Widget> _buildLocationActions() {
+    final bool isEmpty = widget.locations.isEmpty;
+
+    // Special handling for empty state - show prominent Deep Scan button
+    if (isEmpty && !widget.isDeepScan && widget.onDeepScanRequested != null) {
+      return [
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: const Text('Close'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _requestDeepScanWithConfirmed,
+                icon: const Icon(Icons.search, size: 18),
+                label: const Text('Run Deep Scan'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.sage,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ];
+    }
+
+    // Empty state from deep scan - just show close button
+    if (isEmpty) {
+      return [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Close'),
+        ),
+      ];
+    }
+
     return [
-      TextButton(
-        onPressed: () => Navigator.pop(context, null),
-        child: const Text('Cancel'),
-      ),
-      ElevatedButton(
-        onPressed: _noneSelected ? null : _finishSelection,
-        child: Text(_buildButtonText()),
-      ),
+      // Show deep scan button above the main action buttons
+      if (!widget.isDeepScan && widget.onDeepScanRequested != null)
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Deep scan info text and button
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      _selectedIndices.isEmpty
+                          ? 'Not what you expected?'
+                          : 'Selected locations will be kept',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    OutlinedButton.icon(
+                      onPressed: _requestDeepScanWithConfirmed,
+                      icon: const Icon(Icons.search, size: 16),
+                      label: const Text('Try Deep Scan'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.sage,
+                        side: BorderSide(color: AppColors.sage),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Main action buttons row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, null),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _noneSelected ? null : _finishSelection,
+                    child: Text(_buildButtonText()),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      // When deep scan option is not shown, just show Cancel and Create buttons
+      if (widget.isDeepScan || widget.onDeepScanRequested == null) ...[
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _noneSelected ? null : _finishSelection,
+          child: Text(_buildButtonText()),
+        ),
+      ],
     ];
   }
 
@@ -13037,7 +13965,8 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
                         return Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: withHeavyTap(() => _selectSearchResult(result)),
+                            onTap:
+                                withHeavyTap(() => _selectSearchResult(result)),
                             borderRadius: BorderRadius.circular(8),
                             child: Padding(
                               padding:
