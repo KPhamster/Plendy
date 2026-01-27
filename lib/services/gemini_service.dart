@@ -147,6 +147,122 @@ class GeminiService {
     }
   }
 
+  /// Analyze text content to extract rich location context
+  /// 
+  /// This method extracts the SAME rich data that extractLocationsFromMultipleImages
+  /// gets from images, enabling unified verification using sophisticated scoring.
+  /// 
+  /// Returns: ContentContext with mentionedPlaceNames, businessHandles, regionContext, etc.
+  /// This is the first step in the unified extraction flow.
+  Future<ContentContext?> analyzeTextForLocations(String text) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI TEXT ANALYSIS: API key not configured');
+      return null;
+    }
+
+    if (text.trim().isEmpty) {
+      print('⚠️ GEMINI TEXT ANALYSIS: Empty text provided');
+      return null;
+    }
+
+    try {
+      print('🔍 GEMINI TEXT ANALYSIS: Analyzing text for location context (${text.length} chars)...');
+      
+      final prompt = _buildTextContextAnalysisPrompt(text);
+      
+      // No token limit - let the model use its full capacity for multi-location content
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI TEXT ANALYSIS: No response from API');
+        return null;
+      }
+      
+      final context = _parseContextResponse(response);
+      
+      if (context != null) {
+        print('✅ GEMINI TEXT ANALYSIS: Context analyzed');
+        print('   📋 Content Type: ${context.contentType}');
+        print('   🎯 Purpose: ${context.purpose}');
+        print('   🌍 Geographic Focus: ${context.geographicFocus ?? "Not specified"}');
+        if (context.mentionedPlaceNames.isNotEmpty) {
+          print('   🏷️ Mentioned Place Names: ${context.mentionedPlaceNames.join(", ")}');
+        }
+        if (context.businessHandles.isNotEmpty) {
+          print('   🏪 Business Handles: ${context.businessHandles.map((h) => "@$h").join(", ")}');
+        }
+      }
+      
+      return context;
+    } catch (e, stackTrace) {
+      print('❌ GEMINI TEXT ANALYSIS ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Build prompt for analyzing text content (similar to multi-image context analysis)
+  String _buildTextContextAnalysisPrompt(String text) {
+    return '''
+You are an expert content analyst. Analyze this text content to extract location information.
+
+=== TEXT TO ANALYZE ===
+$text
+
+=== YOUR TASK ===
+Analyze this text to understand:
+
+1. What TYPE of content is this? (social media caption, travel blog, review, etc.)
+2. What is the PURPOSE? (e.g., "recommending a restaurant", "reviewing a cafe")
+3. What GEOGRAPHIC REGION is mentioned? (city, state, country, area)
+4. What TYPES of locations are mentioned? (restaurants, cafes, attractions, etc.)
+5. Extract ACTUAL PLACE NAMES and ADDRESSES explicitly mentioned
+
+=== CRITICAL: EXTRACT ADDRESSES ===
+Look for explicit addresses in the text. These are the MOST RELIABLE signals.
+Examples:
+- "📍American Beauty 189 The Grove Dr. Unit Y-80 Los Angeles, CA 90036"
+- "123 Main St, San Francisco, CA"
+- "Located at 456 Oak Ave"
+
+=== CRITICAL: IDENTIFY BUSINESS HANDLES ===
+Look for Instagram/social media handles that belong to BUSINESSES being mentioned (NOT the content creator).
+- Content creator: The person who wrote/posted this (e.g., "lisaeatsla" posting content)
+- Business handle: The business being FEATURED (e.g., "@americanbeauty.la" being mentioned)
+
+=== OUTPUT FORMAT ===
+Return a JSON object:
+{
+  "content_type": "Type of content (e.g., 'Instagram caption', 'review')",
+  "purpose": "What is being featured or recommended",
+  "geographic_focus": "The main region/city/area (e.g., 'Los Angeles, CA') or null",
+  "location_types_to_find": ["restaurant", "cafe"],
+  "criteria": ["steakhouse", "new location"],
+  "context_clues": ["mentions outdoor seating", "second location"],
+  "exclusions": [],
+  "extracted_text": "The original text unchanged",
+  "mentioned_place_names": [
+    {
+      "name": "American Beauty",
+      "address": "189 The Grove Dr. Unit Y-80, Los Angeles, CA 90036",
+      "type": "restaurant"
+    }
+  ],
+  "search_query_suggestion": "American Beauty The Grove Los Angeles",
+  "content_creator_handle": "lisaeatsla or null",
+  "business_handles": ["americanbeauty.la"]
+}
+
+=== IMPORTANT ===
+- Extract EXPLICIT addresses when mentioned - these are critical for accurate matching
+- For mentioned_place_names, include the address if found in text
+- **CRITICAL: List mentioned_place_names in ORDER OF APPEARANCE in the text (first mentioned = first in list)**
+- The geographic_focus should be the city/state context
+- business_handles are handles of BUSINESSES being mentioned, NOT the content creator
+- Return ONLY the JSON object, no other text
+''';
+  }
+
   /// Look up an Instagram handle to find the actual business name
   /// 
   /// This uses Google Search grounding to look up what business an Instagram
@@ -244,6 +360,74 @@ If you cannot find the business with confidence, return:
       }
     } catch (e) {
       print('❌ GEMINI HANDLE LOOKUP ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Look up an Instagram handle with full context (like Preview Scan does)
+  /// 
+  /// This is a more sophisticated version of [lookupInstagramHandle] that uses
+  /// the same approach as Preview Scan's multi-image analysis. It:
+  /// - Extracts addresses from the caption text
+  /// - Uses geographic hints for disambiguation
+  /// - Returns full location info including address/city/region
+  /// 
+  /// [handle] - The Instagram handle (with or without @)
+  /// [captionText] - The full caption text (may contain addresses)
+  /// [geographicHints] - Optional geographic hints (e.g., ["Utah", "Bryce Canyon"])
+  /// [locationTypes] - Optional business types to look for
+  /// 
+  /// Returns ExtractedLocationInfo with name, address, city, type, or null if not found
+  Future<ExtractedLocationInfo?> lookupInstagramHandleWithContext(
+    String handle, {
+    String? captionText,
+    List<String>? geographicHints,
+    List<String>? locationTypes,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI HANDLE LOOKUP: API key not configured');
+      return null;
+    }
+
+    try {
+      // Clean up the handle
+      String cleanHandle = handle.trim();
+      if (cleanHandle.startsWith('@')) {
+        cleanHandle = cleanHandle.substring(1);
+      }
+
+      // Build a ContentContext from the available information
+      final context = ContentContext(
+        contentType: 'instagram_post',
+        purpose: 'find business location',
+        geographicFocus: geographicHints?.isNotEmpty == true ? geographicHints!.first : null,
+        locationTypesToFind: locationTypes ?? ['restaurant', 'cafe', 'bar', 'attraction', 'hotel'],
+        extractedText: captionText,
+        businessHandles: [cleanHandle],
+      );
+
+      print('🔎 GEMINI HANDLE LOOKUP (with context): Looking up @$cleanHandle...');
+      if (captionText != null) {
+        print('   📝 Caption context: ${captionText.length} chars');
+      }
+      if (geographicHints?.isNotEmpty == true) {
+        print('   🌍 Geographic hints: $geographicHints');
+      }
+
+      // Use the same method as Preview Scan
+      final result = await _searchForBusinessByHandle(cleanHandle, context);
+
+      if (result != null) {
+        print('✅ GEMINI HANDLE LOOKUP (with context): @$cleanHandle → "${result.name}"');
+        if (result.address != null) print('   📍 Address: ${result.address}');
+        if (result.city != null) print('   🏙️ City: ${result.city}');
+      } else {
+        print('⚠️ GEMINI HANDLE LOOKUP (with context): Could not identify business for @$cleanHandle');
+      }
+
+      return result;
+    } catch (e) {
+      print('❌ GEMINI HANDLE LOOKUP (with context) ERROR: $e');
       return null;
     }
   }
@@ -368,16 +552,86 @@ WRONG (do NOT do this):
     }
   }
 
+  /// Search for a place using Google Search grounding to find its address
+  /// 
+  /// This is the same method used by the multi-image/Scan Preview flow.
+  /// It uses Google Search to find the actual place with its address,
+  /// which is much more accurate than just using the Places API alone.
+  /// 
+  /// [placeName] - The name of the place to search for
+  /// [geographicFocus] - Optional geographic context (e.g., "San Diego, CA")
+  /// [placeType] - Optional type of place (e.g., "cafe", "restaurant")
+  /// [extractedText] - Optional text context for better search
+  /// 
+  /// Returns ExtractedLocationInfo with name, address, city, type, or null if not found
+  Future<ExtractedLocationInfo?> searchPlaceWithGrounding({
+    required String placeName,
+    String? geographicFocus,
+    String? placeType,
+    String? extractedText,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI PLACE SEARCH: API key not configured');
+      return null;
+    }
+
+    try {
+      // Build search query with geographic context
+      String searchQuery = placeName;
+      if (geographicFocus != null && geographicFocus.isNotEmpty) {
+        searchQuery = '$placeName $geographicFocus';
+      }
+
+      print('🔎 GEMINI PLACE SEARCH: Searching for "$searchQuery"...');
+
+      // Build a ContentContext from the available information
+      final context = ContentContext(
+        contentType: 'place_search',
+        purpose: 'find place address',
+        geographicFocus: geographicFocus,
+        locationTypesToFind: placeType != null ? [placeType] : ['restaurant', 'cafe', 'bar', 'attraction'],
+        extractedText: extractedText,
+        mentionedPlaceNames: [placeName],
+      );
+
+      // Use the same search grounding method as multi-image extraction
+      final result = await _searchForPlaceNameWithGrounding(searchQuery, context);
+
+      if (result != null) {
+        print('✅ GEMINI PLACE SEARCH: Found "$placeName" → "${result.name}"');
+        if (result.address != null) print('   📍 Address: ${result.address}');
+        if (result.city != null) print('   🏙️ City: ${result.city}');
+      } else {
+        print('⚠️ GEMINI PLACE SEARCH: Could not find address for "$placeName"');
+      }
+
+      return result;
+    } catch (e) {
+      print('❌ GEMINI PLACE SEARCH ERROR: $e');
+      return null;
+    }
+  }
+
   /// Call Gemini API with Google Search grounding (for web lookups)
   /// 
   /// [prompt] - The prompt to send
-  /// [maxOutputTokens] - Max tokens for response (default 256 for simple lookups, 
-  ///                     use 2048+ for multi-location extraction)
+  /// [maxOutputTokens] - Max tokens for response. If null, uses model's full capacity.
+  ///                     Set to lower values (e.g., 256) for simple lookups to reduce cost.
   Future<Map<String, dynamic>?> _callGeminiWithSearchGrounding(
     String prompt, {
-    int maxOutputTokens = 256,
+    int? maxOutputTokens,
   }) async {
     final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
+    
+    // Build generation config - only include maxOutputTokens if specified
+    final generationConfig = <String, dynamic>{
+      'temperature': 0.1, // Low temperature for factual lookups
+      'topP': 0.8,
+      'topK': 40,
+    };
+    if (maxOutputTokens != null) {
+      generationConfig['maxOutputTokens'] = maxOutputTokens;
+    }
     
     // Build request with Google Search grounding
     final requestBody = {
@@ -393,12 +647,7 @@ WRONG (do NOT do this):
           'googleSearch': {} // Enable Google Search grounding
         }
       ],
-      'generationConfig': {
-        'temperature': 0.1, // Low temperature for factual lookups
-        'topP': 0.8,
-        'topK': 40,
-        'maxOutputTokens': maxOutputTokens,
-      }
+      'generationConfig': generationConfig,
     };
 
     try {
@@ -1484,6 +1733,7 @@ Return:
 - Treat all images as ONE piece of content, not separate items
 - Combine clues from different images to form a complete picture
 - The "mentioned_place_names" is MOST IMPORTANT - look for actual place names mentioned in captions/text
+- **CRITICAL: List mentioned_place_names in ORDER OF APPEARANCE in the text (first mentioned = first in list)**
 - The "search_query_suggestion" should combine the place name + geographic context for accurate search
 - Business handles are useful ONLY when an actual place name is not mentioned
 - The content_creator_handle is the person who POSTED, NOT the place being recommended
@@ -2540,10 +2790,8 @@ NOTE: Each @handle is converted to a readable business name, and the 📍 addres
 - Return ONLY the JSON object, no other text
 ''';
 
-      // Use higher token limit for multi-location extraction (default 256 is too small)
-      // Each location in JSON takes ~100-150 chars, so 30 locations needs ~4000 chars = ~1000 tokens
-      // Using 2048 tokens to safely handle up to 50+ locations
-      final response = await _callGeminiWithSearchGrounding(prompt, maxOutputTokens: 2048);
+      // No token limit for multi-location extraction to handle any number of locations
+      final response = await _callGeminiWithSearchGrounding(prompt);
       
       if (response == null) {
         print('⚠️ RAW EXTRACTION: No response from API');
@@ -3540,6 +3788,13 @@ If you see @handles, convert them to business names:
       if (candidates == null || candidates.isEmpty) return null;
       
       final candidate = candidates.first as Map<String, dynamic>;
+      
+      // Check for truncation (finish_reason will be MAX_TOKENS if truncated)
+      final finishReason = candidate['finishReason'] as String?;
+      if (finishReason == 'MAX_TOKENS') {
+        print('⚠️ GEMINI CONTEXT: Response was truncated (MAX_TOKENS). Consider increasing maxOutputTokens.');
+      }
+      
       final content = candidate['content'] as Map<String, dynamic>?;
       final parts = content?['parts'] as List?;
       if (parts == null || parts.isEmpty) return null;
@@ -3561,7 +3816,22 @@ If you see @handles, convert them to business names:
       }
       jsonText = jsonText.trim();
       
-      final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+      // Attempt to parse JSON, with fallback for truncated responses
+      Map<String, dynamic> parsed;
+      try {
+        parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+      } on FormatException catch (e) {
+        print('⚠️ GEMINI CONTEXT: JSON parse error - attempting to repair truncated response');
+        // Try to repair truncated JSON by closing brackets/braces
+        final repaired = _attemptJsonRepair(jsonText);
+        if (repaired != null) {
+          print('✅ GEMINI CONTEXT: Successfully repaired truncated JSON');
+          parsed = repaired;
+        } else {
+          print('❌ GEMINI CONTEXT: Could not repair truncated JSON: $e');
+          rethrow;
+        }
+      }
       
       // Parse business handles - clean them up (remove @ if present)
       final rawBusinessHandles = (parsed['business_handles'] as List?)
@@ -3584,10 +3854,40 @@ If you see @handles, convert them to business names:
       }
       
       // Parse explicitly mentioned place names
-      final mentionedPlaceNames = (parsed['mentioned_place_names'] as List?)
-          ?.map((e) => e.toString().trim())
-          .where((p) => p.isNotEmpty)
-          .toList() ?? [];
+      // Handle both simple strings and objects with {name, address, type}
+      final rawMentionedPlaces = parsed['mentioned_place_names'] as List?;
+      final mentionedPlaceNames = <String>[];
+      final placeAddresses = <String, String>{};
+      final placeTypes = <String, String>{};
+      
+      if (rawMentionedPlaces != null) {
+        for (final item in rawMentionedPlaces) {
+          if (item is String) {
+            // Simple string format
+            final name = item.trim();
+            if (name.isNotEmpty) {
+              mentionedPlaceNames.add(name);
+            }
+          } else if (item is Map) {
+            // Object format with {name, address, type}
+            final name = (item['name'] as String?)?.trim() ?? '';
+            if (name.isNotEmpty) {
+              mentionedPlaceNames.add(name);
+              
+              final address = (item['address'] as String?)?.trim();
+              if (address != null && address.isNotEmpty) {
+                placeAddresses[name] = address;
+                print('📍 GEMINI CONTEXT: Found grounded address for "$name": "$address"');
+              }
+              
+              final type = (item['type'] as String?)?.trim();
+              if (type != null && type.isNotEmpty) {
+                placeTypes[name] = type;
+              }
+            }
+          }
+        }
+      }
 
       return ContentContext(
         contentType: parsed['content_type'] as String? ?? 'unknown',
@@ -3610,9 +3910,76 @@ If you see @handles, convert them to business names:
         businessHandles: rawBusinessHandles,
         searchQuerySuggestion: searchQuerySuggestion,
         mentionedPlaceNames: mentionedPlaceNames,
+        placeAddresses: placeAddresses,
+        placeTypes: placeTypes,
       );
     } catch (e) {
       print('⚠️ GEMINI VISION: Error parsing context response: $e');
+      return null;
+    }
+  }
+
+  /// Attempt to repair truncated JSON by adding missing closing brackets/braces
+  /// Returns null if repair is not possible
+  Map<String, dynamic>? _attemptJsonRepair(String truncatedJson) {
+    try {
+      // Count unmatched brackets and braces
+      int openBraces = 0;
+      int openBrackets = 0;
+      bool inString = false;
+      bool escaped = false;
+      
+      for (int i = 0; i < truncatedJson.length; i++) {
+        final char = truncatedJson[i];
+        
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        
+        if (char == '\\') {
+          escaped = true;
+          continue;
+        }
+        
+        if (char == '"') {
+          inString = !inString;
+          continue;
+        }
+        
+        if (!inString) {
+          if (char == '{') openBraces++;
+          if (char == '}') openBraces--;
+          if (char == '[') openBrackets++;
+          if (char == ']') openBrackets--;
+        }
+      }
+      
+      // If we're in the middle of a string, close it first
+      String repaired = truncatedJson;
+      if (inString) {
+        repaired += '"';
+      }
+      
+      // Remove trailing comma if present
+      repaired = repaired.trimRight();
+      if (repaired.endsWith(',')) {
+        repaired = repaired.substring(0, repaired.length - 1);
+      }
+      
+      // Close any unclosed brackets and braces
+      for (int i = 0; i < openBrackets; i++) {
+        repaired += ']';
+      }
+      for (int i = 0; i < openBraces; i++) {
+        repaired += '}';
+      }
+      
+      // Try to parse the repaired JSON
+      final parsed = jsonDecode(repaired) as Map<String, dynamic>;
+      return parsed;
+    } catch (e) {
+      print('⚠️ JSON REPAIR: Failed to repair: $e');
       return null;
     }
   }
@@ -4709,6 +5076,15 @@ class ContentContext {
   /// These are proper nouns that refer to actual places (not handles)
   /// e.g., ["Del Mar Plaza", "Griffith Observatory", "Pike Place Market"]
   final List<String> mentionedPlaceNames;
+  
+  /// Grounded addresses for mentioned place names (extracted from text)
+  /// Maps place name to its address: {"American Beauty": "189 The Grove Dr, Los Angeles, CA 90036"}
+  /// This is the MOST RELIABLE signal for accurate matching
+  final Map<String, String> placeAddresses;
+  
+  /// Place types for mentioned place names (extracted from text)
+  /// Maps place name to its type: {"American Beauty": "restaurant"}
+  final Map<String, String> placeTypes;
 
   ContentContext({
     required this.contentType,
@@ -4723,6 +5099,8 @@ class ContentContext {
     this.businessHandles = const [],
     this.searchQuerySuggestion,
     this.mentionedPlaceNames = const [],
+    this.placeAddresses = const {},
+    this.placeTypes = const {},
   });
 
   @override

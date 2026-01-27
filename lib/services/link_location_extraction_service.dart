@@ -496,12 +496,82 @@ class LinkLocationExtractionService {
         }
       }
       
+      // === FALLBACK: Handle lookup when no locations found ===
+      // If we have mentions (@handles) but no results yet, try looking them up
+      // This handles cases where Gemini grounding fails but the handle IS a business
+      if (results.isEmpty && mentions.isNotEmpty) {
+        print('🔄 CAPTION EXTRACTION: No locations found, trying handle lookup fallback...');
+        print('📸 CAPTION EXTRACTION: Looking up ${mentions.length} handle(s): ${mentions.take(3).join(", ")}${mentions.length > 3 ? "..." : ""}');
+        
+        // Use location context already extracted above (line ~201) for disambiguation
+        // locationContext is already defined in this scope
+        
+        for (final handle in mentions.take(5)) { // Limit to first 5 handles
+          print('🔍 CAPTION EXTRACTION: Looking up @$handle...');
+          
+          // Use Gemini to look up what business this handle refers to
+          final handleResult = await _gemini.lookupInstagramHandleWithContext(
+            handle,
+            captionText: caption,
+            geographicHints: locationContext != null ? [locationContext] : null,
+          );
+          
+          if (handleResult != null && handleResult.name.isNotEmpty) {
+            print('📸 CAPTION EXTRACTION: @$handle → "${handleResult.name}"${handleResult.address != null ? " at ${handleResult.address}" : ""}');
+            
+            // Verify with Places API
+            final verified = await _verifyLocationWithPlacesAPI(
+              name: handleResult.name,
+              groundedAddress: handleResult.address,
+              geminiType: handleResult.type,
+              regionContext: locationContext ?? handleResult.city,
+              userLocation: userLocation,
+            );
+            
+            if (verified != null) {
+              // Skip duplicates
+              if (verified.placeId != null && seenPlaceIds.contains(verified.placeId)) {
+                print('⏭️ CAPTION EXTRACTION: Skipping duplicate Place ID from handle lookup');
+                continue;
+              }
+              if (verified.placeId != null) {
+                seenPlaceIds.add(verified.placeId!);
+              }
+              
+              print('✅ CAPTION EXTRACTION: Verified @$handle → "${verified.name}" at ${verified.address}');
+              // Add with the original handle as the query
+              results.add(verified.copyWith(
+                originalQuery: '@$handle',
+              ));
+              
+              // If we found a result and have a max limit, check if we're done
+              if (maxLocations != null && results.length >= maxLocations) {
+                print('📍 CAPTION EXTRACTION: Reached max locations ($maxLocations) from handle lookup');
+                break;
+              }
+            } else {
+              print('⚠️ CAPTION EXTRACTION: Could not verify @$handle via Places API');
+            }
+          } else {
+            print('⚠️ CAPTION EXTRACTION: Could not resolve @$handle to a business name');
+          }
+        }
+        
+        if (results.isNotEmpty) {
+          print('✅ CAPTION EXTRACTION: Handle lookup found ${results.length} location(s)');
+        } else {
+          print('⚠️ CAPTION EXTRACTION: Handle lookup did not find any locations');
+        }
+      }
+      
       // Final check - if still no results
       if (results.isEmpty) {
         if (geminiResult == null) {
           print('⚠️ CAPTION EXTRACTION: Gemini returned no results');
+        } else if (mentions.isEmpty) {
+          print('⚠️ CAPTION EXTRACTION: No locations could be extracted from caption (no handles to try)');
         } else {
-          print('⚠️ CAPTION EXTRACTION: No locations could be extracted from caption');
+          print('⚠️ CAPTION EXTRACTION: No locations could be extracted from caption (handle lookup also failed)');
         }
       }
       
@@ -533,6 +603,29 @@ class LinkLocationExtractionService {
     final hashtags = hashtagPattern.allMatches(lowerCaption)
         .map((m) => m.group(1)?.toLowerCase() ?? '')
         .toSet();
+    
+    // === US CONTEXT DETECTION ===
+    // Check if there's strong US context that would override international city mappings
+    // This prevents "Venice" in "Venice, CA" from being interpreted as Venice, Italy
+    final hasUsContext = _detectUsContext(lowerCaption, hashtags);
+    
+    // Cities that exist in both US and internationally
+    // These should NOT trigger international mappings when US context is present
+    const usDuplicateCities = {
+      'venice',     // Venice, CA (LA neighborhood) vs Venice, Italy
+      'naples',     // Naples, FL vs Naples, Italy
+      'paris',      // Paris, TX vs Paris, France
+      'florence',   // Florence, SC/AL/KY vs Florence, Italy
+      'rome',       // Rome, GA vs Rome, Italy
+      'milan',      // Milan, IL vs Milan, Italy
+      'athens',     // Athens, GA vs Athens, Greece
+      'dublin',     // Dublin, CA/OH vs Dublin, Ireland
+      'cambridge',  // Cambridge, MA vs Cambridge, UK
+      'oxford',     // Oxford, MS vs Oxford, UK
+      'manchester', // Manchester, NH vs Manchester, UK
+      'birmingham', // Birmingham, AL vs Birmingham, UK
+      'london',     // London, KY/OH vs London, UK
+    };
     
     // International countries (common travel destinations)
     const internationalCountries = {
@@ -656,6 +749,12 @@ class LinkLocationExtractionService {
       final cityKey = entry.key;
       final country = entry.value;
       
+      // Skip international mapping for cities that also exist in US when US context is detected
+      if (hasUsContext && usDuplicateCities.contains(cityKey)) {
+        print('🌍 GEO HINTS: Skipping international mapping for "$cityKey" - US context detected');
+        continue;
+      }
+      
       // Check hashtags
       if (hashtags.contains(cityKey)) {
         cities.add(cityKey);
@@ -702,6 +801,75 @@ class LinkLocationExtractionService {
       print('🌍 GEO HINTS: Extracted hints: $hints');
     }
     return hints;
+  }
+
+  /// Detect if caption/hashtags contain strong US context
+  /// Used to disambiguate cities that exist in both US and internationally
+  bool _detectUsContext(String lowerCaption, Set<String> hashtags) {
+    // Strong US indicators in hashtags
+    const usHashtagIndicators = {
+      'la', 'losangeles', 'california', 'ca', 'socal', 'norcal',
+      'sf', 'sanfrancisco', 'bayarea', 'siliconvalley',
+      'nyc', 'newyork', 'newyorkcity', 'brooklyn', 'manhattan',
+      'lafoodie', 'larestaurants', 'laeats', 'lafood',
+      'sffoodie', 'nycfoodie', 'nycrestaurants',
+      'orangecounty', 'oc', 'ocfoodie',
+      'sandiego', 'sd', 'sdfoodie',
+      'usa', 'america', 'american',
+      'chicago', 'miami', 'austin', 'seattle', 'portland',
+      'denver', 'boston', 'atlanta', 'dallas', 'houston', 'phoenix',
+      'lasvegas', 'vegas',
+      'datenightla', 'datenight', 'fairfaxdistrict', 'thegrove',
+      'westla', 'eastla', 'dtla', 'downtownla',
+    };
+    
+    // Check hashtags for US indicators
+    for (final indicator in usHashtagIndicators) {
+      if (hashtags.contains(indicator)) {
+        print('🌍 US CONTEXT: Detected via hashtag #$indicator');
+        return true;
+      }
+    }
+    
+    // Strong US text patterns
+    final usTextPatterns = [
+      RegExp(r'\blos angeles\b', caseSensitive: false),
+      RegExp(r'\bla,?\s*ca\b', caseSensitive: false),
+      RegExp(r'\bcalifornia\b', caseSensitive: false),
+      RegExp(r',\s*ca\s*\d{5}', caseSensitive: false), // CA ZIP code
+      RegExp(r'\bsan francisco\b', caseSensitive: false),
+      RegExp(r'\bsf,?\s*ca\b', caseSensitive: false),
+      RegExp(r'\bnew york\b', caseSensitive: false),
+      RegExp(r'\bnyc\b', caseSensitive: false),
+      RegExp(r',\s*ny\s*\d{5}', caseSensitive: false), // NY ZIP code
+      RegExp(r'\borange county\b', caseSensitive: false),
+      RegExp(r'\bthe grove\b', caseSensitive: false), // Famous LA shopping center
+      RegExp(r'\bsanta monica\b', caseSensitive: false),
+      RegExp(r'\bhollywood\b', caseSensitive: false),
+      RegExp(r'\bbeverly hills\b', caseSensitive: false),
+      RegExp(r'\bwest hollywood\b', caseSensitive: false),
+      RegExp(r'\bvenice beach\b', caseSensitive: false), // Specifically Venice Beach, CA
+      RegExp(r'\bvenice,?\s*ca\b', caseSensitive: false), // Venice, CA
+      RegExp(r'\bvenice,?\s*california\b', caseSensitive: false),
+      RegExp(r'\busa\b', caseSensitive: false),
+      RegExp(r'\bunited states\b', caseSensitive: false),
+    ];
+    
+    for (final pattern in usTextPatterns) {
+      if (pattern.hasMatch(lowerCaption)) {
+        print('🌍 US CONTEXT: Detected via text pattern: ${pattern.pattern}');
+        return true;
+      }
+    }
+    
+    // Check for US state abbreviations with ZIP codes
+    final stateZipPattern = RegExp(r',\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\s*\d{5}', caseSensitive: false);
+    if (stateZipPattern.hasMatch(lowerCaption)) {
+      print('🌍 US CONTEXT: Detected via state+ZIP pattern');
+      return true;
+    }
+    
+    return false;
   }
 
   /// Extract city/region context from caption text
@@ -965,7 +1133,8 @@ class LinkLocationExtractionService {
       // Use the sophisticated scoring method to find the best match
       // This properly handles name matching with compact comparison
       // Pass geographic hints for disambiguation of same-name locations
-      final bestResult = _selectBestPlaceResult(results, locationName, geminiType: geminiType, geographicHints: effectiveHints);
+      // Pass grounded address for location name matching (e.g., "The Grove" in address)
+      final bestResult = _selectBestPlaceResult(results, locationName, geminiType: geminiType, geographicHints: effectiveHints, groundedAddress: address);
       
       if (bestResult == null) {
         print('⚠️ PLACES RESOLVE: No good match found for "$locationName"');
@@ -1732,6 +1901,53 @@ class LinkLocationExtractionService {
     return false;
   }
 
+  /// Check if a place name should be skipped during verification
+  /// because it matches a pre-confirmed location name
+  /// 
+  /// Uses fuzzy matching to handle slight variations in naming
+  /// (e.g., "The Grove" vs "Grove", "Meraki Cafe" vs "Meraki Café")
+  bool _shouldSkipLocation(String placeName, Set<String> confirmedNames) {
+    final normalizedPlaceName = _normalizeForComparison(placeName);
+    
+    for (final confirmedName in confirmedNames) {
+      final normalizedConfirmed = _normalizeForComparison(confirmedName);
+      
+      // Exact match after normalization
+      if (normalizedPlaceName == normalizedConfirmed) {
+        return true;
+      }
+      
+      // One contains the other (handles "The Grove" vs "Grove")
+      if (normalizedPlaceName.contains(normalizedConfirmed) ||
+          normalizedConfirmed.contains(normalizedPlaceName)) {
+        // Only skip if the shorter name is at least 60% of the longer
+        final shorter = normalizedPlaceName.length <= normalizedConfirmed.length 
+            ? normalizedPlaceName : normalizedConfirmed;
+        final longer = normalizedPlaceName.length > normalizedConfirmed.length 
+            ? normalizedPlaceName : normalizedConfirmed;
+        if (shorter.length >= longer.length * 0.6) {
+          return true;
+        }
+      }
+      
+      // Use existing name similarity check for fuzzy matching
+      if (_areNamesSimilar(placeName, confirmedName)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /// Normalize a string for comparison (lowercase, remove special chars, normalize whitespace)
+  String _normalizeForComparison(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\w\s]'), '') // Remove special characters
+        .replaceAll(RegExp(r'\s+'), ' ')    // Normalize whitespace
+        .trim();
+  }
+
   bool _isDuplicate(ExtractedLocationData newLocation, List<ExtractedLocationData> existing) {
     for (final loc in existing) {
       // Check by place ID
@@ -1805,6 +2021,366 @@ class LinkLocationExtractionService {
     final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
 
     return earthRadius * c;
+  }
+
+  // ============ UNIFIED TEXT EXTRACTION (SAME AS PREVIEW SCAN) ============
+  
+  /// Extract locations from text using the SAME sophisticated verification as Preview Scan
+  /// 
+  /// This is the UNIFIED extraction method that all paths should use after getting text.
+  /// It uses the same verification flow as extractLocationsFromMultipleImages:
+  /// 1. Analyzes text to extract rich context (place names, addresses, types, region)
+  /// 2. Searches Places API using multiple strategies (address first, then context, then exact)
+  /// 3. Uses _selectBestPlaceResultWithContext with sophisticated scoring
+  /// 4. Applies location name bonuses, grounded address matching, etc.
+  /// 
+  /// [text] - The text/caption to extract locations from
+  /// [userLocation] - Optional user location for better results
+  /// [onProgress] - Optional callback for progress updates
+  /// [skipLocationNames] - Optional set of location names to skip verification for
+  ///                       (used when user has already confirmed certain locations)
+  /// 
+  /// Returns verified locations with placeId, coordinates, and full details
+  Future<({List<ExtractedLocationData> locations, String? regionContext, String? extractedText})> extractLocationsFromTextUnified(
+    String text, {
+    LatLng? userLocation,
+    ExtractionProgressCallback? onProgress,
+    Set<String>? skipLocationNames,
+  }) async {
+    print('🔄 UNIFIED TEXT EXTRACTION: Starting extraction (${text.length} chars)...');
+    if (skipLocationNames != null && skipLocationNames.isNotEmpty) {
+      print('📍 UNIFIED TEXT EXTRACTION: Will skip verification for ${skipLocationNames.length} pre-confirmed location(s)');
+    }
+
+    try {
+      // Step 1: Use Gemini to analyze text and extract rich context
+      // This gets: place names, grounded addresses, types, region context
+      onProgress?.call(0, 1, 'Analyzing text with AI...');
+      final context = await _gemini.analyzeTextForLocations(text);
+      
+      if (context == null) {
+        print('⚠️ UNIFIED TEXT EXTRACTION: Could not analyze text context');
+        return (locations: <ExtractedLocationData>[], regionContext: null, extractedText: text);
+      }
+
+      // Log the extracted context
+      if (context.mentionedPlaceNames.isNotEmpty) {
+        print('📍 UNIFIED TEXT EXTRACTION: Found ${context.mentionedPlaceNames.length} place name(s)');
+        for (final name in context.mentionedPlaceNames) {
+          final address = context.placeAddresses[name];
+          final type = context.placeTypes[name];
+          print('   → "$name"${address != null ? " at $address" : ""}${type != null ? " ($type)" : ""}');
+        }
+      }
+      if (context.businessHandles.isNotEmpty) {
+        print('📍 UNIFIED TEXT EXTRACTION: Found ${context.businessHandles.length} business handle(s): ${context.businessHandles.map((h) => "@$h").join(", ")}');
+      }
+      if (context.geographicFocus != null) {
+        print('🌍 UNIFIED TEXT EXTRACTION: Region context: "${context.geographicFocus}"');
+      }
+
+      // Step 2: Verify each location with Places API using sophisticated scoring
+      // This is the SAME flow as extractLocationsFromMultipleImages
+      final results = <ExtractedLocationData>[];
+      final totalLocations = context.mentionedPlaceNames.length + context.businessHandles.length;
+      var currentIndex = 0;
+
+      // === Process mentioned place names first (most reliable) ===
+      for (final placeName in context.mentionedPlaceNames) {
+        currentIndex++;
+        
+        // Check if this location should be skipped (already confirmed by user)
+        if (skipLocationNames != null && _shouldSkipLocation(placeName, skipLocationNames)) {
+          print('⏭️ UNIFIED TEXT EXTRACTION: Skipping "$placeName" (pre-confirmed by user)');
+          onProgress?.call(currentIndex, totalLocations, 'Skipping $placeName (already confirmed)...');
+          continue;
+        }
+        
+        onProgress?.call(currentIndex, totalLocations, 'Verifying $placeName...');
+        
+        var address = context.placeAddresses[placeName];
+        final type = context.placeTypes[placeName];
+        
+        print('📍 UNIFIED TEXT EXTRACTION: Verifying "$placeName"...');
+        
+        // === KEY FIX: Use Google Search grounding to find address if not explicitly provided ===
+        // This is the same approach used by the multi-image/Scan Preview flow
+        // Without this, we rely only on Places API which can return wrong locations
+        // (e.g., "Meraki Cafe" in Indonesia instead of San Diego)
+        if (address == null || address.isEmpty) {
+          print('📍 UNIFIED TEXT EXTRACTION: No explicit address, using Google Search grounding...');
+          
+          final groundedResult = await _gemini.searchPlaceWithGrounding(
+            placeName: placeName,
+            geographicFocus: context.geographicFocus,
+            placeType: type,
+            extractedText: text,
+          );
+          
+          if (groundedResult != null && groundedResult.address != null) {
+            address = groundedResult.address;
+            print('📍 UNIFIED TEXT EXTRACTION: Found grounded address via search: "$address"');
+          }
+        } else {
+          print('📍 UNIFIED TEXT EXTRACTION: Using explicit address from text: "$address"');
+        }
+        
+        final verified = await _verifyLocationWithPlacesAPI(
+          name: placeName,
+          groundedAddress: address,
+          geminiType: type,
+          regionContext: context.geographicFocus,
+          userLocation: userLocation,
+        );
+        
+        if (verified != null && !_isDuplicate(verified, results)) {
+          results.add(verified);
+          print('✅ UNIFIED TEXT EXTRACTION: Verified "$placeName" → "${verified.name}" at ${verified.address}');
+        }
+      }
+
+      // === Process business handles (if no place names found results) ===
+      if (results.isEmpty && context.businessHandles.isNotEmpty) {
+        print('📍 UNIFIED TEXT EXTRACTION: No places from names, trying business handles...');
+        
+        for (final handle in context.businessHandles) {
+          currentIndex++;
+          onProgress?.call(currentIndex, totalLocations, 'Looking up @$handle...');
+          
+          // Use handle lookup to get the business name
+          final handleResult = await _gemini.lookupInstagramHandleWithContext(
+            handle,
+            captionText: text,
+            geographicHints: context.geographicFocus != null ? [context.geographicFocus!] : null,
+          );
+          
+          if (handleResult != null && handleResult.name.isNotEmpty) {
+            print('📍 UNIFIED TEXT EXTRACTION: @$handle → "${handleResult.name}"');
+            
+            // Verify with Places API using the same sophisticated scoring
+            final verified = await _verifyLocationWithPlacesAPI(
+              name: handleResult.name,
+              groundedAddress: handleResult.address,
+              geminiType: handleResult.type,
+              regionContext: context.geographicFocus ?? handleResult.city,
+              userLocation: userLocation,
+            );
+            
+            if (verified != null && !_isDuplicate(verified, results)) {
+              results.add(verified);
+              print('✅ UNIFIED TEXT EXTRACTION: Verified "@$handle" → "${verified.name}" at ${verified.address}');
+            }
+          }
+        }
+      }
+
+      print('📍 UNIFIED TEXT EXTRACTION: Final result - ${results.length} verified location(s)');
+      return (locations: results, regionContext: context.geographicFocus, extractedText: text);
+    } catch (e, stackTrace) {
+      print('❌ UNIFIED TEXT EXTRACTION ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return (locations: <ExtractedLocationData>[], regionContext: null, extractedText: text);
+    }
+  }
+
+  /// Verify a location with Places API using the SAME sophisticated scoring as Preview Scan
+  /// 
+  /// This uses _selectBestPlaceResultWithContext with:
+  /// - Grounded address matching (+250 bonus)
+  /// - Location name in candidate bonus (+120 for "The Grove" etc.)
+  /// - Name similarity scoring
+  /// - Type compatibility
+  /// - Geographic context (city/state bonuses)
+  Future<ExtractedLocationData?> _verifyLocationWithPlacesAPI({
+    required String name,
+    String? groundedAddress,
+    String? geminiType,
+    String? regionContext,
+    LatLng? userLocation,
+  }) async {
+    print('🔍 VERIFY LOCATION: "$name"${groundedAddress != null ? " at $groundedAddress" : ""}');
+    
+    Map<String, dynamic>? placeResult;
+    var placeResults = <Map<String, dynamic>>[];
+    
+    // Extract state from region context for search queries
+    final stateFromContext = _extractStateFromContext(regionContext);
+    final broaderRegion = stateFromContext == null ? _extractBroaderRegion(regionContext) : null;
+    
+    // === STRATEGY 1: Search by grounded address FIRST (most reliable) ===
+    if (groundedAddress != null && groundedAddress.isNotEmpty) {
+      print('🔍 VERIFY LOCATION: PRIORITY SEARCH by grounded address: "$groundedAddress"');
+      
+      final addressResults = await _maps.searchPlaces(
+        groundedAddress,
+        latitude: userLocation?.latitude,
+        longitude: userLocation?.longitude,
+      );
+      
+      if (addressResults.isNotEmpty) {
+        print('🔍 VERIFY LOCATION: Found ${addressResults.length} candidates from address search');
+        
+        placeResult = _selectBestPlaceResultWithContext(
+          addressResults,
+          name,
+          geminiType: geminiType,
+          regionContext: regionContext,
+          groundedAddress: groundedAddress,
+        );
+        
+        if (placeResult != null) {
+          final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+          final foundAddress = (placeResult['formatted_address'] ?? placeResult['description'] ?? '') as String;
+          final addressMatchScore = _calculateAddressSimilarity(groundedAddress, foundAddress);
+          
+          print('🔍 VERIFY LOCATION: Best candidate: "$foundName" (address match: ${(addressMatchScore * 100).toInt()}%)');
+          
+          if (addressMatchScore >= 0.6) {
+            placeResults = addressResults;
+          } else {
+            placeResult = null; // Reset to try name search
+          }
+        }
+      }
+    }
+    
+    // === STRATEGY 2: Search with region context ===
+    if (placeResults.isEmpty && (stateFromContext != null || broaderRegion != null)) {
+      final contextSearchQuery = stateFromContext != null 
+          ? '$name, $stateFromContext'
+          : '$name, $broaderRegion';
+      print('🔍 VERIFY LOCATION: Searching with context: "$contextSearchQuery"');
+      
+      placeResults = await _maps.searchPlaces(
+        contextSearchQuery,
+        latitude: userLocation?.latitude,
+        longitude: userLocation?.longitude,
+      );
+      
+      if (placeResults.isNotEmpty) {
+        print('🔍 VERIFY LOCATION: Found ${placeResults.length} candidates from context search');
+        
+        placeResult = _selectBestPlaceResultWithContext(
+          placeResults,
+          name,
+          geminiType: geminiType,
+          regionContext: regionContext,
+          groundedAddress: groundedAddress,
+        );
+      }
+    }
+    
+    // === STRATEGY 3: Search exact term only ===
+    if (placeResults.isEmpty) {
+      print('🔍 VERIFY LOCATION: Searching exact term: "$name"');
+      
+      placeResults = await _maps.searchPlaces(
+        name,
+        latitude: userLocation?.latitude,
+        longitude: userLocation?.longitude,
+      );
+      
+      if (placeResults.isNotEmpty) {
+        print('🔍 VERIFY LOCATION: Found ${placeResults.length} candidates from exact search');
+        
+        placeResult = _selectBestPlaceResultWithContext(
+          placeResults,
+          name,
+          geminiType: geminiType,
+          regionContext: regionContext,
+          groundedAddress: groundedAddress,
+        );
+      }
+    }
+    
+    // === STRATEGY 4: Text Search for more candidates if match quality is low ===
+    if (placeResult != null) {
+      final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+      final matchQuality = _checkNameMatchQuality(name, foundName);
+      final placeTypes = (placeResult['types'] as List?)?.cast<String>() ?? [];
+      final isTypeCompatible = _isTypeCompatible(geminiType, placeTypes);
+      
+      if (matchQuality.matchScore < 0.95 || !isTypeCompatible) {
+        print('🔍 VERIFY LOCATION: Match quality ${(matchQuality.matchScore * 100).toInt()}% < 95%, running Text Search...');
+        
+        final textSearchQuery = stateFromContext != null 
+            ? '$name, $stateFromContext'
+            : (broaderRegion != null ? '$name, $broaderRegion' : name);
+        
+        final textSearchResults = await _maps.searchPlacesTextSearch(
+          textSearchQuery,
+          latitude: userLocation?.latitude,
+          longitude: userLocation?.longitude,
+        );
+        
+        if (textSearchResults.isNotEmpty) {
+          print('🔍 VERIFY LOCATION: Text Search found ${textSearchResults.length} candidates');
+          
+          // Combine with existing candidates
+          final existingPlaceIds = placeResults.map((r) => r['placeId'] as String?).toSet();
+          for (final result in textSearchResults) {
+            final placeId = result['placeId'] as String?;
+            if (placeId != null && !existingPlaceIds.contains(placeId)) {
+              placeResults.add(result);
+              existingPlaceIds.add(placeId);
+            }
+          }
+          
+          // Re-select best from combined candidates
+          placeResult = _selectBestPlaceResultWithContext(
+            placeResults,
+            name,
+            geminiType: geminiType,
+            regionContext: regionContext,
+            groundedAddress: groundedAddress,
+          );
+        }
+      }
+    }
+    
+    if (placeResult == null) {
+      print('⚠️ VERIFY LOCATION: Could not verify "$name"');
+      return null;
+    }
+    
+    // === Extract coordinates and details ===
+    final placeId = (placeResult['placeId'] ?? placeResult['place_id']) as String?;
+    var coordinates = _extractCoordinates(placeResult);
+    var address = (placeResult['formatted_address'] ?? placeResult['address'] ?? placeResult['description']) as String?;
+    var resultName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first) as String? ?? name;
+    String? website;
+    
+    // Fetch place details if needed
+    if (placeId != null && placeId.isNotEmpty && coordinates == null) {
+      print('🔍 VERIFY LOCATION: Fetching place details for: $placeId');
+      try {
+        final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
+        if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
+          coordinates = LatLng(placeDetails.latitude, placeDetails.longitude);
+          address = placeDetails.address ?? address;
+          website = placeDetails.website;
+          final businessName = placeDetails.displayName ?? placeDetails.getPlaceName();
+          if (businessName.isNotEmpty) {
+            resultName = businessName;
+          }
+        }
+      } catch (e) {
+        print('⚠️ VERIFY LOCATION: Error fetching place details: $e');
+      }
+    }
+    
+    return ExtractedLocationData(
+      placeId: placeId,
+      name: resultName,
+      address: address,
+      coordinates: coordinates,
+      type: _inferPlaceTypeFromResult(placeResult, geminiType),
+      source: ExtractionSource.placesSearch,
+      confidence: coordinates != null ? 0.85 : 0.6,
+      placeTypes: (placeResult['types'] as List?)?.cast<String>(),
+      website: website,
+      originalQuery: name != resultName ? name : null,
+    );
   }
 
   // ============ IMAGE/SCREENSHOT EXTRACTION METHODS ============
@@ -1887,8 +2463,16 @@ class LinkLocationExtractionService {
           longitude: userLocation?.longitude,
         );
         
-        // Use best result selection to prefer exact name matches and respect Gemini's type hints
-        var placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
+        // Use sophisticated scoring with context (same as multi-image extraction)
+        // Pass grounded address for location name matching (e.g., "The Grove" in address)
+        var placeResult = _selectBestPlaceResultWithContext(
+          placeResults,
+          locationInfo.name,
+          geminiType: locationInfo.type,
+          city: locationInfo.city,
+          regionContext: effectiveRegionContext,
+          groundedAddress: locationInfo.address,
+        );
         bool usedBroaderSearch = false;
         
         // Check if the found result is a good name AND type match
@@ -1932,7 +2516,14 @@ class LinkLocationExtractionService {
               );
               
               if (broaderResults.isNotEmpty) {
-                final broaderResult = _selectBestPlaceResult(broaderResults, locationInfo.name, geminiType: locationInfo.type);
+                final broaderResult = _selectBestPlaceResultWithContext(
+                  broaderResults,
+                  locationInfo.name,
+                  geminiType: locationInfo.type,
+                  city: locationInfo.city,
+                  regionContext: effectiveRegionContext,
+                  groundedAddress: locationInfo.address,
+                );
                 
                 if (broaderResult != null) {
                   final broaderFoundName = (broaderResult['name'] ?? broaderResult['description']?.toString().split(',').first ?? '') as String;
@@ -1975,7 +2566,14 @@ class LinkLocationExtractionService {
             );
             
             if (placeResults.isNotEmpty) {
-              placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
+              placeResult = _selectBestPlaceResultWithContext(
+                placeResults,
+                locationInfo.name,
+                geminiType: locationInfo.type,
+                city: locationInfo.city,
+                regionContext: effectiveRegionContext,
+                groundedAddress: locationInfo.address,
+              );
               usedBroaderSearch = true;
             }
           }
@@ -2705,7 +3303,15 @@ class LinkLocationExtractionService {
           latitude: userLocation?.latitude,
           longitude: userLocation?.longitude,
         );
-        placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
+        // Use sophisticated scoring with context (same as multi-image extraction)
+        placeResult = _selectBestPlaceResultWithContext(
+          placeResults,
+          locationInfo.name,
+          geminiType: locationInfo.type,
+          city: locationInfo.city,
+          regionContext: effectiveRegionContext,
+          groundedAddress: locationInfo.address,
+        );
         
         // Check if we got a good result appropriate for the type we're searching for
         bool gotGoodResult = false;
@@ -2766,7 +3372,14 @@ class LinkLocationExtractionService {
             latitude: userLocation?.latitude,
             longitude: userLocation?.longitude,
           );
-          final resultWithType = _selectBestPlaceResult(resultsWithType, locationInfo.name, geminiType: locationInfo.type);
+          final resultWithType = _selectBestPlaceResultWithContext(
+            resultsWithType,
+            locationInfo.name,
+            geminiType: locationInfo.type,
+            city: locationInfo.city,
+            regionContext: effectiveRegionContext,
+            groundedAddress: locationInfo.address,
+          );
           
           if (resultWithType != null) {
             final types = (resultWithType['types'] as List?)?.cast<String>() ?? [];
@@ -2799,7 +3412,14 @@ class LinkLocationExtractionService {
             latitude: userLocation?.latitude,
             longitude: userLocation?.longitude,
           );
-          final resultWithCity = _selectBestPlaceResult(resultsWithCity, locationInfo.name, geminiType: locationInfo.type);
+          final resultWithCity = _selectBestPlaceResultWithContext(
+            resultsWithCity,
+            locationInfo.name,
+            geminiType: locationInfo.type,
+            city: locationInfo.city,
+            regionContext: effectiveRegionContext,
+            groundedAddress: locationInfo.address,
+          );
           
           // Only use this result if it's better (is an establishment)
           if (resultWithCity != null) {
@@ -2888,9 +3508,16 @@ class LinkLocationExtractionService {
                   }
                 }
                 
-                // If no direct match, use scoring but VALIDATE the result
+                // If no direct match, use scoring with context but VALIDATE the result
                 if (bestMatch == null) {
-                  bestMatch = _selectBestPlaceResult(handleResults, actualBusinessName, geminiType: locationInfo.type);
+                  bestMatch = _selectBestPlaceResultWithContext(
+                    handleResults,
+                    actualBusinessName,
+                    geminiType: locationInfo.type,
+                    city: locationInfo.city,
+                    regionContext: effectiveRegionContext,
+                    groundedAddress: locationInfo.address,
+                  );
                   
                   // CRITICAL: Validate that the result actually matches the business name
                   // This prevents "@followmeawaytravel" → "Follow Me Away" → "Miracle-Ear Hearing Aid Center"
@@ -3000,8 +3627,15 @@ class LinkLocationExtractionService {
                   }
                 }
                 
-                // If no direct match, use scoring
-                bestMatch ??= _selectBestPlaceResult(contextResults, specificPlaceName, geminiType: 'restaurant');
+                // If no direct match, use scoring with context
+                bestMatch ??= _selectBestPlaceResultWithContext(
+                  contextResults,
+                  specificPlaceName,
+                  geminiType: 'restaurant',
+                  city: locationInfo.city,
+                  regionContext: effectiveRegionContext,
+                  groundedAddress: locationInfo.address,
+                );
                 
                 if (bestMatch != null) {
                   final contextResultName = (bestMatch['name'] ?? bestMatch['description']?.toString().split(',').first ?? '') as String;
@@ -3036,7 +3670,14 @@ class LinkLocationExtractionService {
             latitude: userLocation?.latitude,
             longitude: userLocation?.longitude,
           );
-          placeResult = _selectBestPlaceResult(resultsWithType, locationInfo.name, geminiType: locationInfo.type);
+          placeResult = _selectBestPlaceResultWithContext(
+            resultsWithType,
+            locationInfo.name,
+            geminiType: locationInfo.type,
+            city: locationInfo.city,
+            regionContext: effectiveRegionContext,
+            groundedAddress: locationInfo.address,
+          );
         }
         
         // CRITICAL: Skip locations from social media handles that couldn't be resolved
@@ -3254,6 +3895,7 @@ class LinkLocationExtractionService {
     String originalName, {
     String? geminiType,
     GeographicHints? geographicHints,
+    String? groundedAddress,
   }) {
     if (results.isEmpty) return null;
     // IMPORTANT: Don't skip scoring for single results!
@@ -3457,6 +4099,43 @@ class LinkLocationExtractionService {
       final normalizedResultName = _normalizeForComparison(resultName);
       final compactResultName = _normalizeCompact(resultName);
       final types = (result['types'] as List?)?.cast<String>() ?? [];
+      
+      // === GROUNDED ADDRESS MATCHING ===
+      // When we have a specific address from the source (like "189 The Grove Dr"),
+      // boost candidates whose name or address contains that location name
+      if (groundedAddress != null && groundedAddress.isNotEmpty) {
+        final resultAddress = (result['formatted_address'] ?? result['address'] ?? result['description'] ?? '') as String;
+        
+        // Check address similarity
+        final addressSimilarity = _calculateAddressSimilarity(groundedAddress, resultAddress);
+        if (addressSimilarity >= 0.8) {
+          score += 150;
+          print('📷 IMAGE EXTRACTION:   → Grounded address match: +150 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        } else if (addressSimilarity >= 0.6) {
+          score += 100;
+          print('📷 IMAGE EXTRACTION:   → Grounded address partial match: +100 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        } else if (addressSimilarity >= 0.4) {
+          score += 50;
+          print('📷 IMAGE EXTRACTION:   → Grounded address weak match: +50 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        }
+        
+        // Also check if candidate name/address contains location name from grounded address
+        // e.g., "American Beauty - The Grove" should get bonus when address is "189 The Grove Dr"
+        final locationNameFromAddress = _extractLocationNameFromAddress(groundedAddress);
+        if (locationNameFromAddress != null) {
+          final normalizedLocation = locationNameFromAddress.toLowerCase();
+          final normalizedCandidateName = resultName.toLowerCase();
+          final normalizedCandidateAddress = resultAddress.toLowerCase();
+          
+          if (normalizedCandidateName.contains(normalizedLocation)) {
+            score += 120;
+            print('📷 IMAGE EXTRACTION:   → Location name in candidate: +120 ("$locationNameFromAddress" in name)');
+          } else if (normalizedCandidateAddress.contains(normalizedLocation)) {
+            score += 60;
+            print('📷 IMAGE EXTRACTION:   → Location name in candidate address: +60 ("$locationNameFromAddress" in address)');
+          }
+        }
+      }
       
       // === CRITICAL: NAME MATCHING (highest priority) ===
       // Use COMPACT comparison to handle compound word variations:
@@ -3947,6 +4626,28 @@ class LinkLocationExtractionService {
           print('📷 IMAGE EXTRACTION:   → Address mismatch PENALTY: -100 (similarity: ${(addressSimilarity * 100).toInt()}%)');
         }
       }
+      
+      // === LOCATION NAME IN ADDRESS MATCHING ===
+      // When grounded address contains a distinctive location name (like "The Grove", "Century City"),
+      // check if the candidate's name contains that location. This helps when the address
+      // is at a well-known complex/mall and the business name includes the location.
+      // e.g., "189 The Grove Dr" should boost "American Beauty - The Grove" over just "American Beauty"
+      final locationNameFromAddress = _extractLocationNameFromAddress(groundedAddress);
+      if (locationNameFromAddress != null) {
+        final normalizedLocation = locationNameFromAddress.toLowerCase();
+        final normalizedCandidateName = resultName.toLowerCase();
+        final normalizedCandidateAddress = (result['formatted_address'] ?? result['description'] ?? '').toString().toLowerCase();
+        
+        if (normalizedCandidateName.contains(normalizedLocation)) {
+          // Candidate name contains the location from grounded address - strong signal
+          score += 120;
+          print('📷 IMAGE EXTRACTION:   → Location name in candidate bonus: +120 ("$locationNameFromAddress" in name)');
+        } else if (normalizedCandidateAddress.contains(normalizedLocation)) {
+          // Candidate address contains the location - moderate signal
+          score += 60;
+          print('📷 IMAGE EXTRACTION:   → Location name in candidate address bonus: +60 ("$locationNameFromAddress" in address)');
+        }
+      }
     }
     
     // === NAME MATCHING ===
@@ -4103,7 +4804,8 @@ class LinkLocationExtractionService {
     final originalWords = normOriginal.split(RegExp(r'\s+')).toSet();
     final candidateWords = normCandidate.split(RegExp(r'\s+')).toSet();
     final commonWords = originalWords.intersection(candidateWords).length;
-    final wordOverlap = commonWords / math.max(originalWords.length, candidateWords.length);
+    final maxWordCount = math.max<int>(originalWords.length, candidateWords.length);
+    final wordOverlap = maxWordCount > 0 ? commonWords / maxWordCount : 0.0;
 
     // Weighted combination of factors
     final similarity = (editSimilarity * 0.4) + (lcsRatio * 0.4) + (wordOverlap * 0.2);
@@ -4318,13 +5020,68 @@ class LinkLocationExtractionService {
     return false;
   }
   
-  /// Normalize a string for comparison (lowercase, remove special chars)
-  String _normalizeForComparison(String text) {
-    return text
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+  /// Extract a distinctive location name from an address
+  /// e.g., "189 The Grove Dr" → "The Grove"
+  /// e.g., "100 Century City Plaza" → "Century City"
+  /// Used to match businesses that include location names (like "American Beauty - The Grove")
+  String? _extractLocationNameFromAddress(String address) {
+    final lowerAddress = address.toLowerCase();
+    
+    // Well-known LA/CA shopping centers and complexes
+    const knownLocations = [
+      'the grove',
+      'century city',
+      'santa monica place',
+      'westfield',
+      'glendale galleria',
+      'americana at brand',
+      'beverly center',
+      'fashion island',
+      'south coast plaza',
+      'irvine spectrum',
+      'fashion valley',
+      'del amo',
+      'topanga',
+      'stanford shopping center',
+      'valley fair',
+      'downtown disney',
+      'citadel outlets',
+      'ontario mills',
+      'fashion square',
+    ];
+    
+    for (final location in knownLocations) {
+      if (lowerAddress.contains(location)) {
+        // Return with proper capitalization
+        return location.split(' ').map((word) => 
+          word.isNotEmpty ? '${word[0].toUpperCase()}${word.substring(1)}' : word
+        ).join(' ');
+      }
+    }
+    
+    // Try to extract location names from common patterns
+    // Pattern: "[number] [Location Name] Dr/Drive/Blvd/Ave"
+    final locationPatterns = [
+      // "189 The Grove Dr" → "The Grove"
+      RegExp(r'\d+\s+(the\s+\w+)\s+(?:dr|drive|blvd|boulevard|ave|avenue|rd|road|way|pl|plaza)', caseSensitive: false),
+      // "100 Century City Mall" → "Century City"
+      RegExp(r'\d+\s+(\w+\s+city)\b', caseSensitive: false),
+      // Extract from address that has "at [Location]"
+      RegExp(r'\bat\s+(the\s+\w+)\b', caseSensitive: false),
+    ];
+    
+    for (final pattern in locationPatterns) {
+      final match = pattern.firstMatch(address);
+      if (match != null && match.group(1) != null) {
+        final extracted = match.group(1)!;
+        // Return with proper capitalization
+        return extracted.split(' ').map((word) => 
+          word.isNotEmpty ? '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}' : word
+        ).join(' ');
+      }
+    }
+    
+    return null;
   }
   
   /// Normalize for compact comparison - removes ALL spaces to handle compound word variations
