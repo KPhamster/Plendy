@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Enum for auto-scan mode preference
+enum AutoScanMode { quickScan, deepScan }
+
 /// Service to manage AI-related user settings.
 /// Notifies listeners when settings change.
 class AiSettingsService extends ChangeNotifier {
@@ -10,6 +13,7 @@ class AiSettingsService extends ChangeNotifier {
   static const String _aiUseKey = 'ai_use_option';
   static const String _autoExtractLocationsKey = 'ai_auto_extract_locations';
   static const String _autoSetCategoriesKey = 'ai_auto_set_categories';
+  static const String _autoScanModeKey = 'ai_auto_scan_mode';
 
   static AiSettingsService? _instance;
   static AiSettingsService get instance {
@@ -25,6 +29,7 @@ class AiSettingsService extends ChangeNotifier {
   String _aiUseOption = aiUseSemiAuto;
   bool _autoExtractLocations = true;
   bool _autoSetCategories = true;
+  AutoScanMode _autoScanMode = AutoScanMode.quickScan;
 
   Future<SharedPreferences> _getPrefs() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -36,6 +41,10 @@ class AiSettingsService extends ChangeNotifier {
     _aiUseOption = prefs.getString(_aiUseKey) ?? aiUseSemiAuto;
     _autoExtractLocations = prefs.getBool(_autoExtractLocationsKey) ?? true;
     _autoSetCategories = prefs.getBool(_autoSetCategoriesKey) ?? true;
+    final scanModeStr = prefs.getString(_autoScanModeKey);
+    _autoScanMode = scanModeStr == 'deepScan' 
+        ? AutoScanMode.deepScan 
+        : AutoScanMode.quickScan;
     _isLoaded = true;
   }
 
@@ -108,5 +117,32 @@ class AiSettingsService extends ChangeNotifier {
       await _load();
     }
     return _autoSetCategories;
+  }
+
+  Future<AutoScanMode> getAutoScanMode() async {
+    if (!_isLoaded) {
+      await _load();
+    }
+    return _autoScanMode;
+  }
+
+  AutoScanMode getAutoScanModeSync() {
+    return _autoScanMode;
+  }
+
+  Future<void> setAutoScanMode(AutoScanMode mode) async {
+    final prefs = await _getPrefs();
+    final modeStr = mode == AutoScanMode.deepScan ? 'deepScan' : 'quickScan';
+    await prefs.setString(_autoScanModeKey, modeStr);
+    _autoScanMode = mode;
+    _isLoaded = true;
+    notifyListeners();
+  }
+
+  Future<bool> shouldUseDeepScan() async {
+    if (!_isLoaded) {
+      await _load();
+    }
+    return _autoScanMode == AutoScanMode.deepScan;
   }
 }

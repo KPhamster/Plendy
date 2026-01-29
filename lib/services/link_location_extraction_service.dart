@@ -2395,7 +2395,9 @@ class LinkLocationExtractionService {
   /// [userLocation] - Optional user location for better results
   /// [onProgress] - Optional callback for progress updates during location verification
   /// No limit on number of locations - extracts all found locations
-  Future<List<ExtractedLocationData>> extractLocationsFromImage(
+  /// 
+  /// Returns a tuple with locations and the raw extracted text from OCR (for user verification).
+  Future<({List<ExtractedLocationData> locations, String? extractedText})> extractLocationsFromImage(
     File imageFile, {
     LatLng? userLocation,
     ExtractionProgressCallback? onProgress,
@@ -2405,11 +2407,13 @@ class LinkLocationExtractionService {
     try {
       // Step 1: Use Gemini Vision to extract location names/text from the image
       onProgress?.call(0, 1, 'Analyzing image with AI...');
-      final extractedNames = await _gemini.extractLocationNamesFromImageFile(imageFile);
+      final geminiResult = await _gemini.extractLocationNamesFromImageFile(imageFile);
+      final extractedNames = geminiResult.locations;
+      final extractedText = geminiResult.extractedText;
 
       if (extractedNames.isEmpty) {
         print('⚠️ IMAGE EXTRACTION: Gemini Vision found no locations in image');
-        return [];
+        return (locations: <ExtractedLocationData>[], extractedText: extractedText);
       }
 
       // Get the region context from the first location (all locations share the same context)
@@ -2775,10 +2779,10 @@ class LinkLocationExtractionService {
       }
 
       print('📷 IMAGE EXTRACTION: Extracted ${results.length} location(s) total');
-      return results;
+      return (locations: results, extractedText: extractedText);
     } catch (e) {
       print('❌ IMAGE EXTRACTION ERROR: $e');
-      return [];
+      return (locations: <ExtractedLocationData>[], extractedText: null);
     }
   }
 
@@ -3181,9 +3185,10 @@ class LinkLocationExtractionService {
   /// from other images in the same content what region we're looking at.
   /// [onProgress] - Optional callback for progress updates during location verification
   ///
-  /// Returns a tuple-like result: the list of locations AND the detected region context.
-  /// The region context can be used for subsequent screenshot analysis.
-  Future<({List<ExtractedLocationData> locations, String? regionContext})> extractLocationsFromImageBytes(
+  /// Returns a tuple-like result: the list of locations, the detected region context, and
+  /// the raw extracted text from OCR. The region context can be used for subsequent screenshot analysis.
+  /// The extractedText can be shown to users to verify what was scanned.
+  Future<({List<ExtractedLocationData> locations, String? regionContext, String? extractedText})> extractLocationsFromImageBytes(
     Uint8List imageBytes, {
     String mimeType = 'image/jpeg',
     LatLng? userLocation,
@@ -3198,14 +3203,16 @@ class LinkLocationExtractionService {
     try {
       // Step 1: Use Gemini Vision to extract location names
       onProgress?.call(0, 1, 'Analyzing image with AI...');
-      final extractedNames = await _gemini.extractLocationNamesFromImage(
+      final geminiResult = await _gemini.extractLocationNamesFromImage(
         imageBytes,
         mimeType: mimeType,
       );
+      final extractedNames = geminiResult.locations;
+      final extractedText = geminiResult.extractedText;
 
       if (extractedNames.isEmpty) {
         print('⚠️ IMAGE EXTRACTION: No locations found in image');
-        return (locations: <ExtractedLocationData>[], regionContext: regionContextHint);
+        return (locations: <ExtractedLocationData>[], regionContext: regionContextHint, extractedText: extractedText);
       }
 
       // Get the region context from the first location (all locations share the same context)
@@ -3868,10 +3875,10 @@ class LinkLocationExtractionService {
       }
 
       print('📷 IMAGE EXTRACTION: Extracted ${results.length} location(s)');
-      return (locations: results, regionContext: regionContext);
+      return (locations: results, regionContext: regionContext, extractedText: extractedText);
     } catch (e) {
       print('❌ IMAGE EXTRACTION ERROR: $e');
-      return (locations: <ExtractedLocationData>[], regionContext: regionContextHint);
+      return (locations: <ExtractedLocationData>[], regionContext: regionContextHint, extractedText: null);
     }
   }
 

@@ -32,6 +32,10 @@ Object.assign(exports, passwordResetModule);
 const analyzeYouTubeModule = require("./src/analyze_youtube_video");
 Object.assign(exports, analyzeYouTubeModule);
 
+// Import and export user deletion function (triggered on auth user delete)
+const deleteUserModule = require("./src/delete_user");
+Object.assign(exports, deleteUserModule);
+
 
 /**
  * Sends a notification when a new follow request is created (2nd Gen).

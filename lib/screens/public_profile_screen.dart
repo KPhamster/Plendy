@@ -1845,7 +1845,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: const BoxDecoration(color: Colors.white),
+      decoration: const BoxDecoration(color: AppColors.backgroundColor),
       child: Text(
         '$count ${count == 1 ? 'Review' : 'Reviews'}',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
