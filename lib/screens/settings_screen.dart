@@ -5,6 +5,9 @@ import '../services/instagram_settings_service.dart';
 
 enum InstagramDisplayOption { defaultView, webView }
 
+// Re-export AutoScanMode from ai_settings_service for use in this file
+// Using the enum directly from the service
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -17,6 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       InstagramDisplayOption.defaultView;
   bool _autoExtractLocations = true;
   bool _autoSetCategories = true;
+  AutoScanMode _autoScanMode = AutoScanMode.quickScan;
   bool _isLoading = true;
 
   @override
@@ -33,11 +37,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       instagramSettingsService.getDisplayOption(),
       aiSettingsService.getAutoExtractLocations(),
       aiSettingsService.getAutoSetCategories(),
+      aiSettingsService.getAutoScanMode(),
     ]);
 
     final instagramOption = results[0] as String;
     final autoExtractLocations = results[1] as bool;
     final autoSetCategories = results[2] as bool;
+    final autoScanMode = results[3] as AutoScanMode;
 
     if (!mounted) return;
     setState(() {
@@ -46,6 +52,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : InstagramDisplayOption.defaultView;
       _autoExtractLocations = autoExtractLocations;
       _autoSetCategories = autoSetCategories;
+      _autoScanMode = autoScanMode;
       _isLoading = false;
     });
   }
@@ -143,6 +150,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     AiSettingsService.instance.setAutoExtractLocations(value);
                   },
                 ),
+                // Show scan mode options when auto-extract is enabled
+                if (_autoExtractLocations) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(left: 32.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 8),
+                        Text(
+                          'Scan Mode',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                        RadioListTile<AutoScanMode>(
+                          title: const Text('Quick Scan'),
+                          subtitle: const Text(
+                            'Fast extraction using AI. Use Deep Scan manually if locations are missed.',
+                          ),
+                          value: AutoScanMode.quickScan,
+                          groupValue: _autoScanMode,
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _autoScanMode = value;
+                            });
+                            AiSettingsService.instance.setAutoScanMode(value);
+                          },
+                        ),
+                        RadioListTile<AutoScanMode>(
+                          title: const Text('Deep Scan'),
+                          subtitle: const Text(
+                            'More thorough analysis. Slower but may find more locations.',
+                          ),
+                          value: AutoScanMode.deepScan,
+                          groupValue: _autoScanMode,
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _autoScanMode = value;
+                            });
+                            AiSettingsService.instance.setAutoScanMode(value);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 CheckboxListTile(
                   title: const Text('Automatically set categories'),
                   subtitle: const Text(

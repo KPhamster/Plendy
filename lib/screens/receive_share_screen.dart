@@ -654,6 +654,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return _aiSettingsService.shouldAutoExtractLocations();
   }
 
+  Future<bool> _shouldUseDeepScan() async {
+    return _aiSettingsService.shouldUseDeepScan();
+  }
+
   /// Build the screenshot upload button widget
   Widget _buildScreenshotUploadButton() {
     final isLoading = _isProcessingScreenshot || _isExtractingLocation;
@@ -1157,20 +1161,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Always show the location selection dialog, even for single results
       // This lets users verify the location is correct before saving
       // Pass detected event info for event designation
-      // Get scanned text from location metadata (OCR) or WebView caption
-      String? scannedTextForDialog = _extractedCaption;
-      if (scannedTextForDialog == null || scannedTextForDialog.isEmpty) {
-        for (final location in locations) {
-          if (location.metadata != null) {
-            final extractedText =
-                location.metadata!['extractedText'] as String?;
-            if (extractedText != null && extractedText.isNotEmpty) {
-              scannedTextForDialog = extractedText;
-              break;
-            }
-          }
-        }
-      }
+      // Get scanned text from:
+      // 1. OCR extracted text from the image scan result (primary source)
+      // 2. WebView extracted caption (fallback for platforms like Instagram/TikTok)
+      String? scannedTextForDialog = result.extractedText ?? _extractedCaption;
       await _handleMultipleExtractedLocations(
         locations,
         provider,
@@ -1654,6 +1648,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print(
           '📷 COMBINED SCAN: Single-image analysis found ${result.locations.length} location(s)');
+
+      // Store extracted text for event detection (same as multi-image path)
+      if (result.extractedText != null && result.extractedText!.isNotEmpty) {
+        _lastScanExtractedText = result.extractedText;
+        print(
+            '📝 COMBINED SCAN: Stored extracted text (${result.extractedText!.length} chars) for event detection');
+      }
+
       return result.locations;
     } catch (e) {
       print('⚠️ COMBINED SCAN: Screenshot extraction error: $e');
@@ -2268,7 +2270,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Extract locations using Gemini Vision
       _updateScanProgress(0.35);
-      final locations = await _locationExtractor.extractLocationsFromImage(
+      final result = await _locationExtractor.extractLocationsFromImage(
         imageFile,
         userLocation: userLocation,
         onProgress: (current, total, phase) {
@@ -2281,6 +2283,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         },
       );
+      final locations = result.locations;
       _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
@@ -2310,23 +2313,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('✅ SCREENSHOT: Found ${locations.length} location(s)');
       _updateScanProgress(0.85);
 
-      // Try to detect event information from location metadata's extracted text
-      // For uploaded screenshots, we don't have WebView caption, but OCR may have extracted text
+      // Try to detect event information from the extracted text (OCR result)
+      // For uploaded screenshots, we use the extracted text from OCR
       ExtractedEventInfo? detectedEvent;
-
-      if (locations.isNotEmpty) {
-        for (final location in locations) {
-          if (location.metadata != null) {
-            final extractedText =
-                location.metadata!['extractedText'] as String?;
-            if (extractedText != null && extractedText.isNotEmpty) {
-              print(
-                  '📅 SCREENSHOT: Checking location metadata for event info...');
-              detectedEvent = await _detectEventFromTextAsync(extractedText);
-              if (detectedEvent != null) break;
-            }
-          }
-        }
+      if (result.extractedText != null && result.extractedText!.isNotEmpty) {
+        print('📅 SCREENSHOT: Checking OCR extracted text for event info...');
+        detectedEvent = await _detectEventFromTextAsync(result.extractedText!);
       }
 
       _updateScanProgress(0.95);
@@ -2336,25 +2328,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       final provider = context.read<ReceiveShareProvider>();
 
-      // For uploaded screenshots, get extracted text from location metadata (OCR result)
-      String? screenshotExtractedText;
-      for (final location in locations) {
-        if (location.metadata != null) {
-          final extractedText = location.metadata!['extractedText'] as String?;
-          if (extractedText != null && extractedText.isNotEmpty) {
-            screenshotExtractedText = extractedText;
-            break;
-          }
-        }
-      }
-
       // Always show the location selection dialog, even for single results
       // Pass detected event info for event designation
+      // Use the extracted text from OCR directly (already available in result)
       await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
-        scannedText: screenshotExtractedText,
+        scannedText: result.extractedText,
       );
       _updateScanProgress(1.0);
     } catch (e) {
@@ -5245,16 +5226,40 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       _updateScanProgress(0.2);
 
-      // ========== USE QUICK EXTRACTION ==========
-      // Fast extraction using Gemini's Maps grounding directly
-      // Deep scan option available in the results dialog if needed
-      print('📍 AUTO SCAN: Using quick extraction...');
+      // Check if user prefers deep scan for auto-extraction
+      final useDeepScan = await _shouldUseDeepScan();
+      
+      List<ExtractedLocationData> locations;
+      bool isDeepScanResult = false;
+      
+      if (useDeepScan) {
+        // ========== USE DEEP EXTRACTION ==========
+        // More thorough analysis using unified extraction
+        print('📍 AUTO SCAN: Using deep extraction (user preference)...');
+        
+        final unifiedResult =
+            await _locationExtractor.extractLocationsFromTextUnified(
+          _extractedCaption!,
+          userLocation: userLocation,
+          onProgress: (current, total, message) {
+            // Map progress from 0.2 to 0.8
+            _updateScanProgress(0.2 + (0.6 * current / total));
+          },
+        );
+        locations = unifiedResult.locations;
+        isDeepScanResult = true;
+      } else {
+        // ========== USE QUICK EXTRACTION ==========
+        // Fast extraction using Gemini's Maps grounding directly
+        // Deep scan option available in the results dialog if needed
+        print('📍 AUTO SCAN: Using quick extraction...');
 
-      final locations = await _locationExtractor.extractLocationsFromCaption(
-        _extractedCaption!,
-        platform: 'social media',
-        userLocation: userLocation,
-      );
+        locations = await _locationExtractor.extractLocationsFromCaption(
+          _extractedCaption!,
+          platform: 'social media',
+          userLocation: userLocation,
+        );
+      }
       _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
@@ -5274,8 +5279,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print(
             '⚠️ AUTO SCAN: No locations found - showing dialog with Deep Scan option');
       } else {
+        final scanType = useDeepScan ? 'deep' : 'quick';
         print(
-            '✅ AUTO SCAN: Found ${locations.length} location(s) via quick extraction');
+            '✅ AUTO SCAN: Found ${locations.length} location(s) via $scanType extraction');
       }
       _updateScanProgress(0.85);
 
@@ -5292,16 +5298,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog
+      // If we already did a deep scan, hide the deep scan option in the dialog
       final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
         scannedText: _extractedCaption,
+        isDeepScan: isDeepScanResult,
       );
       _updateScanProgress(1.0);
 
-      // If user requested deep scan, run it after cleanup
-      if (deepScanRequested && mounted) {
+      // If user requested deep scan, run it after cleanup (only if we didn't already do deep scan)
+      if (deepScanRequested && mounted && !isDeepScanResult) {
         // Store provider and event info for use after finally block
         _pendingDeepScanProvider = provider;
         _pendingDeepScanEventInfo = detectedEvent;
@@ -12326,7 +12334,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   inapp.InAppWebViewController? _controller;
 
   /// Display mode: true = web view, false = default (oEmbed HTML)
-  /// Always starts as false (default/oEmbed) regardless of user's global settings
+  /// This is temporary/local state only - does NOT persist to settings
   bool _isWebViewMode = false;
 
   @override
@@ -12335,10 +12343,19 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
     super.dispose();
   }
 
+  /// Toggle between default (oEmbed) and web view modes
+  /// This is temporary and does not persist to settings
   void _toggleDisplayMode() {
     _safeSetState(() {
-      // Toggle between default (oEmbed) and web view modes
       _isWebViewMode = !_isWebViewMode;
+    });
+  }
+  
+  /// Called when user taps "Switch to Web View" in error state
+  /// This is temporary and does not persist to settings
+  void _handleRequestWebViewMode() {
+    _safeSetState(() {
+      _isWebViewMode = true;
     });
   }
 
@@ -12474,6 +12491,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           onWebViewCreated: _handleWebViewCreated,
           onPageFinished: _handlePageFinished,
           overrideWebViewMode: _isWebViewMode,
+          onRequestWebViewMode: _handleRequestWebViewMode,
         ),
         Container(height: 8, color: AppColors.backgroundColor),
         _buildBottomControls(),

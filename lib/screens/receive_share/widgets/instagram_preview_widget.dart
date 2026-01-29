@@ -28,6 +28,9 @@ class InstagramWebView extends StatefulWidget {
   /// Optional override for display mode. When provided, bypasses user settings.
   /// true = Web View mode, false = Default mode, null = use settings
   final bool? overrideWebViewMode;
+  /// Callback when user requests to switch to web view mode from error state.
+  /// Parent should update overrideWebViewMode to true when this is called.
+  final VoidCallback? onRequestWebViewMode;
 
   const InstagramWebView({
     super.key,
@@ -39,6 +42,7 @@ class InstagramWebView extends StatefulWidget {
     this.onContentHeightChanged,
     this.topPadding = 0,
     this.overrideWebViewMode,
+    this.onRequestWebViewMode,
   });
 
   @override
@@ -61,52 +65,33 @@ class InstagramWebViewState extends State<InstagramWebView> {
   
   // Display mode from settings
   bool _forceDirectWebView = false; // When true, skip oEmbed and load URL directly
-  
-  // Manual override from error state - takes precedence over widget.overrideWebViewMode
-  bool? _manualWebViewOverride;
 
   @override
   void initState() {
     super.initState();
-    // Listen for settings changes
-    InstagramSettingsService.instance.addListener(_onSettingsChanged);
     _loadSettingsAndInitialize();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    // Remove settings listener
-    InstagramSettingsService.instance.removeListener(_onSettingsChanged);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant InstagramWebView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reinitialize if override mode changed
+    // Reinitialize if override mode changed (from toggle chip or error state button)
     if (oldWidget.overrideWebViewMode != widget.overrideWebViewMode) {
       _loadSettingsAndInitialize();
     }
   }
   
-  /// Called when Instagram display settings change
-  void _onSettingsChanged() {
-    if (!mounted || _isDisposed) return;
-    print('🔄 INSTAGRAM: Settings changed, reinitializing widget');
-    // Reinitialize with new settings
-    _loadSettingsAndInitialize();
-  }
-  
-  /// Switch to Web View mode
-  Future<void> _switchToWebViewMode() async {
-    print('🔄 INSTAGRAM: Switching to Web View mode from error state');
-    // Set manual override to bypass widget.overrideWebViewMode
-    _manualWebViewOverride = true;
-    // Also update global settings so the toggle chip reflects the change
-    await InstagramSettingsService.instance.setDisplayOption('webview');
-    // Reinitialize with web view mode
-    _loadSettingsAndInitialize();
+  /// Switch to Web View mode (temporary, does not persist to settings)
+  void _switchToWebViewMode() {
+    print('🔄 INSTAGRAM: Requesting switch to Web View mode from error state');
+    // Notify parent to switch mode - parent controls the override
+    widget.onRequestWebViewMode?.call();
   }
   
   /// Build the error message widget with tappable "Web View" link
@@ -141,14 +126,11 @@ class InstagramWebViewState extends State<InstagramWebView> {
   }
 
   /// Load user settings and initialize
+  /// Called on init and when widget.overrideWebViewMode changes
   Future<void> _loadSettingsAndInitialize() async {
-    // Check for manual override first (set when user taps "Web View" in error message)
-    // Then check widget override, otherwise load user's display preference
+    // Check widget override first, otherwise load user's display preference
     final bool isWebViewMode;
-    if (_manualWebViewOverride != null) {
-      isWebViewMode = _manualWebViewOverride!;
-      print('🔧 INSTAGRAM: Using manual override - isWebViewMode: $isWebViewMode');
-    } else if (widget.overrideWebViewMode != null) {
+    if (widget.overrideWebViewMode != null) {
       isWebViewMode = widget.overrideWebViewMode!;
       print('🔧 INSTAGRAM: Using override mode - isWebViewMode: $isWebViewMode');
     } else {
@@ -644,6 +626,16 @@ class InstagramWebViewState extends State<InstagramWebView> {
                 const SizedBox(height: 16),
                 _buildErrorMessage(),
                 const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: _switchToWebViewMode,
+                  icon: const Icon(Icons.web),
+                  label: const Text('Switch to Web View'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFE1306C),
+                    side: const BorderSide(color: Color(0xFFE1306C)),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 ElevatedButton.icon(
                   onPressed: () => widget.launchUrlCallback(widget.url),
                   icon: const Icon(Icons.open_in_new),
@@ -652,11 +644,6 @@ class InstagramWebViewState extends State<InstagramWebView> {
                     backgroundColor: const Color(0xFFE1306C),
                     foregroundColor: Colors.white,
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: _initializeOEmbed,
-                  child: const Text('Retry'),
                 ),
               ],
             ),
@@ -722,6 +709,16 @@ class InstagramWebViewState extends State<InstagramWebView> {
                 const SizedBox(height: 16),
                 _buildErrorMessage(),
                 const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: _switchToWebViewMode,
+                  icon: const Icon(Icons.web),
+                  label: const Text('Switch to Web View'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFE1306C),
+                    side: const BorderSide(color: Color(0xFFE1306C)),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 ElevatedButton.icon(
                   onPressed: () => widget.launchUrlCallback(widget.url),
                   icon: const Icon(Icons.open_in_new),
@@ -730,11 +727,6 @@ class InstagramWebViewState extends State<InstagramWebView> {
                     backgroundColor: const Color(0xFFE1306C),
                     foregroundColor: Colors.white,
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: _initializeOEmbed,
-                  child: const Text('Retry'),
                 ),
               ],
             ),

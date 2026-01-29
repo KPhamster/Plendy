@@ -213,10 +213,12 @@ $text
 Analyze this text to understand:
 
 1. What TYPE of content is this? (social media caption, travel blog, review, etc.)
-2. What is the PURPOSE? (e.g., "recommending a restaurant", "reviewing a cafe")
+2. What is the PURPOSE? (e.g., "recommending a restaurant", "reviewing a cafe", "sharing hiking trails")
 3. What GEOGRAPHIC REGION is mentioned? (city, state, country, area)
-4. What TYPES of locations are mentioned? (restaurants, cafes, attractions, etc.)
+4. What TYPES of locations are mentioned? (restaurants, cafes, attractions, parks, trails, viewpoints, etc.)
 5. Extract ACTUAL PLACE NAMES and ADDRESSES explicitly mentioned
+
+IMPORTANT: Extract ALL location types including hiking trails (e.g., "Ewoldsen Trail"), viewpoints (e.g., "Fonts Point"), canyons, and campgrounds - not just businesses.
 
 === CRITICAL: EXTRACT ADDRESSES ===
 Look for explicit addresses in the text. These are the MOST RELIABLE signals.
@@ -236,7 +238,7 @@ Return a JSON object:
   "content_type": "Type of content (e.g., 'Instagram caption', 'review')",
   "purpose": "What is being featured or recommended",
   "geographic_focus": "The main region/city/area (e.g., 'Los Angeles, CA') or null",
-  "location_types_to_find": ["restaurant", "cafe"],
+  "location_types_to_find": ["restaurant", "cafe", "trail", "park"],
   "criteria": ["steakhouse", "new location"],
   "context_clues": ["mentions outdoor seating", "second location"],
   "exclusions": [],
@@ -1195,6 +1197,20 @@ Return a JSON array with ONLY relevant locations:
             } else if (text != null) {
               print('📝 GEMINI Response: $text');
             }
+            // Debug: Log if response is suspiciously short (might indicate API issue)
+            if (text == null || text.trim().isEmpty || text.trim() == '```' || text.length < 10) {
+              print('⚠️ GEMINI DEBUG: Response appears empty or malformed');
+              print('   Full response text: "${text ?? "null"}"');
+              print('   Candidate finishReason: ${candidate['finishReason']}');
+              // Check for safety ratings or blocks
+              final safetyRatings = candidate['safetyRatings'];
+              if (safetyRatings != null) {
+                print('   Safety ratings: $safetyRatings');
+              }
+            }
+          } else {
+            print('⚠️ GEMINI DEBUG: No parts found in response content');
+            print('   Content: $content');
           }
           
           // Log grounding metadata
@@ -1272,10 +1288,13 @@ Look for patterns that mention a place WITH its city/location:
 
 CRITICAL: When you find "[Business Name] in [City]", ALWAYS include the city!
 
-**PRIORITY 2 - BUSINESS/PLACE NAMES:**
+**PRIORITY 2 - PLACE NAMES (businesses AND natural features):**
 - Named businesses, restaurants, cafes, stores, attractions
-- Names following "at", "visited", "went to", "check out", "just opened"
-- Names with location pin emoji 📍
+- State/National Parks (e.g., "Julia Pfeiffer Burns State Park")
+- Hiking trails (e.g., "Ewoldsen Trail", "McWay Falls Overlook Trail")
+- Viewpoints, canyons, campgrounds (e.g., "Fonts Point", "The Slot Canyon")
+- Names following "at", "visited", "went to", "check out", "Best trails:"
+- Names with location pin emoji 📍 or hiking emoji 🚶‍♀️
 - @handles that are business names (convert them!)
 
 **PRIORITY 3 - HASHTAGS (ONLY for context clues, NOT as locations!):**
@@ -1308,7 +1327,7 @@ Return a JSON array. IMPORTANT: Include the city in the response!
     "address": "Street address if mentioned (or null)",
     "city": "City name from text or hashtags (IMPORTANT - extract this!)",
     "region": "State/region if mentioned (or null)",
-    "type": "restaurant/cafe/store/attraction/park/landmark"
+    "type": "restaurant/cafe/store/attraction/park/landmark/trail/viewpoint/canyon/campground"
   }
 ]
 
@@ -1325,6 +1344,10 @@ Output:
 Example 3 - Caption: "📍 Hearst Castle in San Simeon, amazing views! #california #roadtrip"
 Output:
 [{"name": "Hearst Castle", "address": null, "city": "San Simeon", "region": "California", "type": "landmark"}]
+
+Example 4 - Caption: "🚶‍♀️ Best trails: Ewoldsen Trail, McWay Falls Overlook Trail"
+Output:
+[{"name": "Ewoldsen Trail", "address": null, "city": null, "region": null, "type": "trail"}, {"name": "McWay Falls Overlook Trail", "address": null, "city": null, "region": null, "type": "trail"}]
 
 === RULES ===
 1. ALWAYS extract city context when available (from "in [City]" or hashtags)
@@ -1348,6 +1371,12 @@ Output:
       RegExp(r'\b(restaurant|cafe|hotel|museum|park|store|shop|bar|club)\b', caseSensitive: false),
       RegExp(r'\b(visit|went to|at|located at|near|in)\s+\w+', caseSensitive: false),
       RegExp(r'@\w+', caseSensitive: false), // Social media location tags
+      // Trail and nature location indicators
+      RegExp(r'\b\w+\s+(trail|loop trail|nature trail)\b', caseSensitive: false),
+      RegExp(r'\b\w+\s+(point|overlook|vista|viewpoint)\b', caseSensitive: false),
+      RegExp(r'\b\w+\s+(canyon|falls|waterfall|campground)\b', caseSensitive: false),
+      RegExp(r'\b(best trails|hiking|hike|trailhead)\b', caseSensitive: false),
+      RegExp(r'🚶‍♀️|🥾|🏕️|⛰️', caseSensitive: false), // Hiking/camping emojis
     ];
 
     for (final pattern in locationIndicators) {
@@ -1391,12 +1420,12 @@ Output:
     // If only one image, use the standard single-image method
     if (images.length == 1) {
       print('📷 GEMINI MULTI-IMAGE: Single image, using standard extraction');
-      final locations = await extractLocationNamesFromImage(
+      final result = await extractLocationNamesFromImage(
         images.first.bytes,
         mimeType: images.first.mimeType,
       );
-      final regionContext = locations.isNotEmpty ? locations.first.regionContext : null;
-      return (locations: locations, regionContext: regionContext, extractedText: null);
+      final regionContext = result.locations.isNotEmpty ? result.locations.first.regionContext : null;
+      return (locations: result.locations, regionContext: regionContext, extractedText: result.extractedText);
     }
 
     try {
@@ -2965,12 +2994,12 @@ If you cannot verify the place exists, return:
     
     for (int i = 0; i < images.length; i++) {
       print('📷 GEMINI MULTI-IMAGE FALLBACK: Analyzing image ${i + 1}/${images.length}...');
-      final locations = await extractLocationNamesFromImage(
+      final result = await extractLocationNamesFromImage(
         images[i].bytes,
         mimeType: images[i].mimeType,
       );
       
-      for (final loc in locations) {
+      for (final loc in result.locations) {
         // Update region context if found
         if (loc.regionContext != null && regionContext == null) {
           regionContext = loc.regionContext;
@@ -3086,14 +3115,14 @@ If you cannot verify the place exists, return:
   /// [imageBytes] - The raw bytes of the image to analyze
   /// [mimeType] - The MIME type of the image (e.g., 'image/jpeg', 'image/png')
   /// 
-  /// Returns a list of extracted location names/descriptions, or empty list if none found.
-  Future<List<ExtractedLocationInfo>> extractLocationNamesFromImage(
+  /// Returns a record with extracted location names/descriptions and the raw extracted text from OCR.
+  Future<({List<ExtractedLocationInfo> locations, String? extractedText})> extractLocationNamesFromImage(
     Uint8List imageBytes, {
     String mimeType = 'image/jpeg',
   }) async {
     if (!isConfigured) {
       print('⚠️ GEMINI VISION: API key not configured');
-      return [];
+      return (locations: <ExtractedLocationInfo>[], extractedText: null);
     }
 
     try {
@@ -3109,7 +3138,8 @@ If you cannot verify the place exists, return:
       if (context == null) {
         print('⚠️ GEMINI VISION: Could not analyze context, falling back to single-step extraction');
         // Fallback to original single-step approach
-        return _extractLocationsLegacy(base64Image, mimeType);
+        final locations = await _extractLocationsLegacy(base64Image, mimeType);
+        return (locations: locations, extractedText: null);
       }
       
       // ========== STEP 2: CONTEXT-AWARE EXTRACTION ==========
@@ -3121,11 +3151,12 @@ If you cannot verify the place exists, return:
         print('   📍 ${loc.name} ${loc.city != null ? "(${loc.city})" : ""}');
       }
       
-      return locations;
+      // Return both locations and the extracted text from context analysis (OCR result)
+      return (locations: locations, extractedText: context.extractedText);
     } catch (e, stackTrace) {
       print('❌ GEMINI VISION ERROR: $e');
       print('Stack trace: $stackTrace');
-      return [];
+      return (locations: <ExtractedLocationInfo>[], extractedText: null);
     }
   }
 
@@ -3155,7 +3186,7 @@ If you cannot verify the place exists, return:
   }
 
   /// Extract locations from an image file
-  Future<List<ExtractedLocationInfo>> extractLocationNamesFromImageFile(
+  Future<({List<ExtractedLocationInfo> locations, String? extractedText})> extractLocationNamesFromImageFile(
     File imageFile,
   ) async {
     try {
@@ -3164,7 +3195,7 @@ If you cannot verify the place exists, return:
       return extractLocationNamesFromImage(bytes, mimeType: mimeType);
     } catch (e) {
       print('❌ GEMINI VISION: Error reading image file: $e');
-      return [];
+      return (locations: <ExtractedLocationInfo>[], extractedText: null);
     }
   }
 
