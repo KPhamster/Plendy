@@ -1804,9 +1804,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 // Buttons on the right
                 // 1. Map Screen Button (View Location on App Map)
                 ActionChip(
-                  avatar: Image.asset(
-                    'assets/icon/icon-cropped.png',
-                    height: 18,
+                  avatar: Icon(
+                    Icons.map_outlined,
+                    color: Theme.of(context).primaryColor,
+                    size: 18,
                   ),
                   label: const SizedBox.shrink(),
                   labelPadding: EdgeInsets.zero,
@@ -3992,7 +3993,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             Expanded(
               child: _buildActionItem(
                 context,
-                Icon(Icons.phone_outlined),
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: Icon(Icons.phone_outlined, color: AppColors.plum, size: 28),
+                ),
                 'Call Venue',
                 // Disable button if no phone number
                 phoneNumber != null && phoneNumber.isNotEmpty
@@ -4003,7 +4008,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             Expanded(
               child: _buildActionItem(
                 context,
-                Icon(Icons.language_outlined),
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: Icon(Icons.language_outlined, color: AppColors.teal, size: 28),
+                ),
                 'Website',
                 // Disable button if no website URI
                 websiteUri != null && websiteUri.isNotEmpty
@@ -4023,7 +4032,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             Expanded(
               child: _buildActionItem(
                 context,
-                Icon(Icons.map_outlined),
+                Image.asset(
+                  'assets/icon/misc/googlemaps_logo.png',
+                  height: 28,
+                ),
                 'Google Maps',
                 () => _launchMapLocation(location),
               ),
@@ -4031,7 +4043,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             Expanded(
               child: _buildActionItem(
                 context,
-                Icon(Icons.directions_outlined),
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: Icon(Icons.directions, color: AppColors.sage, size: 28),
+                ),
                 'Directions',
                 () => _launchDirections(location),
               ),

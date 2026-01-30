@@ -9277,11 +9277,10 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                                 _tappedLocationDetails!);
                                                           }
                                                         },
-                                                        icon: Icon(
-                                                            Icons.map_outlined,
-                                                            color:
-                                                                AppColors.sage,
-                                                            size: 28),
+                                                        icon: Image.asset(
+                                                          'assets/icon/misc/googlemaps_logo.png',
+                                                          height: 25,
+                                                        ),
                                                         tooltip:
                                                             'Open in map app',
                                                         padding:
@@ -9310,7 +9309,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                         icon: Icon(
                                                             Icons.directions,
                                                             color:
-                                                                AppColors.teal,
+                                                                AppColors.sage,
                                                             size: 28),
                                                         tooltip:
                                                             'Get Directions',
