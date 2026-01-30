@@ -130,7 +130,32 @@ exports.analyzeYouTubeVideo = onCall(
         });
       }
 
-      return { locations, error: null };
+      // Build the analyzed content text for user verification
+      // This shows users what text was analyzed to find the locations
+      let analyzedContent = "";
+      if (videoMetadata?.title) {
+        analyzedContent += `Title: ${videoMetadata.title}\n\n`;
+      }
+      if (videoMetadata?.description) {
+        // Truncate long descriptions for display
+        const desc = videoMetadata.description.length > 1000 ?
+          videoMetadata.description.substring(0, 1000) + "..." :
+          videoMetadata.description;
+        analyzedContent += `Description:\n${desc}\n\n`;
+      }
+      if (transcript) {
+        // Truncate long transcripts for display
+        const truncatedTranscript = transcript.length > 2000 ?
+          transcript.substring(0, 2000) + "..." :
+          transcript;
+        analyzedContent += `Transcript:\n${truncatedTranscript}`;
+      }
+
+      return {
+        locations,
+        error: null,
+        analyzedContent: analyzedContent.trim() || null,
+      };
     } catch (error) {
       console.error("❌ Error analyzing video:", error.message);
       console.error("Stack:", error.stack);

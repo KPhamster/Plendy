@@ -51,6 +51,14 @@ class LinkLocationExtractionService {
 
   // Cache to avoid redundant API calls
   final Map<String, List<ExtractedLocationData>> _cache = {};
+  
+  /// The last analyzed content from video/page extraction
+  /// This contains the actual text (title, description, transcript) that was
+  /// analyzed to find locations. Useful for showing users what was scanned.
+  String? _lastAnalyzedContent;
+  
+  /// Get the last analyzed content (for YouTube videos: title + description + transcript)
+  String? get lastAnalyzedContent => _lastAnalyzedContent;
 
 
   /// Extract locations from a shared URL
@@ -77,6 +85,9 @@ class LinkLocationExtractionService {
     }
 
     print('🔍 EXTRACTION: Starting location extraction from: $url');
+    
+    // Clear any previous analyzed content
+    _lastAnalyzedContent = null;
     
     List<ExtractedLocationData> results = [];
 
@@ -1420,6 +1431,13 @@ class LinkLocationExtractionService {
         
         if (youtubeResult != null && youtubeResult.locations.isNotEmpty) {
           print('✅ EXTRACTION: Found ${youtubeResult.locationCount} location(s) from YouTube video');
+          
+          // Store the analyzed content (video title, description, transcript)
+          // This is what the AI analyzed to find the locations
+          if (youtubeResult.analyzedContent != null && youtubeResult.analyzedContent!.isNotEmpty) {
+            _lastAnalyzedContent = youtubeResult.analyzedContent;
+            print('📝 EXTRACTION: Stored analyzed content (${_lastAnalyzedContent!.length} chars)');
+          }
           
           // Resolve each location via Places API to get real coordinates
           final resolvedLocations = await _resolveYouTubeLocations(

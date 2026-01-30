@@ -1,15 +1,21 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../config/api_secrets.dart';
 
 /// Service for fetching Facebook content data using the Meta oEmbed API
 /// 
-/// This service uses Facebook's oEmbed API to get post/video/page previews
+/// This service uses Facebook's Graph API oEmbed endpoints to get post/video previews
 /// and metadata for embedding in the app.
 /// 
-/// Supported content types:
-/// - Facebook Posts (oembed_post)
-/// - Facebook Videos/Reels (oembed_video)
-/// - Facebook Pages (oembed_page)
+/// Supported content types (per official Meta Graph API v24.0):
+/// - Facebook Posts (oembed_post) - for posts, photos, permalinks
+/// - Facebook Videos/Reels (oembed_video) - for videos, reels, watch content
+/// 
+/// Note: oembed_page endpoint does not exist in the official API.
+/// Page URLs will fall back to oembed_post.
+/// 
+/// API Reference: https://developers.facebook.com/docs/graph-api/reference/oembed-video
+///                https://developers.facebook.com/docs/graph-api/reference/oembed-post
 class FacebookOEmbedService {
   static final FacebookOEmbedService _instance = FacebookOEmbedService._internal();
 
@@ -19,10 +25,9 @@ class FacebookOEmbedService {
 
   final Dio _dio = Dio();
 
-  /// Base URLs for Facebook oEmbed API endpoints
-  static const String _oembedPostUrl = 'https://graph.facebook.com/v21.0/oembed_post';
-  static const String _oembedVideoUrl = 'https://graph.facebook.com/v21.0/oembed_video';
-  static const String _oembedPageUrl = 'https://graph.facebook.com/v21.0/oembed_page';
+  /// Base URLs for Facebook oEmbed API endpoints (v24.0 - latest as of 2026)
+  static const String _oembedPostUrl = 'https://graph.facebook.com/v24.0/oembed_post';
+  static const String _oembedVideoUrl = 'https://graph.facebook.com/v24.0/oembed_video';
 
   /// Check if the service is properly configured
   bool get isConfigured {
@@ -35,10 +40,14 @@ class FacebookOEmbedService {
   }
 
   /// Determine the content type from a Facebook URL
+  /// 
+  /// Per Meta Graph API documentation, only two oEmbed endpoints exist:
+  /// - oembed_video: for videos, reels, watch content
+  /// - oembed_post: for posts, photos, permalinks (and fallback for other content)
   FacebookContentType getContentType(String url) {
     final lower = url.toLowerCase();
     
-    // Videos and Reels
+    // Videos and Reels -> use oembed_video endpoint
     if (lower.contains('/reel/') || 
         lower.contains('/reels/') ||
         lower.contains('/videos/') ||
@@ -47,21 +56,8 @@ class FacebookOEmbedService {
       return FacebookContentType.video;
     }
     
-    // Posts
-    if (lower.contains('/posts/') ||
-        lower.contains('/photo') ||
-        lower.contains('story_fbid=') ||
-        lower.contains('/permalink/')) {
-      return FacebookContentType.post;
-    }
-    
-    // Pages (profile URLs without specific content)
-    if (RegExp(r'facebook\.com/[^/]+/?$').hasMatch(lower) ||
-        lower.contains('/pages/')) {
-      return FacebookContentType.page;
-    }
-    
-    // Default to post for other URLs
+    // Everything else uses oembed_post (posts, photos, permalinks, pages, etc.)
+    // Note: Page URLs may not return embed data, but oembed_post is the closest match
     return FacebookContentType.post;
   }
 
@@ -70,21 +66,32 @@ class FacebookOEmbedService {
     switch (type) {
       case FacebookContentType.video:
         return _oembedVideoUrl;
-      case FacebookContentType.page:
-        return _oembedPageUrl;
       case FacebookContentType.post:
-      default:
         return _oembedPostUrl;
     }
   }
 
   /// Get oEmbed data for a Facebook URL
   /// 
-  /// [url] - The Facebook post/video/reel/page URL
+  /// [url] - The Facebook post/video/reel URL (required)
+  /// [maxWidth] - Maximum width of returned embed (optional)
+  /// [useIframe] - If true, returns iframe-based embed instead of XFBML (optional, defaults to false)
   /// 
-  /// Returns a map containing the oEmbed response data including HTML embed code,
-  /// or null if unavailable or on error.
-  Future<Map<String, dynamic>?> getOEmbedData(String url) async {
+  /// Returns a map containing the oEmbed response data including:
+  /// - html: The HTML embed code
+  /// - author_name: Name of the content owner
+  /// - author_url: URL of the author's profile
+  /// - width/height: Dimensions of the embed
+  /// - provider_name/provider_url: Facebook info
+  /// - type: oEmbed resource type
+  /// - version: Always "1.0"
+  /// 
+  /// Returns null if unavailable, private content, or on error.
+  Future<Map<String, dynamic>?> getOEmbedData(
+    String url, {
+    int? maxWidth,
+    bool useIframe = false,
+  }) async {
     if (!isConfigured) {
       print('⚠️ FACEBOOK: API not configured. Add Facebook App ID and Secret.');
       return null;
@@ -101,20 +108,48 @@ class FacebookOEmbedService {
     try {
       print('📘 FACEBOOK: Fetching oEmbed data for ${contentType.name} from $endpoint');
       
+      // Build query parameters per Meta Graph API v24.0 spec
+      final queryParams = <String, dynamic>{
+        'url': url,
+        'access_token': ApiSecrets.facebookAccessToken,
+        'omitscript': 'false', // Include Facebook SDK script reference
+      };
+      
+      // Add optional parameters if provided
+      if (maxWidth != null) {
+        queryParams['maxwidth'] = maxWidth;
+      }
+      if (useIframe) {
+        queryParams['useiframe'] = 'true';
+      }
+      
       final response = await _dio.get(
         endpoint,
-        queryParameters: {
-          'url': url,
-          'access_token': ApiSecrets.facebookAccessToken,
-          'omitscript': 'false', // Include Facebook SDK script reference
-        },
+        queryParameters: queryParams,
         options: Options(
           validateStatus: (status) => status != null && status < 500,
         ),
       );
 
       if (response.statusCode == 200) {
-        final data = response.data as Map<String, dynamic>;
+        // Handle response.data which could be String or Map depending on Dio config
+        Map<String, dynamic> data;
+        if (response.data is String) {
+          // Parse JSON string to Map
+          try {
+            data = jsonDecode(response.data as String) as Map<String, dynamic>;
+          } catch (e) {
+            print('❌ FACEBOOK: Failed to parse JSON response: $e');
+            print('   Raw response: ${response.data}');
+            return null;
+          }
+        } else if (response.data is Map<String, dynamic>) {
+          data = response.data as Map<String, dynamic>;
+        } else {
+          print('❌ FACEBOOK: Unexpected response type: ${response.data.runtimeType}');
+          return null;
+        }
+        
         print('✅ FACEBOOK: Got oEmbed response');
         
         if (data['html'] != null) {
@@ -125,13 +160,37 @@ class FacebookOEmbedService {
         }
         
         return data;
-      } else if (response.statusCode == 400) {
-        print('❌ FACEBOOK: Bad request - possibly private content or invalid URL');
-        print('   Error: ${response.data}');
-        return null;
       } else {
-        print('❌ FACEBOOK: API returned ${response.statusCode}');
-        print('   Response: ${response.data}');
+        // Handle error responses - parse error data for better diagnostics
+        Map<String, dynamic>? errorData;
+        if (response.data is String) {
+          try {
+            errorData = jsonDecode(response.data as String) as Map<String, dynamic>;
+          } catch (_) {}
+        } else if (response.data is Map<String, dynamic>) {
+          errorData = response.data as Map<String, dynamic>;
+        }
+        
+        // Extract Facebook API error code if available
+        final fbError = errorData?['error'] as Map<String, dynamic>?;
+        final errorCode = fbError?['code'];
+        final errorMessage = fbError?['message'] ?? response.data;
+        
+        // Handle specific Facebook API error codes per official docs
+        switch (errorCode) {
+          case 100:
+            print('❌ FACEBOOK: Invalid parameter (code 100) - URL may be malformed');
+            break;
+          case 190:
+            print('❌ FACEBOOK: Invalid OAuth 2.0 Access Token (code 190) - check API credentials');
+            break;
+          case 200:
+            print('❌ FACEBOOK: Permissions error (code 200) - content may be private');
+            break;
+          default:
+            print('❌ FACEBOOK: API returned ${response.statusCode}');
+        }
+        print('   Error: $errorMessage');
         return null;
       }
     } on DioException catch (e) {
@@ -231,9 +290,12 @@ class FacebookOEmbedService {
   }
 }
 
-/// Types of Facebook content supported by oEmbed
+/// Types of Facebook content supported by Meta oEmbed API
+/// 
+/// Per official Graph API v24.0 documentation:
+/// - post: Uses /oembed_post endpoint for posts, photos, permalinks
+/// - video: Uses /oembed_video endpoint for videos, reels, watch content
 enum FacebookContentType {
   post,
   video,
-  page,
 }

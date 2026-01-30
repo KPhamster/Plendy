@@ -88,12 +88,17 @@ class GeminiGroundingResult {
   
   /// Raw response data for debugging
   final Map<String, dynamic> rawResponse;
+  
+  /// The analyzed content that was used to extract locations (for user verification)
+  /// For YouTube videos, this includes the video title, description, and transcript
+  final String? analyzedContent;
 
   const GeminiGroundingResult({
     required this.responseText,
     required this.locations,
     this.widgetContextToken,
     this.rawResponse = const {},
+    this.analyzedContent,
   });
 
   /// Whether any locations were found
@@ -339,8 +344,14 @@ class GeminiGroundingResult {
   /// Create from Cloud Function response (Vertex AI YouTube analysis)
   /// 
   /// The Cloud Function returns a simpler format:
-  /// [{ name, address, city, region, country, type }]
-  factory GeminiGroundingResult.fromCloudFunctionResponse(List<dynamic> locationsList) {
+  /// { locations: [{ name, address, city, region, country, type }], analyzedContent: "..." }
+  /// 
+  /// [locationsList] - The list of location objects from the Cloud Function
+  /// [analyzedContent] - Optional: The video title, description, and transcript that was analyzed
+  factory GeminiGroundingResult.fromCloudFunctionResponse(
+    List<dynamic> locationsList, {
+    String? analyzedContent,
+  }) {
     final locations = <GoogleMapsLocation>[];
 
     for (final item in locationsList) {
@@ -368,6 +379,7 @@ class GeminiGroundingResult {
       locations: locations,
       widgetContextToken: null,
       rawResponse: {'locations': locationsList},
+      analyzedContent: analyzedContent,
     );
   }
 
