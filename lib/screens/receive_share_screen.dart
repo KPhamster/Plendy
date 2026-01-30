@@ -1165,13 +1165,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // 1. OCR extracted text from the image scan result (primary source)
       // 2. WebView extracted caption (fallback for platforms like Instagram/TikTok)
       String? scannedTextForDialog = result.extractedText ?? _extractedCaption;
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
         scannedText: scannedTextForDialog,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = detectedEvent;
+      }
     } catch (e) {
       print('❌ SCAN PREVIEW ERROR: $e');
       if (mounted) {
@@ -1192,6 +1198,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
     }
   }
 
@@ -1300,6 +1315,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }).toList();
       }
 
+      // If any locations are missing coordinates (grounding failed), try to resolve via Places API
+      final locationsWithoutCoords = locations.where((loc) => loc.coordinates == null).length;
+      if (locationsWithoutCoords > 0) {
+        print('🔍 SCAN PAGE: $locationsWithoutCoords location(s) missing coordinates, resolving via Places API...');
+        _updateScanProgress(0.80);
+        locations = await _resolveLocationsWithoutCoordinates(locations, userLocation);
+        final resolvedCount = locations.where((loc) => loc.coordinates != null).length;
+        print('✅ SCAN PAGE: Resolved ${resolvedCount}/${locations.length} location(s) with coordinates');
+      }
+
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
         if (locations.isNotEmpty) {
@@ -1341,13 +1366,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Always show the location selection dialog, even for single results
       // Pass detected event info for event designation
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
         scannedText: pageContent,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = detectedEvent;
+      }
     } catch (e) {
       print('❌ SCAN PAGE ERROR: $e');
       if (mounted) {
@@ -1368,6 +1399,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
     }
   }
 
@@ -1442,12 +1482,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Merge results first (doesn't need mounted)
       // Prefer text extraction (grounded) results over screenshot (OCR)
       // Text extraction results have Maps grounding and are more accurate
-      final mergedLocations =
+      var mergedLocations =
           _mergeExtractedLocations(textLocations, screenshotLocations);
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.80);
 
       print(
           '🔄 COMBINED SCAN: Merged to ${mergedLocations.length} unique location(s)');
+
+      // If any locations are missing coordinates (grounding failed), try to resolve via Places API
+      final locationsWithoutCoords = mergedLocations.where((loc) => loc.coordinates == null).length;
+      if (locationsWithoutCoords > 0) {
+        print('🔍 COMBINED SCAN: $locationsWithoutCoords location(s) missing coordinates, resolving via Places API...');
+        mergedLocations = await _resolveLocationsWithoutCoordinates(mergedLocations, userLocation);
+        final resolvedCount = mergedLocations.where((loc) => loc.coordinates != null).length;
+        print('✅ COMBINED SCAN: Resolved ${resolvedCount}/${mergedLocations.length} location(s) with coordinates');
+      }
+      _updateScanProgress(0.85);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -1530,13 +1580,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // If event info was detected, the dialog will show a second page for event designation
       // For combined scan, prefer the WebView caption, fall back to OCR extracted text
       final scannedTextForDialog = _extractedCaption ?? _lastScanExtractedText;
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         mergedLocations,
         provider,
         detectedEventInfo: detectedEvent,
         scannedText: scannedTextForDialog,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = detectedEvent;
+      }
     } catch (e) {
       print('❌ COMBINED SCAN ERROR: $e');
       if (mounted) {
@@ -1557,6 +1613,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
     }
   }
 
@@ -1763,6 +1828,87 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('⚠️ COMBINED SCAN: Text extraction error: $e');
       return [];
     }
+  }
+
+  /// Resolve locations that don't have coordinates via Places API
+  /// 
+  /// When Gemini's Maps grounding doesn't return coordinates (e.g., for generic web pages),
+  /// we fall back to searching Places Text Search API using the location name.
+  /// Text Search API returns full place details including coordinates (unlike Autocomplete).
+  /// This ensures locations can be saved and shown in the dialog.
+  Future<List<ExtractedLocationData>> _resolveLocationsWithoutCoordinates(
+    List<ExtractedLocationData> locations,
+    LatLng? userLocation,
+  ) async {
+    final resolved = <ExtractedLocationData>[];
+    
+    for (final loc in locations) {
+      // If already has coordinates, keep it as-is
+      if (loc.coordinates != null) {
+        resolved.add(loc);
+        continue;
+      }
+      
+      // Try to resolve via Places Text Search API (returns coordinates directly)
+      final searchQuery = loc.address != null && loc.address!.isNotEmpty
+          ? '${loc.name} ${loc.address}'
+          : loc.name ?? '';
+      
+      if (searchQuery.isEmpty) {
+        print('⏭️ RESOLVE: Skipping location with no name');
+        continue;
+      }
+      
+      print('🔍 RESOLVE: Searching Places Text Search API for "$searchQuery"...');
+      
+      try {
+        // Use searchPlacesTextSearch which returns full details including lat/lng
+        // (unlike searchPlaces which uses Autocomplete and only returns place IDs)
+        final results = await _mapsService.searchPlacesTextSearch(
+          searchQuery,
+          latitude: userLocation?.latitude,
+          longitude: userLocation?.longitude,
+        );
+        
+        if (results.isNotEmpty) {
+          final firstResult = results.first;
+          final placeId = firstResult['placeId'] as String?;
+          // Text Search API returns 'latitude'/'longitude' not 'lat'/'lng'
+          final lat = firstResult['latitude'] as double?;
+          final lng = firstResult['longitude'] as double?;
+          // Text Search API returns 'address' not 'formattedAddress'
+          final address = firstResult['address'] as String?;
+          final resolvedName = firstResult['name'] as String?;
+          final placeTypes = (firstResult['types'] as List?)?.cast<String>();
+          
+          if (lat != null && lng != null) {
+            print('✅ RESOLVE: Found "${loc.name}" → placeId: ${placeId ?? "none"}, coords: ($lat, $lng)');
+            resolved.add(loc.copyWith(
+              placeId: placeId,
+              coordinates: LatLng(lat, lng),
+              address: address ?? loc.address,
+              // Keep original name if resolver returned a different one
+              name: loc.name ?? resolvedName,
+              source: ExtractionSource.placesSearch,
+              // Match Instagram preview confidence: 0.85 for verified Places API results with coordinates
+              // This is consistent with LinkLocationExtractionService._verifyLocationWithPlacesAPI
+              confidence: 0.85,
+              placeTypes: placeTypes,
+            ));
+            continue;
+          }
+        }
+        
+        print('⏭️ RESOLVE: Could not resolve "${loc.name}" - no Places API match');
+        // Keep the unresolved location so it shows in the dialog (with a "not found" indicator)
+        resolved.add(loc);
+      } catch (e) {
+        print('⚠️ RESOLVE: Error searching for "${loc.name}": $e');
+        resolved.add(loc); // Keep unresolved
+      }
+    }
+    
+    return resolved;
   }
 
   /// Merge two lists of locations, preferring grounded results and removing duplicates
@@ -2331,13 +2477,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Always show the location selection dialog, even for single results
       // Pass detected event info for event designation
       // Use the extracted text from OCR directly (already available in result)
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         detectedEventInfo: detectedEvent,
         scannedText: result.extractedText,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = detectedEvent;
+      }
     } catch (e) {
       print('❌ SCREENSHOT ERROR: $e');
       if (mounted) {
@@ -2358,6 +2510,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
     }
   }
 
@@ -3178,13 +3339,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
-      // For URL-based extraction, use the extracted caption if available
-      await _handleMultipleExtractedLocations(
+      // Priority for scanned text:
+      // 1. lastAnalyzedContent from extraction service (YouTube video title/description/transcript)
+      // 2. _extractedCaption from WebView caption extraction
+      // 3. Fallback is handled by _handleMultipleExtractedLocations
+      final analyzedContent = _locationExtractor.lastAnalyzedContent;
+      final scannedTextForDialog = analyzedContent ?? _extractedCaption;
+      
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
-        scannedText: _extractedCaption,
+        scannedText: scannedTextForDialog,
       );
       _updateScanProgress(1.0);
+
+      // If user requested deep scan, run it after cleanup
+      print('🔍 URL EXTRACTION: deepScanRequested=$deepScanRequested, mounted=$mounted');
+      if (deepScanRequested && mounted) {
+        print('🔍 URL EXTRACTION: Setting _pendingDeepScanProvider');
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = null;
+      }
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
       if (mounted) {
@@ -3196,6 +3371,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } finally {
       // Disable wakelock and stop foreground service
+      print('🔍 URL EXTRACTION: Finally block - cleaning up');
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
       if (mounted) {
@@ -3205,6 +3381,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+      print('🔍 URL EXTRACTION: Finally block complete, _pendingDeepScanProvider=${_pendingDeepScanProvider != null}');
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    print('🔍 URL EXTRACTION: After finally - _pendingDeepScanProvider=${_pendingDeepScanProvider != null}, mounted=$mounted');
+    if (_pendingDeepScanProvider != null && mounted) {
+      print('🔍 URL EXTRACTION: Starting deep scan...');
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
+    } else {
+      print('🔍 URL EXTRACTION: NOT starting deep scan - provider null or not mounted');
     }
   }
 
@@ -5309,8 +5499,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _updateScanProgress(1.0);
 
       // If user requested deep scan, run it after cleanup (only if we didn't already do deep scan)
+      print('🔍 MAPS GROUNDING: deepScanRequested=$deepScanRequested, mounted=$mounted, isDeepScanResult=$isDeepScanResult');
       if (deepScanRequested && mounted && !isDeepScanResult) {
         // Store provider and event info for use after finally block
+        print('🔍 MAPS GROUNDING: Setting _pendingDeepScanProvider');
         _pendingDeepScanProvider = provider;
         _pendingDeepScanEventInfo = detectedEvent;
       }
@@ -5325,6 +5517,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } finally {
       // Disable wakelock and stop foreground service
+      print('🔍 MAPS GROUNDING: Finally block - cleaning up');
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
       if (mounted) {
@@ -5334,15 +5527,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _scanProgress = 0.0;
         });
       }
+      print('🔍 MAPS GROUNDING: Finally block complete, _pendingDeepScanProvider=${_pendingDeepScanProvider != null}');
     }
 
     // Run deep scan if requested (after cleanup is complete)
+    print('🔍 MAPS GROUNDING: After finally - _pendingDeepScanProvider=${_pendingDeepScanProvider != null}, mounted=$mounted');
     if (_pendingDeepScanProvider != null && mounted) {
+      print('🔍 MAPS GROUNDING: Starting deep scan...');
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
       _pendingDeepScanEventInfo = null;
       await _runDeepScan(provider, detectedEventInfo: eventInfo);
+    } else {
+      print('🔍 MAPS GROUNDING: NOT starting deep scan - provider null or not mounted');
     }
   }
 
@@ -5574,6 +5772,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// for the user to select which locations should be designated as events.
   /// If [isDeepScan] is true, the deep scan option will not be shown in the dialog.
   /// If [scannedText] is provided, it will be shown in an expandable section.
+  /// If no scannedText is provided, a fallback is built from location originalQuery fields.
   /// Returns true if the user requested a deep scan (caller should handle running it).
   Future<bool> _handleMultipleExtractedLocations(
     List<ExtractedLocationData> locations,
@@ -5582,9 +5781,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     bool isDeepScan = false,
     String? scannedText,
   }) async {
+    // Build fallback scanned text from location originalQuery fields if not provided
+    // This ensures ALL Locations Found dialogs show original text for user verification
+    final effectiveScannedText = scannedText?.isNotEmpty == true
+        ? scannedText
+        : _buildScannedTextFallback(locations);
+
     // Sort locations by order of appearance in the scanned text
     // This ensures the dialog shows locations in the same order as the original content
-    final sortedLocations = _sortLocationsByTextAppearance(locations, scannedText);
+    final sortedLocations = _sortLocationsByTextAppearance(locations, effectiveScannedText);
 
     // Check for duplicates before showing dialog (using sorted list)
     final duplicates = await _checkLocationsForDuplicates(sortedLocations);
@@ -5603,7 +5808,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         onDeepScanRequested: isDeepScan
             ? null
             : () {}, // Placeholder, not used - result handles this
-        scannedText: scannedText,
+        scannedText: effectiveScannedText,
       ),
     );
 
@@ -5617,6 +5822,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             '📍 DEEP SCAN: Preserving ${result.selectedLocations.length} confirmed location(s) from quick scan');
       } else {
         _pendingDeepScanConfirmedLocations = null;
+      }
+      // Store the scanned text content for deep scan to use
+      // This is important for Facebook, TikTok, Instagram etc. where content comes from WebView
+      if (effectiveScannedText != null && effectiveScannedText.isNotEmpty) {
+        _extractedCaption = effectiveScannedText;
+        print(
+            '📍 DEEP SCAN: Preserving scanned text (${effectiveScannedText.length} chars) for deep scan');
       }
       return true; // Caller should run deep scan AFTER cleanup
     }
@@ -5852,8 +6064,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Make sure widget is still mounted
     if (!mounted) return;
 
+    // For YouTube URLs, the analyzed content is stored in lastAnalyzedContent, not _extractedCaption
+    // Use lastAnalyzedContent as fallback if _extractedCaption is empty
+    final contentToScan = (_extractedCaption?.isNotEmpty == true)
+        ? _extractedCaption
+        : _locationExtractor.lastAnalyzedContent;
+
     // Make sure we have caption text to scan
-    if (_extractedCaption == null || _extractedCaption!.isEmpty) {
+    if (contentToScan == null || contentToScan.isEmpty) {
+      print('🔍 DEEP SCAN: No content to scan - _extractedCaption=${_extractedCaption?.length ?? 0}, lastAnalyzedContent=${_locationExtractor.lastAnalyzedContent?.length ?? 0}');
       Fluttertoast.showToast(
         msg: '❌ No content to scan. Please try again.',
         toastLength: Toast.LENGTH_LONG,
@@ -5861,6 +6080,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
       return;
     }
+    
+    print('🔍 DEEP SCAN: Content to scan length: ${contentToScan.length} chars');
 
     // Get confirmed locations from quick scan (user-verified correct locations)
     final confirmedLocations = _pendingDeepScanConfirmedLocations;
@@ -5930,7 +6151,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // This saves Gemini API calls for locations user has already confirmed
       final unifiedResult =
           await _locationExtractor.extractLocationsFromTextUnified(
-        _extractedCaption!,
+        contentToScan,
         userLocation: userLocation,
         onProgress: (current, total, message) {
           // Map progress from 0.2 to 0.8
@@ -6169,6 +6390,55 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print('📍 SORT: Final order: ${locationsWithIndex.map((e) => '"${e.location.name}" @${e.index}').join(', ')}');
 
     return locationsWithIndex.map((e) => e.location).toList();
+  }
+
+  /// Build a fallback scanned text from location originalQuery fields
+  /// This is used when no explicit scannedText is provided to ensure
+  /// ALL Locations Found dialogs show the original text for user verification
+  String? _buildScannedTextFallback(List<ExtractedLocationData> locations) {
+    if (locations.isEmpty) return null;
+
+    // Collect all unique original queries from the locations
+    // originalQuery is the raw text extracted before Places API resolution
+    final originalQueries = <String>[];
+    for (final location in locations) {
+      if (location.originalQuery != null && location.originalQuery!.isNotEmpty) {
+        // Use originalQuery if available (the raw extracted text before resolution)
+        if (!originalQueries.contains(location.originalQuery!)) {
+          originalQueries.add(location.originalQuery!);
+        }
+      } else if (location.name.isNotEmpty) {
+        // Fall back to the resolved name if no originalQuery
+        if (!originalQueries.contains(location.name)) {
+          originalQueries.add(location.name);
+        }
+      }
+    }
+
+    if (originalQueries.isEmpty) return null;
+
+    // Also try to get the current URL as additional context
+    final currentUrl = _sharedUrlController.text.trim();
+    
+    // Build the fallback text
+    final buffer = StringBuffer();
+    
+    // Add explanatory note about what AI detected
+    buffer.writeln('AI detected the following location(s) from the scan:');
+    buffer.writeln();
+    
+    // Add the extracted location names/queries
+    for (var i = 0; i < originalQueries.length; i++) {
+      buffer.writeln('${i + 1}. ${originalQueries[i]}');
+    }
+    
+    // Add URL if available (helps user know what was scanned)
+    if (currentUrl.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Source: $currentUrl');
+    }
+
+    return buffer.toString().trim();
   }
 
   /// Scroll to the top of the experience cards section
@@ -6969,11 +7239,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Always show the location selection dialog, even for single results
       // Use extracted caption if available for resumed scans
-      await _handleMultipleExtractedLocations(
+      final deepScanRequested = await _handleMultipleExtractedLocations(
         results,
         provider,
         scannedText: _extractedCaption,
       );
+
+      // If user requested deep scan, run it after cleanup
+      if (deepScanRequested && mounted) {
+        _pendingDeepScanProvider = provider;
+        _pendingDeepScanEventInfo = null;
+      }
     } catch (e) {
       print('❌ SCAN RESUME ERROR: $e');
       if (mounted) {
@@ -6994,6 +7270,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service after applying results
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
+    }
+
+    // Run deep scan if requested (after cleanup is complete)
+    if (_pendingDeepScanProvider != null && mounted) {
+      final provider = _pendingDeepScanProvider!;
+      final eventInfo = _pendingDeepScanEventInfo;
+      _pendingDeepScanProvider = null;
+      _pendingDeepScanEventInfo = null;
+      await _runDeepScan(provider, detectedEventInfo: eventInfo);
     }
   }
 
@@ -10472,16 +10757,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // Handle controller if needed
         },
         onPageFinished: (loadedUrl) {
-          // Skip auto-extraction for Facebook Reels - their DOM structure is too
-          // obfuscated for reliable scraping. Users can use "Scan Preview" instead.
-          final isReel = url.contains('/reel/') || url.contains('/reels/');
-          if (isReel) {
-            print(
-                '📘 FACEBOOK: Skipping auto-extraction for Reel (use Scan Preview instead)');
-            return;
-          }
+          // NOTE: Reel restriction temporarily disabled to test auto-scanning on Reels.
+          // Uncomment below to restore the restriction if Reel auto-extraction is unreliable.
+          // 
+          // // Skip auto-extraction for Facebook Reels - their DOM structure is too
+          // // obfuscated for reliable scraping. Users can use "Scan Preview" instead.
+          // final isReel = url.contains('/reel/') || url.contains('/reels/');
+          // if (isReel) {
+          //   print(
+          //       '📘 FACEBOOK: Skipping auto-extraction for Reel (use Scan Preview instead)');
+          //   return;
+          // }
 
-          // Automatically extract locations from regular Facebook posts only
+          // Automatically extract locations from Facebook posts (including Reels)
           Future.delayed(const Duration(milliseconds: 1500), () {
             if (mounted) {
               _onFacebookPageLoaded(url);

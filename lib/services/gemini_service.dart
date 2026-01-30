@@ -807,8 +807,18 @@ WRONG (do NOT do this):
         return null;
       }
       
-      // Convert to GeminiGroundingResult format
-      final result = GeminiGroundingResult.fromCloudFunctionResponse(locationsList);
+      // Get the analyzed content (video title, description, transcript)
+      // This is what the AI analyzed to find the locations
+      final analyzedContent = data['analyzedContent'] as String?;
+      if (analyzedContent != null && analyzedContent.isNotEmpty) {
+        print('📝 VERTEX AI: Analyzed content available (${analyzedContent.length} chars)');
+      }
+      
+      // Convert to GeminiGroundingResult format with analyzed content
+      final result = GeminiGroundingResult.fromCloudFunctionResponse(
+        locationsList,
+        analyzedContent: analyzedContent,
+      );
       
       print('✅ VERTEX AI: Found ${result.locationCount} location(s) from YouTube video');
       for (final loc in result.locations) {
