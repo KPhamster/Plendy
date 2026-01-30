@@ -4825,24 +4825,6 @@ class CollectionsScreenState extends State<CollectionsScreen>
           child: Wrap(
             children: [
               ListTile(
-                leading: const Icon(Icons.category_outlined),
-                title: const Text('Add Category'),
-                onTap: withHeavyTap(() async {
-                  triggerHeavyHaptic();
-                  Navigator.of(ctx).pop();
-                  await _showAddCategoryModal();
-                }),
-              ),
-              ListTile(
-                leading: const Icon(Icons.palette_outlined),
-                title: const Text('Add Color Category'),
-                onTap: withHeavyTap(() async {
-                  triggerHeavyHaptic();
-                  Navigator.of(ctx).pop();
-                  await _showAddColorCategoryModal();
-                }),
-              ),
-              ListTile(
                 leading: const Icon(Icons.add_circle_outline),
                 title: const Text('Add Experience'),
                 onTap: withHeavyTap(() async {
@@ -4858,6 +4840,24 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   triggerHeavyHaptic();
                   Navigator.of(ctx).pop();
                   await _showAddContentModal();
+                }),
+              ),
+              ListTile(
+                leading: const Icon(Icons.category_outlined),
+                title: const Text('Add Category'),
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
+                  Navigator.of(ctx).pop();
+                  await _showAddCategoryModal();
+                }),
+              ),
+              ListTile(
+                leading: const Icon(Icons.palette_outlined),
+                title: const Text('Add Color Category'),
+                onTap: withHeavyTap(() async {
+                  triggerHeavyHaptic();
+                  Navigator.of(ctx).pop();
+                  await _showAddColorCategoryModal();
                 }),
               ),
               ListTile(

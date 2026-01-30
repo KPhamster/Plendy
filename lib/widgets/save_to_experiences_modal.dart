@@ -1,16 +1,22 @@
 import 'package:collection/collection.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:intl/intl.dart';
 
+import '../config/colors.dart';
 import '../models/color_category.dart';
+import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/experience_card_data.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../services/category_ordering_service.dart';
 import '../services/category_auto_assign_service.dart';
+import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
+import '../utils/haptic_feedback.dart';
 import '../widgets/select_saved_experience_modal_content.dart';
 import '../screens/location_picker_screen.dart';
 import '../screens/receive_share/widgets/experience_card_form.dart';
@@ -36,6 +42,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
   final CategoryAutoAssignService _categoryAutoAssignService =
       CategoryAutoAssignService();
   final GoogleMapsService _mapsService = GoogleMapsService();
+  final EventService _eventService = EventService();
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   final ValueNotifier<List<UserCategory>> _userCategoriesNotifier =
@@ -645,6 +652,518 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     );
   }
 
+  // --- Event Selection Dialog Methods ---
+
+  Future<void> _showSelectEventDialogForCard(ExperienceCardData card) async {
+    if (!mounted) return;
+
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) {
+      Fluttertoast.showToast(
+        msg: 'Please sign in to select an event',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+      );
+      return;
+    }
+
+    // Show loading dialog while fetching events
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      // Fetch user's events
+      final events = await _eventService.getEventsForUser(currentUserId);
+
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
+
+      // Sort events by start date (most recent first, but future events at top)
+      events.sort((a, b) => b.startDateTime.compareTo(a.startDateTime));
+
+      final eventListItems = _buildEventListWithHeaders(events);
+
+      // Find the index to scroll to
+      int anchorIndex = -1;
+
+      // First priority: scroll to selected event for this card if there is one
+      if (card.selectedEvent != null) {
+        for (int i = 0; i < eventListItems.length; i++) {
+          if (!eventListItems[i].isHeader &&
+              eventListItems[i].event != null &&
+              eventListItems[i].event!.id == card.selectedEvent!.id) {
+            anchorIndex = i;
+            break;
+          }
+        }
+      }
+
+      // Second priority: scroll to first upcoming event
+      if (anchorIndex == -1 && events.isNotEmpty) {
+        final now = DateTime.now();
+        for (int i = 0; i < eventListItems.length; i++) {
+          if (!eventListItems[i].isHeader && eventListItems[i].event != null) {
+            if (!eventListItems[i].event!.startDateTime.isBefore(now)) {
+              anchorIndex = i;
+              break;
+            }
+          }
+        }
+        // If no upcoming event found, anchor to the last event
+        if (anchorIndex == -1 && eventListItems.isNotEmpty) {
+          anchorIndex = eventListItems.length - 1;
+        }
+      }
+
+      final List<GlobalKey> itemKeys =
+          List.generate(eventListItems.length, (_) => GlobalKey());
+
+      await showDialog(
+        context: context,
+        builder: (dialogContext) {
+          final theme = Theme.of(dialogContext);
+          final isDark = theme.brightness == Brightness.dark;
+          final ScrollController scrollController = ScrollController();
+
+          // Scroll to anchor
+          void scrollToAnchor() {
+            if (anchorIndex < 0 || anchorIndex >= itemKeys.length) return;
+
+            void performScroll() {
+              // Initial jump to estimated position
+              const estimatedItemHeight = 110.0;
+              final estimatedOffset = anchorIndex * estimatedItemHeight;
+              final maxScroll = scrollController.position.maxScrollExtent;
+              scrollController.jumpTo(estimatedOffset.clamp(0.0, maxScroll));
+
+              int retries = 0;
+              const maxRetries = 15;
+
+              void tryEnsureVisible() {
+                if (retries++ >= maxRetries) return;
+                final keyContext = itemKeys[anchorIndex].currentContext;
+                if (keyContext != null) {
+                  Scrollable.ensureVisible(
+                    keyContext,
+                    duration: const Duration(milliseconds: 0),
+                    curve: Curves.easeOut,
+                    alignment: 0.1,
+                  );
+                } else {
+                  Future.delayed(
+                      const Duration(milliseconds: 100), tryEnsureVisible);
+                }
+              }
+
+              Future.delayed(
+                  const Duration(milliseconds: 150), tryEnsureVisible);
+            }
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              performScroll();
+            });
+          }
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            scrollToAnchor();
+          });
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return Dialog(
+                backgroundColor: AppColors.backgroundColor,
+                insetPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(dialogContext).size.width * 0.95,
+                    maxHeight: MediaQuery.of(dialogContext).size.height * 0.7,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                        child: Row(
+                          children: [
+                            Text(
+                              'Select an Event',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'Google Sans',
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () {
+                                triggerHeavyHaptic();
+                                scrollController.dispose();
+                                Navigator.of(dialogContext).pop();
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: events.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.event_outlined,
+                                      size: 48,
+                                      color: isDark
+                                          ? Colors.white38
+                                          : Colors.black45,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'No events yet',
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
+                                        color: isDark
+                                            ? Colors.white70
+                                            : Colors.black54,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Create events from the Map screen',
+                                      style:
+                                          theme.textTheme.bodySmall?.copyWith(
+                                        color: isDark
+                                            ? Colors.white54
+                                            : Colors.black45,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.builder(
+                                controller: scrollController,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                itemCount: eventListItems.length,
+                                itemBuilder: (context, index) {
+                                  final item = eventListItems[index];
+                                  return Container(
+                                    key: itemKeys[index],
+                                    child: item.isHeader
+                                        ? _buildEventDateHeader(
+                                            item.date!, theme, isDark)
+                                        : _buildSelectEventCard(
+                                            item.event!,
+                                            theme,
+                                            isDark,
+                                            card.selectedEvent?.id ==
+                                                item.event!.id,
+                                            onTap: () {
+                                              triggerHeavyHaptic();
+                                              final tappedEvent = item.event!;
+
+                                              if (card.selectedEvent?.id ==
+                                                  tappedEvent.id) {
+                                                // Deselect if already selected
+                                                setState(() {
+                                                  card.selectedEvent = null;
+                                                });
+                                                setDialogState(() {});
+                                                Fluttertoast.showToast(
+                                                  msg: 'Event deselected',
+                                                  toastLength:
+                                                      Toast.LENGTH_SHORT,
+                                                  gravity: ToastGravity.BOTTOM,
+                                                );
+                                              } else {
+                                                // Select the event for this card
+                                                setState(() {
+                                                  card.selectedEvent =
+                                                      tappedEvent;
+                                                });
+                                                setDialogState(() {});
+
+                                                // Close dialog and show toast
+                                                Navigator.of(dialogContext)
+                                                    .pop();
+                                                Fluttertoast.showToast(
+                                                  msg:
+                                                      'Experience will be saved to "${tappedEvent.title}"',
+                                                  toastLength:
+                                                      Toast.LENGTH_LONG,
+                                                  gravity: ToastGravity.BOTTOM,
+                                                );
+                                              }
+                                            },
+                                          ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
+      Fluttertoast.showToast(
+        msg: 'Error loading events: $e',
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+      );
+    }
+  }
+
+  // Group events by date and create a list with headers
+  List<_EventListItem> _buildEventListWithHeaders(List<Event> events) {
+    if (events.isEmpty) return [];
+
+    final List<_EventListItem> items = [];
+    DateTime? currentDate;
+
+    for (final event in events) {
+      final eventDate = DateTime(
+        event.startDateTime.year,
+        event.startDateTime.month,
+        event.startDateTime.day,
+      );
+
+      // Add date header if this is a new day
+      if (currentDate == null || !_isSameDay(currentDate, eventDate)) {
+        items.add(_EventListItem.header(eventDate));
+        currentDate = eventDate;
+      }
+
+      items.add(_EventListItem.event(event));
+    }
+
+    return items;
+  }
+
+  // Format date header as "Tuesday, June 4, 2025"
+  String _formatDateHeader(DateTime date) {
+    return DateFormat('EEEE, MMMM d, yyyy').format(date);
+  }
+
+  // Build date header widget
+  Widget _buildEventDateHeader(DateTime date, ThemeData theme, bool isDark) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        _formatDateHeader(date),
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          color: isDark ? Colors.white70 : Colors.black87,
+          fontSize: 14,
+        ),
+      ),
+    );
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _formatEventTime(Event event) {
+    final start = DateFormat('h:mm a').format(event.startDateTime);
+    final end = DateFormat('h:mm a').format(event.endDateTime);
+
+    if (_isSameDay(event.startDateTime, event.endDateTime)) {
+      return '$start - $end';
+    } else {
+      return '$start - ${DateFormat('MMM d, h:mm a').format(event.endDateTime)}';
+    }
+  }
+
+  Color _getEventColor(Event event) {
+    if (event.colorHex != null && event.colorHex!.isNotEmpty) {
+      return _parseEventColorHex(event.colorHex!);
+    }
+    const colors = [
+      Colors.blue,
+      Colors.red,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.pink,
+      Colors.indigo,
+    ];
+    final hash = event.id.hashCode;
+    return colors[hash.abs() % colors.length];
+  }
+
+  Color _parseEventColorHex(String hex) {
+    String cleaned = hex.replaceAll('#', '');
+    if (cleaned.length == 6) {
+      cleaned = 'FF$cleaned';
+    }
+    return Color(int.parse(cleaned, radix: 16));
+  }
+
+  Widget _buildSelectEventCard(
+      Event event, ThemeData theme, bool isDark, bool isSelected,
+      {VoidCallback? onTap}) {
+    final cardColor = isDark ? const Color(0xFF2B2930) : Colors.white;
+    final borderColor = _getEventColor(event);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
+        children: [
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: borderColor.withOpacity(0.3),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: IntrinsicHeight(
+              child: Row(
+                children: [
+                  Container(
+                    width: 4,
+                    decoration: BoxDecoration(
+                      color: borderColor,
+                      borderRadius: const BorderRadius.horizontal(
+                        left: Radius.circular(16),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            event.title.isEmpty
+                                ? 'Untitled Event'
+                                : event.title,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'Google Sans',
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.access_time,
+                                size: 16,
+                                color: isDark ? Colors.white60 : Colors.black54,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _formatEventTime(event),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color:
+                                      isDark ? Colors.white60 : Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (event.description.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              event.description,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: isDark ? Colors.white54 : Colors.black45,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                          if (event.experiences.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on_outlined,
+                                  size: 16,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Selection indicator - sage circle with checkmark
+          if (isSelected)
+            Positioned(
+              top: 2,
+              right: 12,
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: AppColors.sage,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.check,
+                  size: 14,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+  // --- End Event Selection Dialog Methods ---
+
   @override
   Widget build(BuildContext context) {
     return FractionallySizedBox(
@@ -733,6 +1252,8 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
                   );
                 },
                 formKey: card.formKey,
+                onEventSelect: () => _showSelectEventDialogForCard(card),
+                selectedEventTitle: card.selectedEvent?.title,
               );
             },
           ),
@@ -750,8 +1271,9 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
   }
 
   Widget _buildBottomBar(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -796,4 +1318,18 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
       ),
     );
   }
+}
+
+// Helper class to represent either a date header or an event
+class _EventListItem {
+  final DateTime? date;
+  final Event? event;
+  final bool isHeader;
+
+  _EventListItem.header(this.date)
+      : event = null,
+        isHeader = true;
+  _EventListItem.event(this.event)
+      : date = null,
+        isHeader = false;
 }
