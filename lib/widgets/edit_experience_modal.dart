@@ -1536,22 +1536,26 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         key: _localMessengerKey,
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          resizeToAvoidBottomInset: false,
+          resizeToAvoidBottomInset: true,
           body: Material(
             color: AppColors.backgroundColor,
-            child: Padding(
-              padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-                  left: 16,
-                  right: 16,
-                  top: 50),
-              child: SingleChildScrollView(
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min, // Fit content vertically
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+            child: SafeArea(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                          left: 16,
+                          right: 16,
+                          top: 16),
+                      child: SingleChildScrollView(
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                    const SizedBox(height: 16), // Padding above header
                     // Modal Title
                     Text(
                       'Edit Experience',
@@ -2132,43 +2136,58 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   minLines: 3,
                   maxLines: null,
                 ),
-                SizedBox(height: 24), // Space before buttons
-
-                // --- Action Buttons ---
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () =>
-                          Navigator.of(context).pop(), // Close without saving
-                      child: const Text('Cancel'),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _handleSavePressed,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isSaveEnabled
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurface
-                                .withValues(alpha: 0.12),
-                        foregroundColor: isSaveEnabled
-                            ? Colors.white
-                            : theme.colorScheme.onSurface
-                                .withValues(alpha: 0.38),
+                const SizedBox(height: 16), // Bottom padding for scroll content
+                            ],
+                          ),
+                        ),
                       ),
-                      child: const Text('Save Changes'),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16), // Bottom padding
+                  ),
+                  // --- Fixed Action Buttons at Bottom ---
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundColor,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _handleSavePressed,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isSaveEnabled
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.12),
+                            foregroundColor: isSaveEnabled
+                                ? Colors.white
+                                : theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.38),
+                          ),
+                          child: const Text('Save Changes'),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
         ),
       ),
-    ),
-    ));
+    );
   }
 
   // --- ADDED: Helper method to launch Generic URLs (if not already present) ---

@@ -1317,19 +1317,23 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
       data: fieldTheme,
       child: Material(
         color: AppColors.backgroundColor,
-        child: Padding(
-          padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-              left: 16,
-              right: 16,
-              top: 50),
-          child: SingleChildScrollView(
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+        child: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      top: 16),
+                  child: SingleChildScrollView(
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+              const SizedBox(height: 16), // Padding above header
               Text(
                 'Add Experience',
                 style: GoogleFonts.notoSerif(
@@ -1854,44 +1858,60 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 minLines: 3,
                 maxLines: null,
               ),
-              SizedBox(height: 24),
-
-              // Action Buttons
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).primaryColor,
-                      foregroundColor: Colors.white,
+                        const SizedBox(height: 16), // Bottom padding for scroll content
+                        ],
+                      ),
                     ),
-                    onPressed: _isSaving ? null : _saveAndClose,
-                    child: _isSaving
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        : const Text('Add Experience'),
                   ),
-                ],
+                ),
               ),
-              const SizedBox(height: 16),
+              // --- Fixed Action Buttons at Bottom ---
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundColor,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, -2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).primaryColor,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _isSaving ? null : _saveAndClose,
+                      child: _isSaving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text('Add Experience'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
-      ),
-    ));
+    );
   }
 
   // ADDED: Method to load defaults from SharedPreferences
