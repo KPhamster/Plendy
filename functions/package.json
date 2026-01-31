@@ -6,7 +6,8 @@
     "jws": "^4.0.1",
     "jsonwebtoken": {
       "jws": "^3.2.3"
-    }
+    },
+    "fast-xml-parser": "^5.3.4"
   },
   "scripts": {
     "lint": "eslint . --fix",
