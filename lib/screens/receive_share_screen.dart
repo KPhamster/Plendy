@@ -2002,6 +2002,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     print('📄 SCAN PAGE: Attempting to extract content for URL: $url');
 
+    // Try Instagram preview
+    if (_isInstagramUrl(url)) {
+      final instagramPreviewKey = _instagramPreviewKeys[url];
+      if (instagramPreviewKey?.currentState != null) {
+        try {
+          final content =
+              await instagramPreviewKey!.currentState!.extractPageContent();
+          if (content != null && content.isNotEmpty) {
+            print('✅ SCAN PAGE: Extracted content from Instagram preview');
+            return content;
+          }
+        } catch (e) {
+          print('⚠️ SCAN PAGE: Instagram content extraction failed: $e');
+        }
+      }
+    }
+
     // Try Google KG preview first
     if (_isGoogleKnowledgeGraphUrl(url)) {
       final previewKey = _googleKgPreviewKeys[url];
@@ -7466,19 +7483,47 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // );
     }
 
+    // Check if content actually changed before clearing auto-scan state
+    final bool contentChanged = _hasContentChanged(files);
+
     // For all content, always use normal processing
     // The Yelp URL handling complexity was causing more issues than it solved
     setState(() {
       _currentSharedFiles = files;
     });
-    // Clear auto-scanned URLs and processed URLs when new content is shared
-    _autoScannedUrls.clear();
-    _facebookUrlsProcessed.clear();
-    _tiktokCaptionsProcessed.clear();
-    _instagramUrlsProcessed.clear();
-    _clearExtractedSocialContent(); // Clear any previously extracted social media content
+    
+    // Only clear auto-scanned URLs and processed URLs when content actually changes
+    // This prevents duplicate auto-scans when provider reinitializes with same content
+    if (contentChanged) {
+      print('🔄 SHARE: Content changed, clearing auto-scan state');
+      _autoScannedUrls.clear();
+      _facebookUrlsProcessed.clear();
+      _tiktokCaptionsProcessed.clear();
+      _instagramUrlsProcessed.clear();
+      _clearExtractedSocialContent(); // Clear any previously extracted social media content
+    } else {
+      print('🔄 SHARE: Same content, preserving auto-scan state');
+    }
     _processSharedContent(files);
     _syncSharedUrlControllerFromContent();
+  }
+  
+  /// Check if the new files are different from the current files
+  bool _hasContentChanged(List<SharedMediaFile> newFiles) {
+    if (_currentSharedFiles.isEmpty) return true;
+    if (_currentSharedFiles.length != newFiles.length) return true;
+    
+    // Compare URLs from both lists
+    final currentUrls = _currentSharedFiles
+        .map((f) => _extractFirstUrl(f.path))
+        .where((url) => url != null)
+        .toSet();
+    final newUrls = newFiles
+        .map((f) => _extractFirstUrl(f.path))
+        .where((url) => url != null)
+        .toSet();
+    
+    return !currentUrls.containsAll(newUrls) || !newUrls.containsAll(currentUrls);
   }
 
   void _processSharedContent(List<SharedMediaFile> files) {
@@ -10699,6 +10744,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         onExpansionChanged: (isExpanded, instaUrl) =>
             _onInstagramExpansionChanged(
                 isExpanded, instaUrl), // CORRECTED: Match signature
+        onPageFinished: (loadedUrl) => _onInstagramPageLoaded(url),
       );
     }
 
@@ -10847,6 +10893,42 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
       if (!await _shouldAutoExtractLocations()) return;
+      _scanPageContent();
+    });
+  }
+
+  /// Called when Instagram preview finishes loading - auto-triggers location scan
+  void _onInstagramPageLoaded(String url) {
+    // Only auto-scan once per URL
+    if (_autoScannedUrls.contains(url)) {
+      print('🔄 AUTO-SCAN: Already scanned Instagram $url, skipping');
+      return;
+    }
+
+    // Don't auto-scan if already processing
+    if (_isProcessingScreenshot || _isExtractingLocation) {
+      print('🔄 AUTO-SCAN: Already processing, skipping Instagram auto-scan');
+      return;
+    }
+
+    // Mark as scanned
+    _autoScannedUrls.add(url);
+
+    print(
+        '🚀 AUTO-SCAN: Instagram preview loaded, waiting for embed to render...');
+
+    // Longer delay for Instagram to ensure embed.js fully renders the content
+    // Instagram embeds need more time for the JavaScript to:
+    // 1. Load embed.js from instagram.com
+    // 2. Process the blockquote and create an iframe
+    // 3. Load the actual Instagram content in the iframe
+    // 4 seconds gives time for all of this to complete
+    Future.delayed(const Duration(milliseconds: 4000), () async {
+      if (!mounted || _isProcessingScreenshot || _isExtractingLocation) {
+        return;
+      }
+      if (!await _shouldAutoExtractLocations()) return;
+      print('🚀 AUTO-SCAN: Starting Instagram location scan...');
       _scanPageContent();
     });
   }
@@ -12603,12 +12685,14 @@ class InstagramPreviewWrapper extends StatefulWidget {
   final Future<void> Function(String) launchUrlCallback;
   final void Function(bool, String)?
       onExpansionChanged; // MODIFIED to include URL
+  final void Function(String)? onPageFinished; // Callback when preview finishes loading
 
   const InstagramPreviewWrapper({
     super.key, // Ensure super.key is passed
     required this.url,
     required this.launchUrlCallback,
     this.onExpansionChanged,
+    this.onPageFinished,
   });
 
   @override
@@ -12748,7 +12832,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 
   // Safe callback for page finished
   void _handlePageFinished(String url) {
-    // No state updates here, just a pass-through
+    // Notify parent when preview finishes loading (for auto-scan)
+    widget.onPageFinished?.call(url);
   }
 
   // Safe callback for URL launching
@@ -13152,15 +13237,152 @@ class _MultiLocationSelectionDialogState
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16),
+    // Using Dialog with custom structure instead of AlertDialog
+    // because AlertDialog's actions don't handle Expanded widgets properly,
+    // causing layout issues specifically in iOS release builds with Impeller.
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       backgroundColor: AppColors.backgroundColor,
-      title: _buildLocationTitle(),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: _buildLocationSelectionPage(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width - 32,
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          child: Column(
+            // Note: Do NOT use mainAxisSize: MainAxisSize.min here
+            // because it conflicts with the Flexible child, causing
+            // layout issues in iOS release builds with Impeller.
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Title
+              _buildLocationTitle(),
+              const SizedBox(height: 16),
+              // Content - use Flexible to allow scrolling without overflow
+              Flexible(
+                child: _buildLocationSelectionPage(),
+              ),
+              const SizedBox(height: 16),
+              // Actions
+              _buildLocationActionsRow(),
+            ],
+          ),
+        ),
       ),
-      actions: _buildLocationActions(),
+    );
+  }
+
+  /// Build actions as a simple row/column instead of AlertDialog actions
+  Widget _buildLocationActionsRow() {
+    final bool isEmpty = widget.locations.isEmpty;
+
+    // Special handling for empty state - show prominent Deep Scan button
+    if (isEmpty && !widget.isDeepScan && widget.onDeepScanRequested != null) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Close'),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: _requestDeepScanWithConfirmed,
+            icon: const Icon(Icons.search, size: 18),
+            label: const Text('Run Deep Scan'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.sage,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Empty state from deep scan - just show close button
+    if (isEmpty) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    }
+
+    // Normal state with locations
+    if (!widget.isDeepScan && widget.onDeepScanRequested != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Deep scan info text and button
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  _selectedIndices.isEmpty
+                      ? 'Not what you expected?'
+                      : 'Selected locations will be kept',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                OutlinedButton.icon(
+                  onPressed: _requestDeepScanWithConfirmed,
+                  icon: const Icon(Icons.search, size: 16),
+                  label: const Text('Try Deep Scan'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.sage,
+                    side: BorderSide(color: AppColors.sage),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Main action buttons row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _noneSelected ? null : _finishSelection,
+                child: Text(_buildButtonText()),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    // When deep scan option is not shown, just show Cancel and Create buttons
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancel'),
+        ),
+        const SizedBox(width: 8),
+        ElevatedButton(
+          onPressed: _noneSelected ? null : _finishSelection,
+          child: Text(_buildButtonText()),
+        ),
+      ],
     );
   }
 
@@ -13312,8 +13534,9 @@ class _MultiLocationSelectionDialogState
       );
     }
 
+    // Using Column without mainAxisSize.min since parent is Flexible.
+    // This allows proper constraint propagation in iOS release builds.
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
@@ -13393,14 +13616,10 @@ class _MultiLocationSelectionDialogState
         ),
         const Divider(height: 1),
         const SizedBox(height: 8),
-        // Scrollable list of locations
+        // Scrollable list of locations - use Flexible to fill remaining space
+        // within the parent Flexible wrapper
         Flexible(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.35,
-            ),
-            child: ListView.builder(
-              shrinkWrap: true,
+          child: ListView.builder(
               itemCount: widget.locations.length,
               itemBuilder: (context, index) {
                 final location = widget.locations[index];
@@ -13715,7 +13934,6 @@ class _MultiLocationSelectionDialogState
               },
             ),
           ),
-        ),
         // Expandable scanned text section
         if (widget.scannedText != null && widget.scannedText!.isNotEmpty) ...[
           const SizedBox(height: 12),
@@ -13799,116 +14017,6 @@ class _MultiLocationSelectionDialogState
         ],
       ),
     );
-  }
-
-  List<Widget> _buildLocationActions() {
-    final bool isEmpty = widget.locations.isEmpty;
-
-    // Special handling for empty state - show prominent Deep Scan button
-    if (isEmpty && !widget.isDeepScan && widget.onDeepScanRequested != null) {
-      return [
-        Expanded(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, null),
-                child: const Text('Close'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: _requestDeepScanWithConfirmed,
-                icon: const Icon(Icons.search, size: 18),
-                label: const Text('Run Deep Scan'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.sage,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ];
-    }
-
-    // Empty state from deep scan - just show close button
-    if (isEmpty) {
-      return [
-        TextButton(
-          onPressed: () => Navigator.pop(context, null),
-          child: const Text('Close'),
-        ),
-      ];
-    }
-
-    return [
-      // Show deep scan button above the main action buttons
-      if (!widget.isDeepScan && widget.onDeepScanRequested != null)
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Deep scan info text and button
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Text(
-                      _selectedIndices.isEmpty
-                          ? 'Not what you expected?'
-                          : 'Selected locations will be kept',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    OutlinedButton.icon(
-                      onPressed: _requestDeepScanWithConfirmed,
-                      icon: const Icon(Icons.search, size: 16),
-                      label: const Text('Try Deep Scan'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.sage,
-                        side: BorderSide(color: AppColors.sage),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Main action buttons row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, null),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _noneSelected ? null : _finishSelection,
-                    child: Text(_buildButtonText()),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      // When deep scan option is not shown, just show Cancel and Create buttons
-      if (widget.isDeepScan || widget.onDeepScanRequested == null) ...[
-        TextButton(
-          onPressed: () => Navigator.pop(context, null),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _noneSelected ? null : _finishSelection,
-          child: Text(_buildButtonText()),
-        ),
-      ],
-    ];
   }
 
   String _buildButtonText() {

@@ -211,17 +211,18 @@ class InstagramWebViewState extends State<InstagramWebView> {
             _webViewRegistered = true;
             isLoading = false;
           });
+          
+          // Notify parent that page finished loading (web only - iframe is ready)
+          widget.onPageFinished?.call(widget.url);
         } else {
           // On mobile, we'll load the HTML in InAppWebView
+          // Note: onPageFinished will be called from onLoadStop when WebView actually loads
           setState(() {
             _oembedHtml = fullHtml;
             _useOEmbed = true;
             isLoading = false;
           });
         }
-        
-        // Notify parent that page finished loading
-        widget.onPageFinished?.call(widget.url);
       } else {
         print('❌ INSTAGRAM: No oEmbed HTML returned - showing error state');
         // In Default mode, show error instead of falling back to WebView
