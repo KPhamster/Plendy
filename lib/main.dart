@@ -51,8 +51,6 @@ import 'providers/discovery_share_coordinator.dart';
 import 'screens/discovery_share_preview_screen.dart';
 import 'screens/data_deletion_screen.dart';
 import 'screens/email_verification_screen.dart';
-import 'screens/splash_screen.dart';
-
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -535,7 +533,7 @@ void main() async {
     }
 
     // --- FCM Setup ---
-    // Setup local notifications in background to not delay splash screen
+    // Setup local notifications in background to not delay app startup
     await _configureLocalNotifications(); // Make this blocking to ensure it's ready
     
     // DISABLE automatic iOS notification display in foreground
@@ -907,9 +905,7 @@ class _MyAppState extends State<MyApp> {
   bool _showDataDeletion = false; // Track if data deletion page should be shown
   String? _initialProfileUserId; // Track initial profile user ID from URL
   static const int _maxNavigatorPushRetries = 12;
-  bool _coverImagePreloaded = false; // Track if cover image is preloaded
   Future<void>? _coverPreloadFuture; // Track the preload operation
-  bool _splashCompleted = false; // Track if splash screen animation has completed
 
   void _pushRouteWhenReady(WidgetBuilder builder,
       {RouteSettings? settings, int attempt = 0}) {
@@ -1266,16 +1262,12 @@ class _MyAppState extends State<MyApp> {
     try {
       final coverService = DiscoveryCoverService();
       
-      // Preload 1 image during splash screen phase
-      print('MAIN: Preloading 1 Discovery cover image for splash...');
+      // Preload 1 image during startup
+      print('MAIN: Preloading 1 Discovery cover image...');
       await coverService.preloadSingleImage(context);
-      print('MAIN: Discovery cover image preloaded for splash');
+      print('MAIN: Discovery cover image preloaded');
       
-      setState(() {
-        _coverImagePreloaded = true;
-      });
-      
-      // Preload 5 more images in background (post-splash)
+      // Preload 5 more images in background
       if (!mounted) return;
       Future.microtask(() async {
         try {
@@ -1288,9 +1280,6 @@ class _MyAppState extends State<MyApp> {
       });
     } catch (e) {
       print('MAIN: Error preloading Discovery cover images: $e');
-      setState(() {
-        _coverImagePreloaded = true; // Mark as complete even on error
-      });
     }
   }
 
@@ -1647,35 +1636,11 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  void _handleSplashCompleted() {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _splashCompleted = true;
-    });
-  }
-
   Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
     print(
         "MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
 
-    // Show splash screen until animation completes (skip for deep links and special cases)
-    final shouldSkipSplash = _showDataDeletion ||
-        _initialEventShareToken != null ||
-        _initialDiscoveryShareToken != null ||
-        _initialExperienceShareToken != null ||
-        _initialProfileUserId != null ||
-        launchedFromShare;
-
-    if (!_splashCompleted && !shouldSkipSplash) {
-      print("MAIN BUILD DEBUG: Showing SplashScreen (splashCompleted=$_splashCompleted)");
-      return SplashScreen(
-        onAnimationComplete: _handleSplashCompleted,
-      );
-    }
-
-    // NEW: Prioritize data deletion page (public, no auth required)
+    // Prioritize data deletion page (public, no auth required)
     if (_showDataDeletion) {
       print("MAIN BUILD DEBUG: Showing DataDeletionScreen");
       return const DataDeletionScreen();

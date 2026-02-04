@@ -46,7 +46,7 @@ class DiscoveryCoverService {
     }
   }
 
-  /// Preload a single random cover image (for splash screen)
+  /// Preload a single random cover image (for startup)
   /// Returns the URL of the preloaded image, or null if failed
   Future<String?> preloadSingleImage(BuildContext context) async {
     if (!_isInitialized || _coverBackgroundRefs == null || _coverBackgroundRefs!.isEmpty) {
@@ -68,15 +68,15 @@ class DiscoveryCoverService {
         _preloadedUrls.add(url);
       }
       
-      debugPrint('DiscoveryCoverService: Preloaded splash image (${_preloadedUrls.length} total cached)');
+      debugPrint('DiscoveryCoverService: Preloaded startup image (${_preloadedUrls.length} total cached)');
       return url;
     } catch (e) {
-      debugPrint('DiscoveryCoverService: Failed to preload splash image: $e');
+      debugPrint('DiscoveryCoverService: Failed to preload startup image: $e');
       return null;
     }
   }
 
-  /// Preload multiple random cover images in the background (post-splash)
+  /// Preload multiple random cover images in the background
   /// Images are cached and URLs are tracked for future use
   Future<void> preloadBackgroundImages(BuildContext context, {int count = 5}) async {
     if (_isBackgroundPreloadComplete) {

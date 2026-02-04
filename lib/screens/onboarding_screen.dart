@@ -1,11 +1,20 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:lottie/lottie.dart';
+import 'package:rive/rive.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/tutorial_slide.dart';
 import '../services/user_service.dart';
 import '../widgets/social_browser_dialog.dart';
+
+// DEV MODE: Set to true to enable onboarding testing for kevinphamster1
+// This user will always see onboarding and profile saves will be skipped
+// TODO: Remove this when done testing onboarding
+const bool devModeOnboardingTest = true;
+const String devModeTestUsername = 'aaa';
 
 class OnboardingScreen extends StatefulWidget {
   final VoidCallback? onFinishedFlow;
@@ -17,8 +26,9 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const int _tutorialStartIndex = 2;
+  static const int _tutorialStartIndex = 4;
   static const String _defaultSocialUrl = 'https://instagram.com';
+  static const String _instagramVideoAsset = 'assets/onboarding/restaurant_video.mp4';
   static const List<String> _tutorialHeadings = [
     'Share and save content to Plendy',
     'Find and select the location',
@@ -38,16 +48,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   late final List<VideoPlayerController?> _tutorialControllers;
   late final List<Future<void>?> _tutorialInitializations;
+  
+  VideoPlayerController? _instagramVideoController;
+  Future<void>? _instagramVideoInitialization;
+
+  // Rive confetti animation
+  FileLoader? _confettiFileLoader;
 
   int _currentPage = 0;
   bool _isSavingProfile = false;
   bool _isCompletingOnboarding = false;
   String? _displayNameError;
   String? _usernameError;
+  int _speechBubbleMessageIndex = 0;
+  bool _showConfetti = false;
+  bool _showHandPointer = false;
 
   int get _totalPages => _tutorialStartIndex + tutorialSlides.length;
-  bool get _isOnProfileStep => _currentPage == 0;
-  bool get _isOnSocialStep => _currentPage == 1;
+  bool get _isOnWelcomeStep => _currentPage == 0;
+  bool get _isOnProfileStep => _currentPage == 1;
+  bool get _isOnInstagramTutorialStep => _currentPage == 2;
+  bool get _isOnSocialStep => _currentPage == 3;
   bool get _isOnTutorialStep => _currentPage >= _tutorialStartIndex;
 
   bool get _canSubmitProfile =>
@@ -57,6 +78,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       !_isSavingProfile;
 
   String get _primaryButtonLabel {
+    if (_isOnWelcomeStep) return 'Get Started';
     if (_isOnProfileStep) return 'Save & Continue';
     if (_currentPage == _totalPages - 1) return 'Finish';
     return 'Next';
@@ -73,6 +95,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _usernameController.addListener(_handleProfileFieldChange);
     _socialUrlInputController.text = _defaultSocialUrl;
     _prefillExistingValues();
+    
+    // Initialize Rive confetti animation loader
+    _confettiFileLoader = FileLoader.fromAsset(
+      'assets/onboarding/confetti.riv',
+      riveFactory: Factory.flutter,
+    );
   }
 
   void _prefillExistingValues() {
@@ -123,6 +151,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _socialUrlInputController.dispose();
     _displayNameFocus.dispose();
     _usernameFocus.dispose();
+    _instagramVideoController?.dispose();
+    _confettiFileLoader?.dispose();
     for (final controller in _tutorialControllers) {
       controller?.dispose();
     }
@@ -141,6 +171,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   void _onPageChanged(int index) {
     setState(() => _currentPage = index);
+    
+    // Handle Instagram tutorial video
+    if (_isOnInstagramTutorialStep) {
+      _startInstagramVideo();
+      _speechBubbleMessageIndex = 0; // Reset message when entering this step
+      _showConfetti = false;
+      _showHandPointer = false;
+    } else {
+      _instagramVideoController?.pause();
+    }
+    
     if (_isOnTutorialStep) {
       final slideIndex = index - _tutorialStartIndex;
       _startTutorialVideo(slideIndex);
@@ -151,11 +192,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _goToPage(int index) {
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    _pageController.jumpToPage(index);
   }
 
   void _handleBackPressed() {
@@ -169,6 +206,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _handlePrimaryAction() async {
     if (_isCompletingOnboarding) return;
     FocusScope.of(context).unfocus();
+    
+    if (_isOnWelcomeStep) {
+      _goToPage(1);
+      return;
+    }
+    
     if (_isOnProfileStep) {
       await _submitProfileInfo();
       return;
@@ -196,6 +239,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       return;
     }
 
+    // DEV MODE: Skip saving for test user - just proceed to next step
+    if (devModeOnboardingTest && username == devModeTestUsername) {
+      print('DEV MODE: Skipping profile save for test user $devModeTestUsername');
+      _goToPage(2);
+      return;
+    }
+
     setState(() => _isSavingProfile = true);
 
     try {
@@ -218,7 +268,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       });
 
       if (!mounted) return;
-      _goToPage(1);
+      _goToPage(2);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -265,6 +315,32 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     if (mounted) {
       setState(() => _isCompletingOnboarding = false);
+    }
+  }
+
+  void _startInstagramVideo() {
+    if (_instagramVideoController == null) {
+      _instagramVideoController = VideoPlayerController.asset(_instagramVideoAsset);
+      _instagramVideoInitialization = _instagramVideoController!.initialize().then((_) {
+        _instagramVideoController!.setLooping(true);
+        _instagramVideoController!.setVolume(0);
+        if (mounted && _isOnInstagramTutorialStep) {
+          _instagramVideoController!.play();
+          setState(() {});
+        }
+      });
+    } else if (_instagramVideoController!.value.isInitialized) {
+      _instagramVideoController!
+        ..seekTo(Duration.zero)
+        ..play();
+    } else {
+      _instagramVideoInitialization?.then((_) {
+        if (!mounted || !_isOnInstagramTutorialStep) return;
+        _instagramVideoController!
+          ..seekTo(Duration.zero)
+          ..play();
+        setState(() {});
+      });
     }
   }
 
@@ -337,33 +413,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _isOnTutorialStep ? 'Tutorial' : 'Get set up',
-                    style: theme.textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Step ${_currentPage + 1} of $_totalPages',
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 6,
-                      backgroundColor: Colors.grey[200],
-                      color: theme.primaryColor,
+            Visibility(
+              visible: !_isOnInstagramTutorialStep,
+              maintainState: true,
+              maintainAnimation: true,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _isOnTutorialStep ? 'Tutorial' : 'Get set up',
+                      style: theme.textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      'Step ${_currentPage + 1} of $_totalPages',
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 6,
+                        backgroundColor: Colors.grey[200],
+                        color: theme.primaryColor,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             Expanded(
@@ -372,63 +453,99 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 physics: const NeverScrollableScrollPhysics(),
                 onPageChanged: _onPageChanged,
                 children: [
+                  _buildWelcomeStep(theme),
                   _buildProfileStep(theme),
+                  _buildInstagramTutorialStep(theme),
                   _buildSocialStep(theme),
                   for (var i = 0; i < tutorialSlides.length; i++)
                     _buildTutorialStep(theme, i),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Row(
-                children: [
-                  if (_currentPage > 0 && _currentPage != 1)
-                    TextButton(
-                      onPressed: _handleBackPressed,
-                      child: const Text('Back'),
-                    )
-                  else
-                    const SizedBox(width: 80),
-                  const Spacer(),
-                  SizedBox(
-                    width: 200,
-                    child: ElevatedButton(
-                      style: primaryButtonStyle,
-                      onPressed: (_isOnProfileStep && !_canSubmitProfile) ||
-                              _isCompletingOnboarding ||
-                              (_isOnProfileStep && _isSavingProfile)
-                          ? null
-                          : _handlePrimaryAction,
-                      child: _isOnProfileStep && _isSavingProfile
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : _isCompletingOnboarding &&
-                                  _currentPage == _totalPages - 1
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white),
-                                  ),
-                                )
-                              : Text(_primaryButtonLabel),
+            Visibility(
+              visible: !_isOnInstagramTutorialStep,
+              maintainState: true,
+              maintainAnimation: true,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                child: Row(
+                  children: [
+                    if (_currentPage > 0 && !_isOnSocialStep)
+                      TextButton(
+                        onPressed: _handleBackPressed,
+                        child: const Text('Back'),
+                      )
+                    else
+                      const SizedBox(width: 80),
+                    const Spacer(),
+                    SizedBox(
+                      width: 200,
+                      child: ElevatedButton(
+                        style: primaryButtonStyle,
+                        onPressed: (_isOnProfileStep && !_canSubmitProfile) ||
+                                _isCompletingOnboarding ||
+                                _isSavingProfile
+                            ? null
+                            : _handlePrimaryAction,
+                        child: _isSavingProfile
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : _isCompletingOnboarding &&
+                                    _currentPage == _totalPages - 1
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                          Colors.white),
+                                    ),
+                                  )
+                                : Text(_primaryButtonLabel),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildWelcomeStep(ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Welcome to Plendy!',
+            style: GoogleFonts.notoSerif(
+              fontSize: 28,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Save all your recommendations from anywhere to one place so you actually go out and do them. Let\'s get started.',
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w400,
+              color: Colors.black87,
+              height: 1.5,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -482,6 +599,405 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildInstagramTutorialStep(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+          child: Text(
+            'How to share from Instagram',
+            style: GoogleFonts.notoSerif(
+              fontSize: theme.textTheme.titleLarge?.fontSize ?? 22,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+        Expanded(
+          child: _buildFakeInstagramReel(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFakeInstagramReel() {
+    final controller = _instagramVideoController;
+    final isInitialized = controller?.value.isInitialized ?? false;
+
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Video background
+          if (isInitialized)
+            FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: controller!.value.size.width,
+                height: controller.value.size.height,
+                child: VideoPlayer(controller),
+              ),
+            )
+          else
+            const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+
+          // Instagram UI overlay
+          _buildInstagramOverlay(),
+          
+          // Transparent tap detector on top
+          GestureDetector(
+            onTap: () {
+              if (_speechBubbleMessageIndex < 2) {
+                setState(() {
+                  _speechBubbleMessageIndex++;
+                });
+              }
+            },
+            behavior: HitTestBehavior.translucent,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInstagramOverlay() {
+    return Column(
+      children: [
+        // Top bar
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                // Profile pic
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    color: Colors.grey[400],
+                  ),
+                  child: const Icon(Icons.person, color: Colors.white, size: 18),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'foodie_adventures',
+                              style: GoogleFonts.inter(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Text('🍕', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                      Text(
+                        '1w ago',
+                        style: GoogleFonts.inter(
+                          color: Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.camera_alt_outlined, color: Colors.white, size: 24),
+              ],
+            ),
+          ),
+        ),
+
+        const Spacer(),
+
+        // Bottom section
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Left side - caption and info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.pink,
+                              width: 2,
+                            ),
+                            color: Colors.grey[800],
+                          ),
+                          child: const Icon(Icons.restaurant, color: Colors.white, size: 14),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'best_restaurants',
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'You NEED to try this place! 🔥',
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Liked by travel_lover and 2,847 others',
+                      style: GoogleFonts.inter(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Right side - action buttons
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildInstagramActionButton(
+                    icon: Icons.favorite,
+                    label: '2.8K',
+                    color: Colors.red,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildInstagramActionButton(
+                    icon: Icons.chat_bubble_outline,
+                    label: '124',
+                  ),
+                  const SizedBox(height: 16),
+                  // Send button with pointing hand animation
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      _buildInstagramActionButton(
+                        icon: Icons.send_outlined,
+                        label: '',
+                        highlighted: true,
+                      ),
+                      // Speech bubble - positioned to the left of the bird
+                      Positioned(
+                        right: 65,
+                        bottom: 56,
+                        child: Container(
+                          width: 200,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.15),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: _TypewriterText(
+                            key: ValueKey(_speechBubbleMessageIndex),
+                            text: _speechBubbleMessageIndex == 0
+                                ? 'Check out this reel I found on Instagram!'
+                                : _speechBubbleMessageIndex == 1
+                                    ? 'That looks yummy! Let\'s save this restaurant to Plendy.'
+                                    : 'First, we need to find the share button to share this reel to Plendy. To find this in Instagram, tap this send button.',
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                            speed: const Duration(milliseconds: 30),
+                            onComplete: _speechBubbleMessageIndex == 2
+                                ? () {
+                                    setState(() {
+                                      _showConfetti = true;
+                                    });
+                                    // Show hand pointer after confetti plays
+                                    Future.delayed(const Duration(milliseconds: 800), () {
+                                      if (mounted) {
+                                        setState(() {
+                                          _showHandPointer = true;
+                                        });
+                                      }
+                                    });
+                                  }
+                                : null,
+                          ),
+                        ),
+                      ),
+                      // Bird Lottie animation - positioned above hand
+                      Positioned(
+                        right: 36,
+                        top: -56,
+                        child: SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: Lottie.asset(
+                            'assets/mascot/bird_talking_head.json',
+                            fit: BoxFit.contain,
+                            options: LottieOptions(enableMergePaths: true),
+                          ),
+                        ),
+                      ),
+                      // Confetti animation - plays before hand pointer appears
+                      if (_showConfetti && _confettiFileLoader != null)
+                        Positioned(
+                          right: 12,
+                          top: -28,
+                          child: SizedBox(
+                            width: 100,
+                            height: 100,
+                            child: RiveWidgetBuilder(
+                              fileLoader: _confettiFileLoader!,
+                              builder: (context, state) => switch (state) {
+                                RiveLoading() => const SizedBox.shrink(),
+                                RiveFailed() => const SizedBox.shrink(),
+                                RiveLoaded() => RiveWidget(
+                                    controller: state.controller,
+                                    fit: Fit.contain,
+                                  ),
+                              },
+                            ),
+                          ),
+                        ),
+                      // Pointing hand Lottie animation - positioned to the left
+                      if (_showHandPointer)
+                        Positioned(
+                          right: 36,
+                          top: -4,
+                          child: SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: Lottie.asset(
+                              'assets/tutorials/hand_pointing_icon.json',
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildInstagramActionButton(
+                    icon: Icons.more_horiz,
+                    label: '',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        // Reply bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.3),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white30),
+                  ),
+                  child: Text(
+                    'Add a comment...',
+                    style: GoogleFonts.inter(
+                      color: Colors.white54,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text('❤️', style: TextStyle(fontSize: 20)),
+              const SizedBox(width: 8),
+              const Text('😂', style: TextStyle(fontSize: 20)),
+              const SizedBox(width: 8),
+              const Text('😮', style: TextStyle(fontSize: 20)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInstagramActionButton({
+    required IconData icon,
+    required String label,
+    Color? color,
+    bool highlighted = false,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: highlighted ? const EdgeInsets.all(8) : EdgeInsets.zero,
+          decoration: highlighted
+              ? BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                )
+              : null,
+          child: Icon(
+            icon,
+            color: color ?? Colors.white,
+            size: 28,
+          ),
+        ),
+        if (label.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -728,3 +1244,67 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return 'https://$trimmed';
   }
 }
+
+class _TypewriterText extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+  final Duration speed;
+  final VoidCallback? onComplete;
+
+  const _TypewriterText({
+    super.key,
+    required this.text,
+    this.style,
+    this.speed = const Duration(milliseconds: 30),
+    this.onComplete,
+  });
+
+  @override
+  State<_TypewriterText> createState() => _TypewriterTextState();
+}
+
+class _TypewriterTextState extends State<_TypewriterText> {
+  String _displayText = '';
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTyping();
+  }
+
+  @override
+  void didUpdateWidget(_TypewriterText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _displayText = '';
+      _currentIndex = 0;
+      _startTyping();
+    }
+  }
+
+  void _startTyping() {
+    if (_currentIndex < widget.text.length) {
+      Future.delayed(widget.speed, () {
+        if (mounted) {
+          setState(() {
+            _displayText = widget.text.substring(0, _currentIndex + 1);
+            _currentIndex++;
+          });
+          _startTyping();
+        }
+      });
+    } else {
+      widget.onComplete?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _displayText,
+      style: widget.style,
+    );
+  }
+}
+
