@@ -5,6 +5,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lottie/lottie.dart';
 import 'package:rive/rive.dart' hide Animation;
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../config/colors.dart';
@@ -67,11 +68,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // Rive animations
   FileLoader? _rightArrowFileLoader;
   FileLoader? _birdWavingFileLoader;
-  FileLoader? _confettiFileLoader;
+  FileLoader? _successAnimationFileLoader;
 
-  // Confetti animation state
-  bool _showConfetti = false;
-  Offset? _confettiPosition;
+  // Success animation state
+  bool _showSuccessAnimation = false;
+  final GlobalKey _plendyButtonKey = GlobalKey();
 
   int _currentPage = 0;
   bool _isSavingProfile = false;
@@ -117,9 +118,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _editModeTypewriterComplete = false;
   bool _showEditModePlendyHand = false;
   bool _showEditModeDragHand = false;
+  bool _showEditModeDownArrow = false;
   bool _plendyReachedTop = false;
   late AnimationController _editModeBirdSlideController;
   late Animation<double> _editModeBirdSlideAnimation;
+
+  // Real sharing step state
+  bool _showRealSharingStep = false;
+  int _realSharingDialogueIndex = 0;
+  bool _realSharingTypewriterComplete = false;
+  bool _showRealSharingButtons = false;
+  late AnimationController _realSharingButtonsController;
+  late Animation<double> _shareButton1Animation;
+  late Animation<double> _shareButton2Animation;
+  late Animation<double> _shareButton3Animation;
 
   // Welcome step bird dialogue
   int _welcomeBirdDialogueIndex = 0;
@@ -150,6 +162,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   final ScrollController _appsRowScrollController = ScrollController();
   final ScrollController _appsSheetScrollController = ScrollController();
+  final ScrollController _editModeScrollController = ScrollController();
   final GlobalKey _moreButtonKey = GlobalKey();
   final GlobalKey _editButtonKey = GlobalKey();
 
@@ -172,6 +185,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   final GlobalKey<_TypewriterTextState> _postPlendyTypewriterKey =
       GlobalKey<_TypewriterTextState>();
   final GlobalKey<_TypewriterTextState> _editModeTypewriterKey =
+      GlobalKey<_TypewriterTextState>();
+  final GlobalKey<_TypewriterTextState> _realSharingTypewriterKey =
       GlobalKey<_TypewriterTextState>();
 
   int get _totalPages => _tutorialStartIndex + tutorialSlides.length;
@@ -219,8 +234,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       'assets/onboarding/bird_waving.riv',
       riveFactory: Factory.flutter,
     );
-    _confettiFileLoader = FileLoader.fromAsset(
-      'assets/onboarding/confetti.riv',
+    _successAnimationFileLoader = FileLoader.fromAsset(
+      'assets/tutorials/success.riv',
       riveFactory: Factory.flutter,
     );
 
@@ -299,11 +314,32 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       curve: Curves.easeOutCubic,
     );
 
+    // Initialize real sharing buttons animation controller
+    _realSharingButtonsController = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    );
+    _shareButton1Animation = CurvedAnimation(
+      parent: _realSharingButtonsController,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOutBack),
+    );
+    _shareButton2Animation = CurvedAnimation(
+      parent: _realSharingButtonsController,
+      curve: const Interval(0.2, 0.7, curve: Curves.easeOutBack),
+    );
+    _shareButton3Animation = CurvedAnimation(
+      parent: _realSharingButtonsController,
+      curve: const Interval(0.4, 0.9, curve: Curves.easeOutBack),
+    );
+
     // Listen to apps row scroll to hide arrow when More button is visible
     _appsRowScrollController.addListener(_onAppsRowScroll);
 
     // Listen to apps sheet scroll to hide down arrow when scrolled to bottom
     _appsSheetScrollController.addListener(_onAppsSheetScroll);
+
+    // Listen to edit mode scroll to hide down arrow when scrolled to Plendy
+    _editModeScrollController.addListener(_onEditModeScroll);
 
     // Start egg hatch video on initial load (since it's now page 0)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -341,6 +377,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       if (_showDownArrow) {
         setState(() {
           _showDownArrow = false;
+        });
+      }
+    }
+  }
+
+  void _onEditModeScroll() {
+    if (!_editModeScrollController.hasClients) return;
+
+    final maxScroll = _editModeScrollController.position.maxScrollExtent;
+    final currentScroll = _editModeScrollController.position.pixels;
+
+    // When scrolled near the end (within 50 pixels), hide edit mode down arrow
+    if (currentScroll >= maxScroll - 50) {
+      if (_showEditModeDownArrow) {
+        setState(() {
+          _showEditModeDownArrow = false;
         });
       }
     }
@@ -399,11 +451,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _instagramVideoController?.dispose();
     _rightArrowFileLoader?.dispose();
     _birdWavingFileLoader?.dispose();
-    _confettiFileLoader?.dispose();
+    _successAnimationFileLoader?.dispose();
     _appsRowScrollController.removeListener(_onAppsRowScroll);
     _appsRowScrollController.dispose();
     _appsSheetScrollController.removeListener(_onAppsSheetScroll);
     _appsSheetScrollController.dispose();
+    _editModeScrollController.removeListener(_onEditModeScroll);
+    _editModeScrollController.dispose();
     for (final controller in _tutorialControllers) {
       controller?.dispose();
     }
@@ -414,6 +468,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _basketCollectionImageSlideController.dispose();
     _postPlendyBirdSlideController.dispose();
     _editModeBirdSlideController.dispose();
+    _realSharingButtonsController.dispose();
     super.dispose();
   }
 
@@ -482,8 +537,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _appsSheetTypewriterComplete = false;
       _showDownArrow = false;
       _showPlendyHand = false;
-      _showConfetti = false;
-      _confettiPosition = null;
+      _showSuccessAnimation = false;
       _showPostPlendyDialogue = false;
       _postPlendyDialogueIndex = 0;
       _postPlendyTypewriterComplete = false;
@@ -494,9 +548,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _editModeTypewriterComplete = false;
       _showEditModePlendyHand = false;
       _showEditModeDragHand = false;
+      _showEditModeDownArrow = false;
       _plendyReachedTop = false;
       _postPlendyBirdSlideController.reset();
       _editModeBirdSlideController.reset();
+      _showRealSharingStep = false;
+      _realSharingDialogueIndex = 0;
+      _realSharingTypewriterComplete = false;
+      _showRealSharingButtons = false;
+      _realSharingButtonsController.reset();
       // Show first bird after a short delay
       Future.delayed(const Duration(milliseconds: 1000), () {
         if (mounted && _isOnInstagramTutorialStep) {
@@ -902,30 +962,40 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               ],
             ),
           ),
-          // Confetti animation overlay at tap position (rendered above everything)
-          if (_showConfetti &&
-              _confettiPosition != null &&
-              _confettiFileLoader != null)
-            Positioned(
-              left: _confettiPosition!.dx - 100,
-              top: _confettiPosition!.dy - 100,
-              child: IgnorePointer(
-                child: SizedBox(
-                  width: 200,
-                  height: 200,
-                  child: RiveWidgetBuilder(
-                    fileLoader: _confettiFileLoader!,
-                    builder: (context, state) => switch (state) {
-                      RiveLoading() => const SizedBox.shrink(),
-                      RiveFailed() => const SizedBox.shrink(),
-                      RiveLoaded() => RiveWidget(
-                          controller: state.controller,
-                          fit: Fit.contain,
-                        ),
-                    },
+          // Success animation overlay above the Plendy button (rendered above everything)
+          if (_showSuccessAnimation && _successAnimationFileLoader != null)
+            Builder(
+              builder: (context) {
+                // Get the Plendy button position via its GlobalKey
+                final RenderBox? plendyBox = _plendyButtonKey.currentContext
+                    ?.findRenderObject() as RenderBox?;
+                if (plendyBox == null) return const SizedBox.shrink();
+                final plendyPosition = plendyBox.localToGlobal(Offset.zero);
+                final plendySize = plendyBox.size;
+                return Positioned(
+                  left: plendyPosition.dx +
+                      (plendySize.width / 2) -
+                      100, // Center horizontally
+                  top: plendyPosition.dy - 180, // Place above the button
+                  child: IgnorePointer(
+                    child: SizedBox(
+                      width: 200,
+                      height: 200,
+                      child: RiveWidgetBuilder(
+                        fileLoader: _successAnimationFileLoader!,
+                        builder: (context, state) => switch (state) {
+                          RiveLoading() => const SizedBox.shrink(),
+                          RiveFailed() => const SizedBox.shrink(),
+                          RiveLoaded() => RiveWidget(
+                              controller: state.controller,
+                              fit: Fit.contain,
+                            ),
+                        },
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
         ],
       ),
@@ -1460,6 +1530,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   Widget _buildInstagramTutorialStep(ThemeData theme) {
+    if (_showRealSharingStep) {
+      return _buildRealSharingStep(theme);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2044,6 +2117,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                               _editModeTypewriterComplete = true;
                               if (_editModeDialogueIndex == 1) {
                                 _showEditModePlendyHand = true;
+                                _showEditModeDownArrow = true;
                               } else if (_editModeDialogueIndex == 3) {
                                 _showEditModeDragHand = true;
                               }
@@ -2069,6 +2143,33 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           ),
         ),
       );
+
+      // Hand pointer pointing at Done button when "Tap the Done button" dialogue appears
+      if (_editModeDialogueIndex == 5 &&
+          _editModeTypewriterComplete &&
+          _rightArrowFileLoader != null) {
+        overlays.add(
+          Positioned(
+            right: 90, // Directly to the left of the Done button
+            top: 72, // Vertically aligned with the Done button in the header
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: RiveWidgetBuilder(
+                fileLoader: _rightArrowFileLoader!,
+                builder: (context, state) => switch (state) {
+                  RiveLoading() => const SizedBox.shrink(),
+                  RiveFailed() => const SizedBox.shrink(),
+                  RiveLoaded() => RiveWidget(
+                      controller: state.controller,
+                      fit: Fit.contain,
+                    ),
+                },
+              ),
+            ),
+          ),
+        );
+      }
     }
 
     return overlays;
@@ -2126,6 +2227,236 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           ),
           const TextSpan(text: ') and share it to Plendy!'),
         ],
+      ),
+    );
+  }
+
+  /// Builds the "real sharing" step after the edit mode tutorial is complete
+  Widget _buildRealSharingStep(ThemeData theme) {
+    final realSharingDialogues = [
+      'Now let\'s do it for real!',
+      'Tap any of these share buttons, add Plendy to your Favorites, and try sharing to Plendy. Doesn\'t matter which - they all do the same thing!',
+      'Okie dokie! Let\'s go over it again.',
+    ];
+
+    final currentMessage = realSharingDialogues[_realSharingDialogueIndex];
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // Three share buttons centered with action buttons below
+        if (_showRealSharingButtons)
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    GestureDetector(
+                      onTap: () => Share.share('Share to Plendy!'),
+                      child: _buildAnimatedLargeShareButton(
+                        Icons.ios_share,
+                        _shareButton1Animation,
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    GestureDetector(
+                      onTap: () => Share.share('Share to Plendy!'),
+                      child: _buildAnimatedLargeShareButton(
+                        Icons.share,
+                        _shareButton2Animation,
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    GestureDetector(
+                      onTap: () => Share.share('Share to Plendy!'),
+                      child: _buildAnimatedLargeShareButton(
+                        Icons.reply,
+                        _shareButton3Animation,
+                        flipX: true,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 40),
+                // "I'll do this later" button
+                GestureDetector(
+                  onTap: () {
+                    // Functionality to be added later
+                  },
+                  child: Text(
+                    'I\'ll do this later',
+                    style: GoogleFonts.fredoka(
+                      fontSize: 16,
+                      color: Colors.black54,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // "Show me how again" button
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    setState(() {
+                      _realSharingDialogueIndex = 2;
+                      _realSharingTypewriterComplete = false;
+                      _showRealSharingButtons = false;
+                    });
+                  },
+                  child: Text(
+                    'Show me how again',
+                    style: GoogleFonts.fredoka(
+                      fontSize: 16,
+                      color: const Color(0xFF0A84FF),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // Bird and speech bubble on bottom-right
+        Positioned(
+          right: -9,
+          bottom: 40,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Speech bubble
+              Container(
+                width: 220,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.15),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: _realSharingTypewriterComplete
+                    ? Text(
+                        currentMessage,
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      )
+                    : _TypewriterText(
+                        key: _realSharingTypewriterKey,
+                        text: currentMessage,
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                        speed: const Duration(milliseconds: 30),
+                        onComplete: () {
+                          setState(() {
+                            _realSharingTypewriterComplete = true;
+                            // When second dialogue completes, trigger share buttons
+                            if (_realSharingDialogueIndex == 1) {
+                              _showRealSharingButtons = true;
+                              _realSharingButtonsController.forward();
+                            }
+                            // When "Okie dokie" dialogue completes, auto-reset
+                            if (_realSharingDialogueIndex == 2) {
+                              Future.delayed(const Duration(milliseconds: 1200),
+                                  () {
+                                if (mounted && _realSharingDialogueIndex == 2) {
+                                  _resetInstagramTutorial();
+                                }
+                              });
+                            }
+                          });
+                        },
+                      ),
+              ),
+              const SizedBox(width: 8),
+              // Bird Lottie (larger)
+              SizedBox(
+                width: 100,
+                height: 100,
+                child: Lottie.asset(
+                  'assets/mascot/bird_talking_head.json',
+                  fit: BoxFit.contain,
+                  options: LottieOptions(enableMergePaths: true),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Tap detector for dialogue advancement
+        // Hidden when second dialogue is complete (user should tap share buttons)
+        if (!(_realSharingDialogueIndex == 1 && _realSharingTypewriterComplete))
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.lightImpact();
+              if (!_realSharingTypewriterComplete) {
+                _realSharingTypewriterKey.currentState?.skipToEnd();
+              } else if (_realSharingDialogueIndex == 2) {
+                // "Okie dokie" complete — reset immediately on tap
+                _resetInstagramTutorial();
+              } else if (_realSharingDialogueIndex <
+                  realSharingDialogues.length - 1) {
+                setState(() {
+                  _realSharingDialogueIndex++;
+                  _realSharingTypewriterComplete = false;
+                });
+              }
+            },
+            behavior: HitTestBehavior.translucent,
+          ),
+      ],
+    );
+  }
+
+  /// Builds an animated large share button that slides up from the bottom
+  Widget _buildAnimatedLargeShareButton(
+    IconData icon,
+    Animation<double> animation, {
+    bool flipX = false,
+  }) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, 60 * (1 - animation.value)),
+          child: Opacity(
+            opacity: animation.value.clamp(0.0, 1.0),
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        width: 80,
+        height: 80,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF3A3A3A),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: flipX
+            ? Transform.flip(
+                flipX: true,
+                child: Icon(icon, color: Colors.white, size: 36),
+              )
+            : Icon(icon, color: Colors.white, size: 36),
       ),
     );
   }
@@ -2934,7 +3265,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         GestureDetector(
                           onTap: () {
                             if (_isAppsSheetEditMode) {
-                              _exitAppsSheetEditMode();
+                              // Only allow Done tap after the "Tap the Done button" dialogue appears
+                              if (_editModeDialogueIndex == 5 &&
+                                  _editModeTypewriterComplete) {
+                                _exitAppsSheetEditMode();
+                              }
                             } else if (_postPlendyDialogueIndex == 5 &&
                                 _postPlendyTypewriterComplete) {
                               _enterAppsSheetEditMode();
@@ -3054,7 +3389,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           ),
 
           // Down arrow at bottom of sheet
-          if (_showDownArrow && !_isAppsSheetEditMode)
+          if ((_showDownArrow && !_isAppsSheetEditMode) ||
+              (_showEditModeDownArrow && _isAppsSheetEditMode))
             Positioned(
               bottom: 20,
               left: 0,
@@ -3078,6 +3414,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _editModeTypewriterComplete = false;
       _showEditModePlendyHand = false;
       _showEditModeDragHand = false;
+      _showEditModeDownArrow = false;
       _plendyReachedTop = false;
       _editFavoriteApps = [
         const _OnboardingAppItem(
@@ -3123,6 +3460,69 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     HapticFeedback.lightImpact();
     setState(() {
       _isAppsSheetEditMode = false;
+      _showEditModeDownArrow = false;
+      _showRealSharingStep = true;
+      _realSharingDialogueIndex = 0;
+      _realSharingTypewriterComplete = false;
+      _showRealSharingButtons = false;
+      _realSharingButtonsController.reset();
+    });
+  }
+
+  /// Resets all Instagram tutorial state back to the very beginning
+  void _resetInstagramTutorial() {
+    setState(() {
+      _speechBubbleMessageIndex = 0;
+      _firstBirdTypewriterComplete = false;
+      _showHandPointer = false;
+      _showShareSheet = false;
+      _showFirstBird = false;
+      _showSecondBird = false;
+      _secondTypewriterComplete = false;
+      _showSecondHandPointer = false;
+      _showIOSShareSheet = false;
+      _isDismissingInstagramSheet = false;
+      _showThirdBird = false;
+      _thirdBirdMessageIndex = 0;
+      _showRightArrow = false;
+      _thirdBirdFirstMessageComplete = false;
+      _thirdBirdSecondMessageComplete = false;
+      _showMoreButtonHand = false;
+      _showAppsSheet = false;
+      _showAppsSheetBird = false;
+      _appsSheetTypewriterComplete = false;
+      _showDownArrow = false;
+      _showPlendyHand = false;
+      _showSuccessAnimation = false;
+      _showPostPlendyDialogue = false;
+      _postPlendyDialogueIndex = 0;
+      _postPlendyTypewriterComplete = false;
+      _isAppsSheetEditMode = false;
+      _editFavoriteApps = [];
+      _editSuggestedApps = [];
+      _editModeDialogueIndex = 0;
+      _editModeTypewriterComplete = false;
+      _showEditModePlendyHand = false;
+      _showEditModeDragHand = false;
+      _showEditModeDownArrow = false;
+      _plendyReachedTop = false;
+      _postPlendyBirdSlideController.reset();
+      _editModeBirdSlideController.reset();
+      _showRealSharingStep = false;
+      _realSharingDialogueIndex = 0;
+      _realSharingTypewriterComplete = false;
+      _showRealSharingButtons = false;
+      _realSharingButtonsController.reset();
+    });
+    // Restart the Instagram video
+    _startInstagramVideo();
+    // Show first bird after a short delay
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted && _isOnInstagramTutorialStep) {
+        setState(() {
+          _showFirstBird = true;
+        });
+      }
     });
   }
 
@@ -3132,6 +3532,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return IgnorePointer(
       ignoring: _editModeDialogueIndex == 0,
       child: SingleChildScrollView(
+        controller: _editModeScrollController,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3373,6 +3774,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 _editFavoriteApps.add(removed);
                 if (app.isPlendy) {
                   _showEditModePlendyHand = false;
+                  _showEditModeDownArrow = false;
                   // Advance to "added to Favorites" dialogue
                   _editModeDialogueIndex = 2;
                   _editModeTypewriterComplete = false;
@@ -3528,30 +3930,25 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       onTapDown: canTap
           ? (TapDownDetails details) {
               HapticFeedback.lightImpact();
-              // Get the global position of the tap
-              final RenderBox? box = context.findRenderObject() as RenderBox?;
-              if (box != null) {
-                setState(() {
-                  _confettiPosition = details.globalPosition;
-                  _showConfetti = true;
-                  _showPlendyHand = false;
-                  _showDownArrow = false;
-                });
+              setState(() {
+                _showSuccessAnimation = true;
+                _showPlendyHand = false;
+                _showDownArrow = false;
+              });
 
-                // After confetti plays, show post-Plendy dialogues (keep apps sheet visible)
-                Future.delayed(const Duration(milliseconds: 1500), () {
-                  if (mounted) {
-                    setState(() {
-                      _showConfetti = false;
-                      _confettiPosition = null;
-                      _showPostPlendyDialogue = true;
-                    });
-                  }
-                });
-              }
+              // After success animation plays, show post-Plendy dialogues
+              Future.delayed(const Duration(milliseconds: 2000), () {
+                if (mounted) {
+                  setState(() {
+                    _showSuccessAnimation = false;
+                    _showPostPlendyDialogue = true;
+                  });
+                }
+              });
             }
           : null,
       child: Container(
+        key: _plendyButtonKey,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Stack(
           clipBehavior: Clip.none,
