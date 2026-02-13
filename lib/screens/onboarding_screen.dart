@@ -1,7 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lottie/lottie.dart';
 import 'package:rive/rive.dart' hide Animation;
@@ -9,15 +8,15 @@ import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../config/colors.dart';
-import '../models/tutorial_slide.dart';
 import '../services/user_service.dart';
-import '../widgets/social_browser_dialog.dart';
+import '../widgets/save_tutorial_widget.dart';
 
 // DEV MODE: Set to true to enable onboarding testing for kevinphamster1
 // This user will always see onboarding and profile saves will be skipped
 // TODO: Remove this when done testing onboarding
 const bool devModeOnboardingTest = true;
 const String devModeTestUsername = 'aaa';
+const bool devModeStartAtSaveTutorial = true;
 
 class OnboardingScreen extends StatefulWidget {
   final VoidCallback? onFinishedFlow;
@@ -30,31 +29,17 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen>
     with TickerProviderStateMixin {
-  static const int _tutorialStartIndex = 5;
-  static const String _defaultSocialUrl = 'https://instagram.com';
   static const String _instagramVideoAsset =
       'assets/onboarding/restaurant_video.mp4';
   static const String _eggHatchVideoAsset =
       'assets/onboarding/egg_hatch_intro.mp4';
-  static const List<String> _tutorialHeadings = [
-    'Share and save content to Plendy',
-    'Find and select the location',
-    'Categorize the way you want',
-    'Save and check out your experience',
-    'Enjoy amazing experiences!',
-  ];
 
   final PageController _pageController = PageController();
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
-  final TextEditingController _socialUrlInputController =
-      TextEditingController();
   final FocusNode _displayNameFocus = FocusNode();
   final FocusNode _usernameFocus = FocusNode();
   final UserService _userService = UserService();
-
-  late final List<VideoPlayerController?> _tutorialControllers;
-  late final List<Future<void>?> _tutorialInitializations;
 
   VideoPlayerController? _instagramVideoController;
   Future<void>? _instagramVideoInitialization;
@@ -133,6 +118,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   late Animation<double> _shareButton2Animation;
   late Animation<double> _shareButton3Animation;
 
+  // Save tutorial transition dialogue state
+  bool _showSaveTutorialTransition = false;
+  int _saveTutorialTransitionIndex = 0;
+  bool _saveTutorialTransitionTypewriterComplete = false;
+
+  // Save tutorial step state
+  bool _showSaveTutorialStep = false;
+
   // Welcome step bird dialogue
   int _welcomeBirdDialogueIndex = 0;
   bool _welcomeBirdTypewriterComplete = false;
@@ -188,14 +181,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       GlobalKey<_TypewriterTextState>();
   final GlobalKey<_TypewriterTextState> _realSharingTypewriterKey =
       GlobalKey<_TypewriterTextState>();
+  final GlobalKey<_TypewriterTextState> _saveTutorialTransitionTypewriterKey =
+      GlobalKey<_TypewriterTextState>();
 
-  int get _totalPages => _tutorialStartIndex + tutorialSlides.length;
+  int get _totalPages => 3;
   bool get _isOnEggHatchVideoStep => _currentPage == 0;
   bool get _isOnWelcomeStep => _currentPage == 1;
-  bool get _isOnProfileStep => _currentPage == 2;
-  bool get _isOnInstagramTutorialStep => _currentPage == 3;
-  bool get _isOnSocialStep => _currentPage == 4;
-  bool get _isOnTutorialStep => _currentPage >= _tutorialStartIndex;
+  bool get _isOnInstagramTutorialStep => _currentPage == 2;
 
   bool get _canSubmitProfile =>
       _displayNameController.text.trim().isNotEmpty &&
@@ -208,7 +200,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (_isOnWelcomeStep) {
       return _showNameFields ? 'Save & Continue' : 'Next';
     }
-    if (_isOnProfileStep) return 'Save & Continue';
     if (_currentPage == _totalPages - 1) return 'Finish';
     return 'Next';
   }
@@ -216,13 +207,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   void initState() {
     super.initState();
-    _tutorialControllers =
-        List<VideoPlayerController?>.filled(tutorialSlides.length, null);
-    _tutorialInitializations =
-        List<Future<void>?>.filled(tutorialSlides.length, null);
     _displayNameController.addListener(_handleProfileFieldChange);
     _usernameController.addListener(_handleProfileFieldChange);
-    _socialUrlInputController.text = _defaultSocialUrl;
     _prefillExistingValues();
 
     // Initialize Rive animation loaders
@@ -343,9 +329,28 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
     // Start egg hatch video on initial load (since it's now page 0)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _isOnEggHatchVideoStep) {
+      if (devModeOnboardingTest && devModeStartAtSaveTutorial) {
+        _startSaveTutorialDevMode();
+      } else if (mounted && _isOnEggHatchVideoStep) {
         _startEggHatchVideo();
       }
+    });
+  }
+
+  void _startSaveTutorialDevMode() {
+    if (!mounted) return;
+
+    // Jump directly to Instagram tutorial page and open save tutorial from step 1.
+    _pageController.jumpToPage(2);
+    setState(() {
+      _showSaveTutorialTransition = false;
+      _saveTutorialTransitionIndex = 0;
+      _saveTutorialTransitionTypewriterComplete = false;
+      _showRealSharingStep = false;
+      _realSharingDialogueIndex = 0;
+      _realSharingTypewriterComplete = false;
+      _showRealSharingButtons = false;
+      _showSaveTutorialStep = true;
     });
   }
 
@@ -443,7 +448,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _usernameController
       ..removeListener(_handleProfileFieldChange)
       ..dispose();
-    _socialUrlInputController.dispose();
     _displayNameFocus.dispose();
     _usernameFocus.dispose();
     _eggHatchVideoController?.removeListener(_onEggHatchVideoUpdate);
@@ -458,9 +462,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _appsSheetScrollController.dispose();
     _editModeScrollController.removeListener(_onEditModeScroll);
     _editModeScrollController.dispose();
-    for (final controller in _tutorialControllers) {
-      controller?.dispose();
-    }
     _birdSlideController.dispose();
     _displayNameFadeController.dispose();
     _usernameFadeController.dispose();
@@ -473,7 +474,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   void _handleProfileFieldChange() {
-    if (_isOnProfileStep || (_isOnWelcomeStep && _showNameFields)) {
+    if (_isOnWelcomeStep && _showNameFields) {
       final displayNameFilled = _displayNameController.text.trim().isNotEmpty;
       if (_displayNameError != null && displayNameFilled) {
         _displayNameError = null;
@@ -569,13 +570,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _instagramVideoController?.pause();
     }
 
-    if (_isOnTutorialStep) {
-      final slideIndex = index - _tutorialStartIndex;
-      _startTutorialVideo(slideIndex);
-      _disposeTutorialControllers(exceptIndex: slideIndex);
-    } else {
-      _disposeTutorialControllers();
-    }
   }
 
   void _goToPage(int index) {
@@ -610,12 +604,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         // Name fields are showing, submit the profile info
         await _submitProfileInfo();
       }
-      return;
-    }
-
-    if (_isOnProfileStep) {
-      // This step is now merged into welcome step, skip directly
-      _goToPage(3);
       return;
     }
 
@@ -806,59 +794,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
-  void _startTutorialVideo(int slideIndex) {
-    final slide = tutorialSlides[slideIndex];
-    if (!slide.hasVideo) return;
-
-    final controller = _tutorialControllers[slideIndex] ??
-        _createTutorialController(slideIndex);
-    final initialization = _tutorialInitializations[slideIndex];
-
-    if (controller.value.isInitialized) {
-      controller
-        ..seekTo(Duration.zero)
-        ..play();
-      return;
-    }
-
-    initialization?.then((_) {
-      if (!mounted) return;
-      final isCurrentSlide = _currentPage == _tutorialStartIndex + slideIndex;
-      if (!isCurrentSlide) return;
-      controller
-        ..seekTo(Duration.zero)
-        ..play();
-      setState(() {});
-    });
-  }
-
-  VideoPlayerController _createTutorialController(int slideIndex) {
-    final slide = tutorialSlides[slideIndex];
-    final controller = VideoPlayerController.asset(slide.videoAsset!);
-    _tutorialControllers[slideIndex] = controller;
-    _tutorialInitializations[slideIndex] =
-        controller.initialize().then((_) => controller.setLooping(true));
-    return controller;
-  }
-
-  void _disposeTutorialControllers({int? exceptIndex}) {
-    for (var i = 0; i < _tutorialControllers.length; i++) {
-      if (exceptIndex != null && i == exceptIndex) continue;
-      _tutorialControllers[i]?.dispose();
-      _tutorialControllers[i] = null;
-      _tutorialInitializations[i] = null;
-    }
-  }
-
-  double _tutorialAspectRatio(int slideIndex) {
-    final controller = _tutorialControllers[slideIndex];
-    if (controller == null || !controller.value.isInitialized) {
-      return 16 / 9;
-    }
-    final ratio = controller.value.aspectRatio;
-    return ratio == 0 ? 16 / 9 : ratio;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -884,22 +819,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     children: [
                       _buildEggHatchVideoStep(theme),
                       _buildWelcomeStep(theme),
-                      _buildProfileStep(theme),
                       _buildInstagramTutorialStep(theme),
-                      _buildSocialStep(theme),
-                      for (var i = 0; i < tutorialSlides.length; i++)
-                        _buildTutorialStep(theme, i),
                     ],
                   ),
                 ),
                 Visibility(
-                  // Hide buttons on Instagram tutorial, egg hatch video, and welcome step (until name fields with valid input)
-                  visible: !_isOnInstagramTutorialStep &&
-                      !_isOnEggHatchVideoStep &&
-                      !(_isOnWelcomeStep && !_showNameFields) &&
-                      !(_isOnWelcomeStep &&
-                          _showNameFields &&
-                          !_canSubmitProfile),
+                  // Only show buttons on welcome step with name fields and valid input
+                  visible: _isOnWelcomeStep &&
+                      _showNameFields &&
+                      _canSubmitProfile,
                   maintainState: true,
                   maintainAnimation: true,
                   child: Padding(
@@ -907,9 +835,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     child: Row(
                       children: [
                         // Hide back button on welcome step
-                        if (_currentPage > 0 &&
-                            !_isOnSocialStep &&
-                            !_isOnWelcomeStep)
+                        if (_currentPage > 0 && !_isOnWelcomeStep)
                           TextButton(
                             onPressed: _handleBackPressed,
                             child: const Text('Back'),
@@ -922,8 +848,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                           child: ElevatedButton(
                             style: primaryButtonStyle,
                             onPressed:
-                                (_isOnProfileStep && !_canSubmitProfile) ||
-                                        (_isOnWelcomeStep &&
+                                (_isOnWelcomeStep &&
                                             _showNameFields &&
                                             !_canSubmitProfile) ||
                                         _isCompletingOnboarding ||
@@ -1057,7 +982,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           }
         } else {
           // Finished all post-save dialogues, go to next page
-          _goToPage(3);
+          _goToPage(2);
         }
       } else {
         // Initial dialogues phase
@@ -1443,58 +1368,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     });
   }
 
-  Widget _buildProfileStep(ThemeData theme) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Choose your Plendy identity',
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Pick a username and display name so your friends know it\'s you. '
-            'Both fields are required before you can continue. \n\n'
-            'Your username must be unique but your display name can be anything you want!',
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _displayNameController,
-            focusNode: _displayNameFocus,
-            decoration: InputDecoration(
-              labelText: 'Display Name',
-              hintText: 'e.g. Taylor Adams',
-              errorText: _displayNameError,
-            ),
-            textInputAction: TextInputAction.next,
-            onSubmitted: (_) => _usernameFocus.requestFocus(),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _usernameController,
-            focusNode: _usernameFocus,
-            decoration: InputDecoration(
-              labelText: 'Username',
-              hintText: 'e.g. tayloradams',
-              prefixText: '@',
-              errorText: _usernameError,
-            ),
-            textInputAction: TextInputAction.done,
-            onChanged: _validateUsernameFormat,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Usernames must be 3-20 characters and can include letters, numbers, and underscores.',
-            style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildEggHatchVideoStep(ThemeData theme) {
     final controller = _eggHatchVideoController;
     final isInitialized = controller?.value.isInitialized ?? false;
@@ -1530,6 +1403,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   Widget _buildInstagramTutorialStep(ThemeData theme) {
+    if (_showSaveTutorialStep) {
+      return SaveTutorialWidget(
+        onComplete: () {
+          setState(() {
+            _showSaveTutorialStep = false;
+            // Return to real sharing step
+          });
+        },
+      );
+    }
     if (_showRealSharingStep) {
       return _buildRealSharingStep(theme);
     }
@@ -2283,7 +2166,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 // "I'll do this later" button
                 GestureDetector(
                   onTap: () {
-                    // Functionality to be added later
+                    HapticFeedback.lightImpact();
+                    setState(() {
+                      _showSaveTutorialTransition = true;
+                      _saveTutorialTransitionIndex = 0;
+                      _saveTutorialTransitionTypewriterComplete = false;
+                      _showRealSharingButtons = false;
+                    });
                   },
                   child: Text(
                     'I\'ll do this later',
@@ -2318,86 +2207,89 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
           ),
 
-        // Bird and speech bubble on bottom-right
-        Positioned(
-          right: -9,
-          bottom: 40,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Speech bubble
-              Container(
-                width: 220,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: _realSharingTypewriterComplete
-                    ? Text(
-                        currentMessage,
-                        style: GoogleFonts.fredoka(
-                          fontSize: 15,
-                          color: Colors.black87,
-                          height: 1.4,
-                        ),
-                      )
-                    : _TypewriterText(
-                        key: _realSharingTypewriterKey,
-                        text: currentMessage,
-                        style: GoogleFonts.fredoka(
-                          fontSize: 15,
-                          color: Colors.black87,
-                          height: 1.4,
-                        ),
-                        speed: const Duration(milliseconds: 30),
-                        onComplete: () {
-                          setState(() {
-                            _realSharingTypewriterComplete = true;
-                            // When second dialogue completes, trigger share buttons
-                            if (_realSharingDialogueIndex == 1) {
-                              _showRealSharingButtons = true;
-                              _realSharingButtonsController.forward();
-                            }
-                            // When "Okie dokie" dialogue completes, auto-reset
-                            if (_realSharingDialogueIndex == 2) {
-                              Future.delayed(const Duration(milliseconds: 1200),
-                                  () {
-                                if (mounted && _realSharingDialogueIndex == 2) {
-                                  _resetInstagramTutorial();
-                                }
-                              });
-                            }
-                          });
-                        },
+        // Bird and speech bubble on bottom-right (hidden during save tutorial transition)
+        if (!_showSaveTutorialTransition)
+          Positioned(
+            right: -9,
+            bottom: 40,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Speech bubble
+                Container(
+                  width: 220,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
                       ),
-              ),
-              const SizedBox(width: 8),
-              // Bird Lottie (larger)
-              SizedBox(
-                width: 100,
-                height: 100,
-                child: Lottie.asset(
-                  'assets/mascot/bird_talking_head.json',
-                  fit: BoxFit.contain,
-                  options: LottieOptions(enableMergePaths: true),
+                    ],
+                  ),
+                  child: _realSharingTypewriterComplete
+                      ? Text(
+                          currentMessage,
+                          style: GoogleFonts.fredoka(
+                            fontSize: 15,
+                            color: Colors.black87,
+                            height: 1.4,
+                          ),
+                        )
+                      : _TypewriterText(
+                          key: _realSharingTypewriterKey,
+                          text: currentMessage,
+                          style: GoogleFonts.fredoka(
+                            fontSize: 15,
+                            color: Colors.black87,
+                            height: 1.4,
+                          ),
+                          speed: const Duration(milliseconds: 30),
+                          onComplete: () {
+                            setState(() {
+                              _realSharingTypewriterComplete = true;
+                              // When second dialogue completes, trigger share buttons
+                              if (_realSharingDialogueIndex == 1) {
+                                _showRealSharingButtons = true;
+                                _realSharingButtonsController.forward();
+                              }
+                              // When "Okie dokie" dialogue completes, auto-reset
+                              if (_realSharingDialogueIndex == 2) {
+                                Future.delayed(const Duration(milliseconds: 1200),
+                                    () {
+                                  if (mounted && _realSharingDialogueIndex == 2) {
+                                    _resetInstagramTutorial();
+                                  }
+                                });
+                              }
+                            });
+                          },
+                        ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                // Bird Lottie (larger)
+                SizedBox(
+                  width: 100,
+                  height: 100,
+                  child: Lottie.asset(
+                    'assets/mascot/bird_talking_head.json',
+                    fit: BoxFit.contain,
+                    options: LottieOptions(enableMergePaths: true),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
 
         // Tap detector for dialogue advancement
         // Hidden when second dialogue is complete (user should tap share buttons)
-        if (!(_realSharingDialogueIndex == 1 && _realSharingTypewriterComplete))
+        if (!_showSaveTutorialTransition &&
+            !(_realSharingDialogueIndex == 1 &&
+                _realSharingTypewriterComplete))
           GestureDetector(
             onTap: () {
               HapticFeedback.lightImpact();
@@ -2416,8 +2308,117 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             },
             behavior: HitTestBehavior.translucent,
           ),
+
+        // Save tutorial transition dialogue overlay
+        if (_showSaveTutorialTransition) ..._buildSaveTutorialTransition(),
       ],
     );
+  }
+
+  /// Builds the transition dialogue overlays before the save tutorial begins
+  List<Widget> _buildSaveTutorialTransition() {
+    const transitionDialogues = [
+      'Okay, let\'s move on. So what happens when you share to Plendy?',
+      'This is where the magic happens! Come with me and I\'ll show you how it works.',
+    ];
+
+    final currentMessage = transitionDialogues[_saveTutorialTransitionIndex];
+
+    return [
+      // Semi-transparent background to dim the share buttons
+      Positioned.fill(
+        child: Container(
+          color: Colors.white.withOpacity(0.85),
+        ),
+      ),
+
+      // Bird and speech bubble on bottom-right
+      Positioned(
+        right: -9,
+        bottom: 40,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Speech bubble
+            Container(
+              width: 220,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: _saveTutorialTransitionTypewriterComplete
+                  ? Text(
+                      currentMessage,
+                      style: GoogleFonts.fredoka(
+                        fontSize: 15,
+                        color: Colors.black87,
+                        height: 1.4,
+                      ),
+                    )
+                  : _TypewriterText(
+                      key: _saveTutorialTransitionTypewriterKey,
+                      text: currentMessage,
+                      style: GoogleFonts.fredoka(
+                        fontSize: 15,
+                        color: Colors.black87,
+                        height: 1.4,
+                      ),
+                      speed: const Duration(milliseconds: 30),
+                      onComplete: () {
+                        setState(() {
+                          _saveTutorialTransitionTypewriterComplete = true;
+                        });
+                      },
+                    ),
+            ),
+            const SizedBox(width: 8),
+            // Bird Lottie
+            SizedBox(
+              width: 100,
+              height: 100,
+              child: Lottie.asset(
+                'assets/mascot/bird_talking_head.json',
+                fit: BoxFit.contain,
+                options: LottieOptions(enableMergePaths: true),
+              ),
+            ),
+          ],
+        ),
+      ),
+
+      // Tap detector for transition dialogue advancement
+      GestureDetector(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          if (!_saveTutorialTransitionTypewriterComplete) {
+            // Skip typewriter to show full text
+            _saveTutorialTransitionTypewriterKey.currentState?.skipToEnd();
+          } else if (_saveTutorialTransitionIndex < 1) {
+            // Advance to next dialogue
+            setState(() {
+              _saveTutorialTransitionIndex++;
+              _saveTutorialTransitionTypewriterComplete = false;
+            });
+          } else {
+            // Dismiss transition, enter save tutorial
+            setState(() {
+              _showSaveTutorialTransition = false;
+              _showSaveTutorialStep = true;
+            });
+          }
+        },
+        behavior: HitTestBehavior.translucent,
+      ),
+    ];
   }
 
   /// Builds an animated large share button that slides up from the bottom
@@ -3513,6 +3514,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _realSharingTypewriterComplete = false;
       _showRealSharingButtons = false;
       _realSharingButtonsController.reset();
+      // Reset save tutorial state
+      _showSaveTutorialTransition = false;
+      _saveTutorialTransitionIndex = 0;
+      _saveTutorialTransitionTypewriterComplete = false;
+      _showSaveTutorialStep = false;
     });
     // Restart the Instagram video
     _startInstagramVideo();
@@ -3610,6 +3616,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               if (_editFavoriteApps.isNotEmpty &&
                   _editFavoriteApps[0].isPlendy &&
                   !_plendyReachedTop) {
+                HapticFeedback.mediumImpact();
                 _plendyReachedTop = true;
                 _showEditModeDragHand = false;
                 _editModeDialogueIndex = 4;
@@ -3635,6 +3642,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         onPointerDown: (_) {
           // Hide the drag hand when user starts dragging Plendy
           if (app.isPlendy && _showEditModeDragHand) {
+            HapticFeedback.selectionClick();
             setState(() {
               _showEditModeDragHand = false;
             });
@@ -4488,250 +4496,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
-  Widget _buildSocialStep(ThemeData theme) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Sign into your socials',
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Open a secure browser window to sign into Instagram, TikTok, Facebook, or YouTube. '
-            'This helps Plendy load the content you save from those apps. '
-            'This step is optional — you can skip it and sign in later from your profile.',
-          ),
-          const SizedBox(height: 24),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _buildSocialQuickLinkButton(
-                theme: theme,
-                icon: FontAwesomeIcons.instagram,
-                label: 'Instagram',
-                url: 'https://instagram.com',
-              ),
-              _buildSocialQuickLinkButton(
-                theme: theme,
-                icon: FontAwesomeIcons.tiktok,
-                label: 'TikTok',
-                url: 'https://tiktok.com',
-              ),
-              _buildSocialQuickLinkButton(
-                theme: theme,
-                icon: FontAwesomeIcons.facebook,
-                label: 'Facebook',
-                url: 'https://facebook.com',
-              ),
-              _buildSocialQuickLinkButton(
-                theme: theme,
-                icon: FontAwesomeIcons.youtube,
-                label: 'YouTube',
-                url: 'https://youtube.com',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _socialUrlInputController,
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: InputDecoration(
-              labelText: 'Enter a URL',
-              hintText: 'https://instagram.com',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.open_in_new),
-                onPressed: _handleSocialUrlSubmit,
-              ),
-            ),
-            onSubmitted: (_) => _handleSocialUrlSubmit(),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Tap a quick link or enter a URL, and a full-screen secure browser will open so you can sign in.',
-            style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 24),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => _goToPage(_currentPage + 1),
-              child: const Text('Skip for now'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTutorialStep(ThemeData theme, int slideIndex) {
-    final slide = tutorialSlides[slideIndex];
-    final controller = _tutorialControllers[slideIndex];
-    final heading = slideIndex < _tutorialHeadings.length
-        ? _tutorialHeadings[slideIndex]
-        : 'Tutorial';
-
-    Widget media;
-    if (slide.hasVideo) {
-      Widget videoContent;
-      if (controller == null || !controller.value.isInitialized) {
-        videoContent = const AspectRatio(
-          aspectRatio: 16 / 9,
-          child: Center(child: CircularProgressIndicator()),
-        );
-      } else {
-        videoContent = AspectRatio(
-          aspectRatio: _tutorialAspectRatio(slideIndex),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: VideoPlayer(controller),
-          ),
-        );
-      }
-
-      media = Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          videoContent,
-          if (controller != null && controller.value.isInitialized) ...[
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: VideoProgressIndicator(
-                controller,
-                allowScrubbing: true,
-                padding: EdgeInsets.zero,
-              ),
-            ),
-          ],
-        ],
-      );
-    } else {
-      final imageAspectRatio =
-          slideIndex == tutorialSlides.length - 1 ? 5 / 6 : 16 / 9;
-      media = AspectRatio(
-        aspectRatio: imageAspectRatio,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Image.asset(
-            slide.imageAsset!,
-            fit: BoxFit.cover,
-          ),
-        ),
-      );
-    }
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            heading,
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            slide.description,
-            style: theme.textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 24),
-          media,
-          const SizedBox(height: 16),
-          RepaintBoundary(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(
-                tutorialSlides.length,
-                (index) {
-                  final isActive =
-                      index == (_currentPage - _tutorialStartIndex);
-                  return RepaintBoundary(
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      height: 8,
-                      width: isActive ? 24 : 8,
-                      decoration: BoxDecoration(
-                        color: isActive ? theme.primaryColor : Colors.grey[300],
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSocialQuickLinkButton({
-    required ThemeData theme,
-    required IconData icon,
-    required String label,
-    required String url,
-  }) {
-    return ElevatedButton.icon(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      ),
-      onPressed: () => _handleSocialQuickLinkTap(url),
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-    );
-  }
-
-  void _handleSocialQuickLinkTap(String url) {
-    HapticFeedback.lightImpact();
-    _socialUrlInputController.text = url;
-    _openSocialBrowserModal(url);
-  }
-
-  void _handleSocialUrlSubmit() {
-    HapticFeedback.lightImpact();
-    _openSocialBrowserModal(_socialUrlInputController.text);
-  }
-
-  Future<void> _openSocialBrowserModal(String url) async {
-    final normalizedUrl = _normalizeSocialUrl(url);
-    if (normalizedUrl == null) return;
-
-    FocusScope.of(context).unfocus();
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => SocialBrowserDialog(initialUrl: normalizedUrl),
-    );
-  }
-
-  String? _normalizeSocialUrl(String rawUrl) {
-    final trimmed = rawUrl.trim();
-    if (trimmed.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Enter a URL to open the secure browser.'),
-        ),
-      );
-      return null;
-    }
-
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      return trimmed;
-    }
-
-    return 'https://$trimmed';
-  }
 }
 
 class _TypewriterText extends StatefulWidget {

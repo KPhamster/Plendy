@@ -1435,7 +1435,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                             value; // Update model directly
                                         // No widget.onUpdate() needed here for this toggle's visual state
                                       },
-                                      activeThumbColor:
+                                      activeColor:
                                           const Color(0xFF2F6F6D),
                                       materialTapTargetSize:
                                           MaterialTapTargetSize.shrinkWrap,

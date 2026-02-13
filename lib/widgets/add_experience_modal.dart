@@ -1423,7 +1423,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                               _cardData.locationEnabled.value = value;
                             });
                           },
-                          activeThumbColor: const Color(0xFF2F6F6D),
+                          activeColor: const Color(0xFF2F6F6D),
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
                         ),
