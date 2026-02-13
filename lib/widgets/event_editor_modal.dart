@@ -5107,7 +5107,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
           if (!_isReadOnly) ...[
             const SizedBox(height: 16),
             DropdownButtonFormField<EventNotificationType>(
-              initialValue: _currentEvent.notificationPreference.type,
+              value: _currentEvent.notificationPreference.type,
               decoration: const InputDecoration(
                 labelText: 'Remind me',
                 border: OutlineInputBorder(),
