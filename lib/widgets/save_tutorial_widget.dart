@@ -27,7 +27,8 @@ List<TextSpan> _buildTutorialFormattedSpans(String text, TextStyle? baseStyle) {
     for (final match in highlightPattern.allMatches(segment)) {
       if (match.start > lastMatchEnd) {
         spans.add(
-          TextSpan(text: segment.substring(lastMatchEnd, match.start), style: style),
+          TextSpan(
+              text: segment.substring(lastMatchEnd, match.start), style: style),
         );
       }
       spans.add(
@@ -128,30 +129,30 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
   static const int _postLocationCategoryIntroStepIndex = 8;
   static const double _mockScanStartProgress = 0.58;
   static const List<String> _postScanDialogues = [
-    'Done! Here\'s the location info that I found. Yep, it\'s *The Golden Noodle House*!',
-    'Here, you can check and confirm if the location info that I find for you is correct.',
-    'There is a slight chance that I\'ll make mistakes here. I\'m a bird! Nobody\'s perfect!',
-    'In the RARE case that I get it wrong, you can fix it manually yourself or have me try again with \'Deep Scan\'.',
-    'Deep scanning takes longer but can be more accurate.',
-    'This looks like the correct location so we can just move on.',
+    'Done! Here\'s the location that I found. Yep, it\'s *The Golden Noodle House*!',
+    'Here, you can check and confirm if the location I found for you is correct.',
+    'There is a slight chance that I\'ll make mistakes here. I\'m just a bird!',
+    'In the rare case that I get it wrong, you can fix it manually yourself or have me try again with \'Deep Scan\'.',
+    'Deep scanning takes more time but provides accuracy.',
+    'This looks like the correct location so let\'s just move on.',
   ];
   static const String _postScanCreateCardDialogue =
-      'Once you\'ve confirmed that this is the correct location, go ahead and create the card.';
+      'Since this is the correct location, let\'s go ahead and add the experience.';
 
   static const List<String> _stepDialogues = [
-    'Look - the Plendy app opened up!',
-    'When you share something to Plendy, the Plendy app will open up showing you a preview of what you shared.',
-    'Here\'s that video from Instagram that we shared to Plendy.',
+    'Look - Plendy opened up!',
+    'When you share something to Plendy, Plendy will open up showing you a preview of what you shared.',
+    'Here\'s that video from Instagram we shared!',
     'Notice the progress bar above!',
-    'I can analyze the shared content\'s caption to detect any relevant location info automatically!',
-    'For example, this instagram video\'s caption mentions that the restaurant\'s name is *The Golden Noodle House*.',
-    'So I should be able to find the location info for *The Golden Noodle House* restaurant!',
-    'Let\'s see if I get the right location info. It only takes a few moments.',
-    'Look! We created an experience card with the location info.',
-    'Now that you\'ve picked out a location for the experience, you can categorize the experience with icons and colors. See below!',
-    'Since *The Golden Noodle House* is a restaurant, I went ahead and categorized it as a *Restaurant*. I assume you haven\'t been here before, so I went ahead and set the color to red which means \'Want to go\' in this case.',
-    'This makes it easy to organize and identify your experiences on your Plendy map. You can customize and edit these to your heart\'s content!',
-    'You can assign multiple categories and colors for each experience. You can even map more than one experience to each save!',
+    'I can analyze the post\'s caption to pull any location details automatically.',
+    'For example, this Instagram post\'s caption mentions that the restaurant\'s name is *The Golden Noodle House*.',
+    'So I should be able to find the location for *The Golden Noodle House*!',
+    'Let\'s see if I got it right. It only takes a few moments.',
+    'Look! We created an experience with the location details.',
+    'Now that we have a location, you can categorize the experience with icons and colors. See below!',
+    'Since *The Golden Noodle House* is a restaurant, I went ahead and categorized it as such. I assume you haven\'t been here before, so I went ahead and set the color to red which means \'Want to go\' in this case.',
+    'This makes it easy to organize and view your experiences on your map. You can customize and edit these to your heart\'s content!',
+    'You can assign multiple categories and colors for each experience. If there\'s more than one location on a post, I\'ll pull each location so you can save it as separate experiences!',
     'When you\'re ready, tap Save to add this to your collection!',
   ];
 
@@ -230,12 +231,11 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
     return p1 > p2 ? p1 : p2;
   }
 
-  String get _currentBirdMessage =>
-      _showLocationFoundDialog
-          ? (_showCreateCardPromptDialogue
-              ? _postScanCreateCardDialogue
-              : _postScanDialogues[_postScanDialogueIndex])
-          : _stepDialogues[_currentStep];
+  String get _currentBirdMessage => _showLocationFoundDialog
+      ? (_showCreateCardPromptDialogue
+          ? _postScanCreateCardDialogue
+          : _postScanDialogues[_postScanDialogueIndex])
+      : _stepDialogues[_currentStep];
 
   void _startScanCompletion() {
     if (_isCompletingScan || _showLocationFoundDialog) return;
@@ -347,13 +347,19 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-          child: Text(
-            'Saving experiences in Plendy',
-            style: GoogleFonts.notoSerif(
-              fontSize:
-                  Theme.of(context).textTheme.titleLarge?.fontSize ?? 22,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
+          child: Center(
+            child: Text(
+              'Saving experiences in Plendy',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ) ??
+                  const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
             ),
           ),
         ),
@@ -369,8 +375,7 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
 
   /// Builds the mocked ReceiveShareScreen content inside the phone frame
   Widget _buildMockedReceiveShareScreen() {
-    final bool isAnalyzeFocusStep =
-        _currentStep >= _analyzeStartStepIndex &&
+    final bool isAnalyzeFocusStep = _currentStep >= _analyzeStartStepIndex &&
         _currentStep <= _analyzeStepIndex &&
         !_showLocationFoundDialog;
 
@@ -410,7 +415,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.visibility_off, size: 12, color: Colors.grey[600]),
+                      Icon(Icons.visibility_off,
+                          size: 12, color: Colors.grey[600]),
                       const SizedBox(width: 3),
                       Text(
                         'Private',
@@ -447,8 +453,9 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                           builder: (context, child) {
                             return _buildGlowHighlightWrapper(
                               key: _scanLoadingKey,
-                              glowOpacity:
-                                  isAnalyzeFocusStep ? _scanFlashGlowOpacity : 0,
+                              glowOpacity: isAnalyzeFocusStep
+                                  ? _scanFlashGlowOpacity
+                                  : 0,
                               child: child!,
                             );
                           },
@@ -465,7 +472,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                         isHighlighted: _currentStep <= 2,
                         child: _buildMockedInstagramPreview(),
                       ),
-                      Container(height: 6, color: AppColors.backgroundColorDark),
+                      Container(
+                          height: 6, color: AppColors.backgroundColorDark),
                       // Experience card section
                       Container(
                         key: _experienceCardSectionKey,
@@ -630,16 +638,20 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                   Row(
                     children: [
                       // Heart icon
-                      Icon(Icons.favorite_border, size: 16, color: Colors.black87),
+                      Icon(Icons.favorite_border,
+                          size: 16, color: Colors.black87),
                       const SizedBox(width: 10),
                       // Comment icon
-                      Icon(Icons.chat_bubble_outline, size: 14, color: Colors.black87),
+                      Icon(Icons.chat_bubble_outline,
+                          size: 14, color: Colors.black87),
                       const SizedBox(width: 10),
                       // Share icon
-                      Icon(Icons.send_outlined, size: 14, color: Colors.black87),
+                      Icon(Icons.send_outlined,
+                          size: 14, color: Colors.black87),
                       const Spacer(),
                       // Bookmark icon
-                      Icon(Icons.bookmark_border, size: 16, color: Colors.black87),
+                      Icon(Icons.bookmark_border,
+                          size: 16, color: Colors.black87),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -656,7 +668,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                   // Username and caption
                   RichText(
                     text: TextSpan(
-                      style: GoogleFonts.inter(fontSize: 9, color: Colors.black87),
+                      style:
+                          GoogleFonts.inter(fontSize: 9, color: Colors.black87),
                       children: [
                         TextSpan(
                           text: 'foodie_adventures ',
@@ -699,7 +712,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                           ),
                         ),
                       ),
-                      Icon(Icons.camera_alt_outlined, size: 12, color: Colors.grey[400]),
+                      Icon(Icons.camera_alt_outlined,
+                          size: 12, color: Colors.grey[400]),
                     ],
                   ),
                 ],
@@ -851,14 +865,15 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                             const SizedBox(width: 2),
                             Text(
                               'Private',
-                              style:
-                                  TextStyle(fontSize: 8, color: Colors.grey[600]),
+                              style: TextStyle(
+                                  fontSize: 8, color: Colors.grey[600]),
                             ),
                           ],
                         ),
                       ),
                       const SizedBox(width: 3),
-                      Icon(Icons.info_outline, size: 10, color: Colors.grey[400]),
+                      Icon(Icons.info_outline,
+                          size: 10, color: Colors.grey[400]),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -879,7 +894,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                             mainAxisAlignment: MainAxisAlignment.center,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.event, size: 10, color: AppColors.teal),
+                              Icon(Icons.event,
+                                  size: 10, color: AppColors.teal),
                               const SizedBox(width: 2),
                               Text(
                                 'Events',
@@ -1033,8 +1049,9 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                       value.isNotEmpty ? value : (hintText ?? ''),
                       style: TextStyle(
                         fontSize: 9,
-                        color:
-                            value.isNotEmpty ? Colors.grey[800] : Colors.grey[400],
+                        color: value.isNotEmpty
+                            ? Colors.grey[800]
+                            : Colors.grey[400],
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1121,7 +1138,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                 height: 16,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.wineLight),
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(AppColors.wineLight),
                 ),
               ),
               const SizedBox(width: 10),
@@ -1182,143 +1200,147 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.location_on, size: 20, color: AppColors.sage),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          '1 Location Found',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Select which locations to add:',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: AppColors.sage.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        Checkbox(value: true, onChanged: (_) {}),
-                        const SizedBox(width: 4),
-                        Icon(Icons.place, size: 16, color: Colors.grey[700]),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                _locationName,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              Text(
-                                _locationAddress,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey[600],
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
+                        Icon(Icons.location_on,
+                            size: 20, color: AppColors.sage),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            '1 Location Found',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Center(
-                    child: Text(
-                      'Selected locations will be kept',
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Select which locations to add:',
                       style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey[600],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Center(
-                    child: OutlinedButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.search, size: 14),
-                      label: const Text('Try Deep Scan'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.sage,
-                        side: BorderSide(color: AppColors.sage),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        textStyle: const TextStyle(fontSize: 11),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.sage.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () {},
-                        child: const Text('Cancel'),
-                      ),
-                      const SizedBox(width: 8),
-                      Stack(
-                        clipBehavior: Clip.none,
+                      child: Row(
                         children: [
-                          ElevatedButton(
-                            onPressed: _onCreateCardButtonTapped,
-                            child: const Text('Create 1 Card'),
+                          Checkbox(value: true, onChanged: (_) {}),
+                          const SizedBox(width: 4),
+                          Icon(Icons.place, size: 16, color: Colors.grey[700]),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  _locationName,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                Text(
+                                  _locationAddress,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey[600],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
                           ),
-                          if (showCreateFinger && _rightArrowFileLoader != null)
-                            Positioned(
-                              left: -46,
-                              top: -8,
-                              child: SizedBox(
-                                width: 44,
-                                height: 44,
-                                child: IgnorePointer(
-                                  child: RiveWidgetBuilder(
-                                    fileLoader: _rightArrowFileLoader!,
-                                    builder: (context, state) => switch (state) {
-                                      RiveLoading() => const SizedBox.shrink(),
-                                      RiveFailed() => const SizedBox.shrink(),
-                                      RiveLoaded() => RiveWidget(
-                                          controller: state.controller,
-                                          fit: Fit.contain,
-                                        ),
-                                    },
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: Text(
+                        'Selected locations will be kept',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Center(
+                      child: OutlinedButton.icon(
+                        onPressed: () {},
+                        icon: const Icon(Icons.search, size: 14),
+                        label: const Text('Try Deep Scan'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.sage,
+                          side: BorderSide(color: AppColors.sage),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          textStyle: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () {},
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            ElevatedButton(
+                              onPressed: _onCreateCardButtonTapped,
+                              child: const Text('Add 1 Experience'),
+                            ),
+                            if (showCreateFinger &&
+                                _rightArrowFileLoader != null)
+                              Positioned(
+                                left: -46,
+                                top: -8,
+                                child: SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: IgnorePointer(
+                                    child: RiveWidgetBuilder(
+                                      fileLoader: _rightArrowFileLoader!,
+                                      builder: (context, state) =>
+                                          switch (state) {
+                                        RiveLoading() =>
+                                          const SizedBox.shrink(),
+                                        RiveFailed() => const SizedBox.shrink(),
+                                        RiveLoaded() => RiveWidget(
+                                            controller: state.controller,
+                                            fit: Fit.contain,
+                                          ),
+                                      },
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1407,7 +1429,8 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                     decoration: BoxDecoration(
                       color: Colors.red,
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                      border:
+                          Border.all(color: Colors.grey.shade400, width: 0.5),
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -1616,9 +1639,7 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
       duration: const Duration(milliseconds: 450),
       curve: Curves.easeOutCubic,
       right: (isAnalyzeFocusStep || isPostLocationFocusStep) ? 16 : -9,
-      bottom: isPostLocationFocusStep
-          ? 500
-          : (isAnalyzeFocusStep ? 320 : 40),
+      bottom: isPostLocationFocusStep ? 500 : (isAnalyzeFocusStep ? 320 : 40),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
@@ -1677,25 +1698,23 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       _showLocationFoundDialog && _showCreateCardPromptDialogue
-                          ? 'Tap Create 1 Card'
+                          ? 'Tap Add 1 Experience'
                           : (isOnFinalStep
                               ? 'Tap the Save button'
                               : 'Tap to continue'),
                       style: GoogleFonts.fredoka(
                         fontSize: 10,
-                        color:
-                            (isOnFinalStep ||
-                                    (_showLocationFoundDialog &&
-                                        _showCreateCardPromptDialogue))
-                                ? AppColors.teal
-                                : Colors.grey[400],
+                        color: (isOnFinalStep ||
+                                (_showLocationFoundDialog &&
+                                    _showCreateCardPromptDialogue))
+                            ? AppColors.teal
+                            : Colors.grey[400],
                         fontStyle: FontStyle.italic,
-                        fontWeight:
-                            (isOnFinalStep ||
-                                    (_showLocationFoundDialog &&
-                                        _showCreateCardPromptDialogue))
-                                ? FontWeight.w500
-                                : FontWeight.normal,
+                        fontWeight: (isOnFinalStep ||
+                                (_showLocationFoundDialog &&
+                                    _showCreateCardPromptDialogue))
+                            ? FontWeight.w500
+                            : FontWeight.normal,
                       ),
                     ),
                   ),

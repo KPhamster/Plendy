@@ -5733,14 +5733,168 @@ class CollectionsScreenState extends State<CollectionsScreen>
     );
   }
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
+  Widget _buildShareInstructionEmptyState({required bool isSaves}) {
+    final ThemeData theme = Theme.of(context);
+    final String title = isSaves ? 'No saves yet' : 'No experiences yet';
+    final String body = isSaves
+        ? 'Saves are posts, videos, and links attached to your experiences.'
+        : 'Share a post or link to Plendy to turn it into an experience.';
+    final List<String> steps = isSaves
+        ? <String>[
+            'Share content to Plendy from Instagram, TikTok, YouTube, Facebook, or any webpage.',
+            'Choose which experience to attach it to.',
+            'Tap Save and it will appear here.',
+          ]
+        : <String>[
+            'In Instagram, TikTok, YouTube, Facebook, or another app, tap Share.',
+            'Choose Plendy in your share sheet.',
+            'Assign location and categories, then tap Save.',
+          ];
+    final IconData headerIcon =
+        isSaves ? Icons.bookmark_outline : Icons.explore_outlined;
+
+    Widget buildStepRow(int index, String text) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: BoxDecoration(
+              color: theme.primaryColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              '${index + 1}',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.primaryColor,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.grey[800],
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      color: AppColors.backgroundColor,
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: Colors.black.withValues(alpha: 0.05),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: theme.primaryColor.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          headerIcon,
+                          color: theme.primaryColor,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    body,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey[700],
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ...List.generate(
+                    steps.length,
+                    (index) => Padding(
+                      padding: EdgeInsets.only(
+                        bottom: index == steps.length - 1 ? 0 : 10,
+                      ),
+                      child: buildStepRow(index, steps[index]),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: withHeavyTap(() {
+                        triggerHeavyHaptic();
+                        unawaited(_showAddContentModal());
+                      }),
+                      icon: const Icon(Icons.link),
+                      label: Text(
+                          isSaves ? 'Save Manually' : 'Add Experience Manually'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildExperiencesListView() {
     if (_filteredExperiences.isEmpty) {
-      bool filtersActive = _selectedCategoryIds.isNotEmpty ||
+      final bool filtersActive = _selectedCategoryIds.isNotEmpty ||
           _selectedColorCategoryIds.isNotEmpty;
-      return Center(
-          child: Text(filtersActive
-              ? 'No experiences match the current filters.'
-              : 'No experiences found. Add some!'));
+      if (filtersActive) {
+        return const Center(
+          child: Text('No experiences match the current filters.'),
+        );
+      }
+      return _buildShareInstructionEmptyState(isSaves: false);
     }
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
@@ -6341,10 +6495,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
     if (_filteredGroupedContentItems.isEmpty) {
       final bool filtersActive = _selectedCategoryIds.isNotEmpty ||
           _selectedColorCategoryIds.isNotEmpty;
-      return Center(
-          child: Text(filtersActive
-              ? 'No content matches the current filters.'
-              : 'No shared content found across experiences.'));
+      if (filtersActive) {
+        return const Center(
+          child: Text('No content matches the current filters.'),
+        );
+      }
+      return _buildShareInstructionEmptyState(isSaves: true);
     }
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;

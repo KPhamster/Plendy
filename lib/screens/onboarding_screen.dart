@@ -8,7 +8,9 @@ import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../config/colors.dart';
+import 'main_screen.dart';
 import '../services/user_service.dart';
+import '../widgets/main_screen_tutorial_widget.dart';
 import '../widgets/save_tutorial_widget.dart';
 
 // DEV MODE: Set to true to enable onboarding testing for kevinphamster1
@@ -16,9 +18,12 @@ import '../widgets/save_tutorial_widget.dart';
 // TODO: Remove this when done testing onboarding
 const bool devModeOnboardingTest = true;
 const String devModeTestUsername = 'aaa';
-const bool devModeStartAtSaveTutorial = true;
+const bool devModeStartAtMainScreenTutorial = false;
 
 class OnboardingScreen extends StatefulWidget {
+  static bool suppressShareHandling = false;
+  static bool onboardingShareDetected = false;
+
   final VoidCallback? onFinishedFlow;
 
   const OnboardingScreen({super.key, this.onFinishedFlow});
@@ -28,7 +33,7 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   static const String _instagramVideoAsset =
       'assets/onboarding/restaurant_video.mp4';
   static const String _eggHatchVideoAsset =
@@ -123,8 +128,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   int _saveTutorialTransitionIndex = 0;
   bool _saveTutorialTransitionTypewriterComplete = false;
 
+  // Real share success alternate path state
+  bool _showRealShareSuccess = false;
+  int _realShareSuccessDialogueIndex = 0;
+  bool _realShareSuccessTypewriterComplete = false;
+  bool _showRealShareSuccessAnimation = false;
+  bool _isSharePending = false;
+
   // Save tutorial step state
   bool _showSaveTutorialStep = false;
+  bool _showMainScreenTutorialStep = false;
 
   // Welcome step bird dialogue
   int _welcomeBirdDialogueIndex = 0;
@@ -183,6 +196,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       GlobalKey<_TypewriterTextState>();
   final GlobalKey<_TypewriterTextState> _saveTutorialTransitionTypewriterKey =
       GlobalKey<_TypewriterTextState>();
+  final GlobalKey<_TypewriterTextState> _realShareSuccessTypewriterKey =
+      GlobalKey<_TypewriterTextState>();
 
   int get _totalPages => 3;
   bool get _isOnEggHatchVideoStep => _currentPage == 0;
@@ -207,6 +222,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _displayNameController.addListener(_handleProfileFieldChange);
     _usernameController.addListener(_handleProfileFieldChange);
     _prefillExistingValues();
@@ -329,18 +345,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
     // Start egg hatch video on initial load (since it's now page 0)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (devModeOnboardingTest && devModeStartAtSaveTutorial) {
-        _startSaveTutorialDevMode();
+      if (devModeOnboardingTest && devModeStartAtMainScreenTutorial) {
+        _startMainScreenTutorialDevMode();
       } else if (mounted && _isOnEggHatchVideoStep) {
         _startEggHatchVideo();
       }
     });
   }
 
-  void _startSaveTutorialDevMode() {
+  void _startMainScreenTutorialDevMode() {
     if (!mounted) return;
 
-    // Jump directly to Instagram tutorial page and open save tutorial from step 1.
+    // Jump directly to Instagram tutorial page and open main screen tutorial from step 1.
     _pageController.jumpToPage(2);
     setState(() {
       _showSaveTutorialTransition = false;
@@ -350,7 +366,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _realSharingDialogueIndex = 0;
       _realSharingTypewriterComplete = false;
       _showRealSharingButtons = false;
-      _showSaveTutorialStep = true;
+      _showSaveTutorialStep = false;
+      _showMainScreenTutorialStep = true;
     });
   }
 
@@ -441,6 +458,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    OnboardingScreen.suppressShareHandling = false;
+    OnboardingScreen.onboardingShareDetected = false;
     _pageController.dispose();
     _displayNameController
       ..removeListener(_handleProfileFieldChange)
@@ -558,6 +578,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _realSharingTypewriterComplete = false;
       _showRealSharingButtons = false;
       _realSharingButtonsController.reset();
+      _showRealShareSuccess = false;
+      _realShareSuccessDialogueIndex = 0;
+      _realShareSuccessTypewriterComplete = false;
+      _showRealShareSuccessAnimation = false;
+      _isSharePending = false;
       // Show first bird after a short delay
       Future.delayed(const Duration(milliseconds: 1000), () {
         if (mounted && _isOnInstagramTutorialStep) {
@@ -569,7 +594,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     } else {
       _instagramVideoController?.pause();
     }
-
   }
 
   void _goToPage(int index) {
@@ -709,6 +733,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
+  void _finishMainScreenTutorial() {
+    if (!mounted) return;
+    setState(() {
+      _showMainScreenTutorialStep = false;
+    });
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => const MainScreen(),
+      ),
+    );
+  }
+
   void _startEggHatchVideo() {
     // Reset state when starting
     _eggHatchVideoCompleted = false;
@@ -825,9 +861,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ),
                 Visibility(
                   // Only show buttons on welcome step with name fields and valid input
-                  visible: _isOnWelcomeStep &&
-                      _showNameFields &&
-                      _canSubmitProfile,
+                  visible:
+                      _isOnWelcomeStep && _showNameFields && _canSubmitProfile,
                   maintainState: true,
                   maintainAnimation: true,
                   child: Padding(
@@ -847,14 +882,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                           width: 200,
                           child: ElevatedButton(
                             style: primaryButtonStyle,
-                            onPressed:
-                                (_isOnWelcomeStep &&
-                                            _showNameFields &&
-                                            !_canSubmitProfile) ||
-                                        _isCompletingOnboarding ||
-                                        _isSavingProfile
-                                    ? null
-                                    : _handlePrimaryAction,
+                            onPressed: (_isOnWelcomeStep &&
+                                        _showNameFields &&
+                                        !_canSubmitProfile) ||
+                                    _isCompletingOnboarding ||
+                                    _isSavingProfile
+                                ? null
+                                : _handlePrimaryAction,
                             child: _isSavingProfile
                                 ? const SizedBox(
                                     height: 20,
@@ -931,14 +965,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final welcomeDialogues = [
       "Oh, hello!",
       "I'm Plendy, your new exploration buddy!",
-      "I just hatched and am so excited to experience the world with you!",
+      "I just hatched and can't wait to explore the world with you!",
       "What's your name?",
     ];
 
     final postSaveDialogues = [
       "Nice to meet you, $_savedDisplayName!",
-      "Looking forward to exploring many experiences together.",
-      "Save all your recommendations from anywhere to Plendy so you actually go out and do them!",
+      "Looking forward to all the experiences we'll share together.",
+      "See something you want to do? Save it to Plendy and make it happen.",
       "First, let me show you how to share and save to Plendy.",
     ];
 
@@ -1147,20 +1181,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           // Before name fields OR post-save dialogues: bird positioned at bottom-center
           : Stack(
               children: [
-                // Hatched bird image at top half of screen (behind speech bubble)
-                if (_showHatchedBirdImage)
+                // Basket collection image at top half of screen (behind speech bubble)
+                if (_showBasketCollectionImage)
                   Positioned(
                     top: 0,
                     left: 0,
                     right: 0,
                     child: SlideTransition(
-                      position: _hatchedBirdImageSlideAnimation,
+                      position: _basketCollectionImageSlideAnimation,
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(32, 60, 32, 0),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(20),
                           child: Image.asset(
-                            'assets/onboarding/hatched_bird_image.jpeg',
+                            'assets/onboarding/basket_collection_image.jpeg',
                             fit: BoxFit.contain,
                           ),
                         ),
@@ -1408,8 +1442,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         onComplete: () {
           setState(() {
             _showSaveTutorialStep = false;
-            // Return to real sharing step
+            _showMainScreenTutorialStep = true;
           });
+        },
+      );
+    }
+    if (_showMainScreenTutorialStep) {
+      return MainScreenTutorialWidget(
+        onComplete: () {
+          _finishMainScreenTutorial();
         },
       );
     }
@@ -1421,12 +1462,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-          child: Text(
-            'How to share from Instagram',
-            style: GoogleFonts.notoSerif(
-              fontSize: theme.textTheme.titleLarge?.fontSize ?? 22,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
+          child: Center(
+            child: Text(
+              'How to share from Instagram',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ) ??
+                  const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
             ),
           ),
         ),
@@ -1436,6 +1484,35 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             overlays: _buildBirdOverlays(),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildBubbleContentWithInstruction({
+    required Widget message,
+    required bool showInstruction,
+    required String instruction,
+    bool emphasizeInstruction = false,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        message,
+        if (showInstruction)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              instruction,
+              style: GoogleFonts.fredoka(
+                fontSize: 10,
+                color: emphasizeInstruction ? AppColors.teal : Colors.grey[400],
+                fontStyle: FontStyle.italic,
+                fontWeight:
+                    emphasizeInstruction ? FontWeight.w500 : FontWeight.normal,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -1479,41 +1556,48 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   ),
                 ],
               ),
-              child: _firstBirdTypewriterComplete
-                  ? Text(
-                      _speechBubbleMessageIndex == 0
-                          ? 'Check out this reel I found on Instagram!'
-                          : _speechBubbleMessageIndex == 1
-                              ? 'That looks yummy! Let\'s save this restaurant to Plendy.'
-                              : 'First, we need to find the share button to share this reel to Plendy. To find this in Instagram, tap this send button.',
-                      style: GoogleFonts.fredoka(
-                        fontSize: 15,
-                        color: Colors.black87,
-                        height: 1.4,
+              child: _buildBubbleContentWithInstruction(
+                message: _firstBirdTypewriterComplete
+                    ? Text(
+                        _speechBubbleMessageIndex == 0
+                            ? 'Check out this reel I found on Instagram!'
+                            : _speechBubbleMessageIndex == 1
+                                ? 'That looks yummy! Let\'s save this restaurant to Plendy.'
+                                : 'First, we need to find the share button to share this reel to Plendy. To find this in Instagram, tap this send button.',
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      )
+                    : _TypewriterText(
+                        key: _firstBirdTypewriterKey,
+                        text: _speechBubbleMessageIndex == 0
+                            ? 'Check out this reel I found on Instagram!'
+                            : _speechBubbleMessageIndex == 1
+                                ? 'That looks yummy! Let\'s save this restaurant to Plendy.'
+                                : 'First, we need to find the share button to share this reel to Plendy. To find this in Instagram, tap this send button.',
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                        speed: const Duration(milliseconds: 30),
+                        onComplete: () {
+                          setState(() {
+                            _firstBirdTypewriterComplete = true;
+                            if (_speechBubbleMessageIndex == 2) {
+                              _showHandPointer = true;
+                            }
+                          });
+                        },
                       ),
-                    )
-                  : _TypewriterText(
-                      key: _firstBirdTypewriterKey,
-                      text: _speechBubbleMessageIndex == 0
-                          ? 'Check out this reel I found on Instagram!'
-                          : _speechBubbleMessageIndex == 1
-                              ? 'That looks yummy! Let\'s save this restaurant to Plendy.'
-                              : 'First, we need to find the share button to share this reel to Plendy. To find this in Instagram, tap this send button.',
-                      style: GoogleFonts.fredoka(
-                        fontSize: 15,
-                        color: Colors.black87,
-                        height: 1.4,
-                      ),
-                      speed: const Duration(milliseconds: 30),
-                      onComplete: () {
-                        setState(() {
-                          _firstBirdTypewriterComplete = true;
-                          if (_speechBubbleMessageIndex == 2) {
-                            _showHandPointer = true;
-                          }
-                        });
-                      },
-                    ),
+                showInstruction: _firstBirdTypewriterComplete,
+                instruction: _speechBubbleMessageIndex == 2
+                    ? 'Tap the send button'
+                    : 'Tap to continue',
+                emphasizeInstruction: _speechBubbleMessageIndex == 2,
+              ),
             ),
           ),
         ),
@@ -1565,31 +1649,36 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   ),
                 ],
               ),
-              child: _secondTypewriterComplete
-                  ? Text(
-                      'There\'s the share button! Let\'s tap it.',
-                      style: GoogleFonts.fredoka(
-                        fontSize: 15,
-                        color: Colors.black87,
-                        height: 1.4,
+              child: _buildBubbleContentWithInstruction(
+                message: _secondTypewriterComplete
+                    ? Text(
+                        'There\'s the share button! Let\'s tap it.',
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      )
+                    : _TypewriterText(
+                        key: _secondBubbleTypewriterKey,
+                        text: 'There\'s the share button! Let\'s tap it.',
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                        speed: const Duration(milliseconds: 30),
+                        onComplete: () {
+                          setState(() {
+                            _secondTypewriterComplete = true;
+                            _showSecondHandPointer = true;
+                          });
+                        },
                       ),
-                    )
-                  : _TypewriterText(
-                      key: _secondBubbleTypewriterKey,
-                      text: 'There\'s the share button! Let\'s tap it.',
-                      style: GoogleFonts.fredoka(
-                        fontSize: 15,
-                        color: Colors.black87,
-                        height: 1.4,
-                      ),
-                      speed: const Duration(milliseconds: 30),
-                      onComplete: () {
-                        setState(() {
-                          _secondTypewriterComplete = true;
-                          _showSecondHandPointer = true;
-                        });
-                      },
-                    ),
+                showInstruction: _secondTypewriterComplete,
+                instruction: 'Tap the share button',
+                emphasizeInstruction: true,
+              ),
             ),
           ),
         ),
@@ -1652,79 +1741,89 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   ),
                 ],
               ),
-              child: _thirdBirdMessageIndex == 0
-                  ? (_thirdBirdFirstMessageComplete
-                      ? Text(
-                          'This is your share sheet. This is where you choose the app you want to share to.',
-                          style: GoogleFonts.fredoka(
-                            fontSize: 14,
-                            color: Colors.black87,
-                            height: 1.4,
-                          ),
-                        )
-                      : _TypewriterText(
-                          key: _thirdBubbleTypewriterKey,
-                          text:
-                              'This is your share sheet. This is where you choose the app you want to share to.',
-                          style: GoogleFonts.fredoka(
-                            fontSize: 14,
-                            color: Colors.black87,
-                            height: 1.4,
-                          ),
-                          speed: const Duration(milliseconds: 30),
-                          onComplete: () {
-                            setState(() {
-                              _thirdBirdFirstMessageComplete = true;
-                            });
-                          },
-                        ))
-                  : (_thirdBirdSecondMessageComplete
-                      ? Text.rich(
-                          TextSpan(
+              child: _buildBubbleContentWithInstruction(
+                message: _thirdBirdMessageIndex == 0
+                    ? (_thirdBirdFirstMessageComplete
+                        ? Text(
+                            'This is your share sheet. This is where you choose the app you want to share to.',
                             style: GoogleFonts.fredoka(
                               fontSize: 14,
                               color: Colors.black87,
                               height: 1.4,
                             ),
-                            children: [
-                              const TextSpan(text: 'Now we need to find the '),
-                              WidgetSpan(
-                                alignment: PlaceholderAlignment.middle,
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 2),
-                                  child: Image.asset(
-                                    'assets/icon/icon-cropped.png',
-                                    width: 18,
-                                    height: 18,
+                          )
+                        : _TypewriterText(
+                            key: _thirdBubbleTypewriterKey,
+                            text:
+                                'This is your share sheet. This is where you choose the app you want to share to.',
+                            style: GoogleFonts.fredoka(
+                              fontSize: 14,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                            speed: const Duration(milliseconds: 30),
+                            onComplete: () {
+                              setState(() {
+                                _thirdBirdFirstMessageComplete = true;
+                              });
+                            },
+                          ))
+                    : (_thirdBirdSecondMessageComplete
+                        ? Text.rich(
+                            TextSpan(
+                              style: GoogleFonts.fredoka(
+                                fontSize: 14,
+                                color: Colors.black87,
+                                height: 1.4,
+                              ),
+                              children: [
+                                const TextSpan(
+                                    text: 'Now we need to find the '),
+                                WidgetSpan(
+                                  alignment: PlaceholderAlignment.middle,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 2),
+                                    child: Image.asset(
+                                      'assets/icon/icon-cropped.png',
+                                      width: 18,
+                                      height: 18,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const TextSpan(
-                                  text:
-                                      ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.'),
-                            ],
-                          ),
-                        )
-                      : _TypewriterTextWithIcon(
-                          key: _thirdBubbleWithIconTypewriterKey,
-                          textBefore: 'Now we need to find the ',
-                          iconPath: 'assets/icon/icon-cropped.png',
-                          textAfter:
-                              ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.',
-                          style: GoogleFonts.fredoka(
-                            fontSize: 14,
-                            color: Colors.black87,
-                            height: 1.4,
-                          ),
-                          speed: const Duration(milliseconds: 30),
-                          onComplete: () {
-                            setState(() {
-                              _thirdBirdSecondMessageComplete = true;
-                              _showRightArrow = true;
-                            });
-                          },
-                        )),
+                                const TextSpan(
+                                    text:
+                                        ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.'),
+                              ],
+                            ),
+                          )
+                        : _TypewriterTextWithIcon(
+                            key: _thirdBubbleWithIconTypewriterKey,
+                            textBefore: 'Now we need to find the ',
+                            iconPath: 'assets/icon/icon-cropped.png',
+                            textAfter:
+                                ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.',
+                            style: GoogleFonts.fredoka(
+                              fontSize: 14,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                            speed: const Duration(milliseconds: 30),
+                            onComplete: () {
+                              setState(() {
+                                _thirdBirdSecondMessageComplete = true;
+                                _showRightArrow = true;
+                              });
+                            },
+                          )),
+                showInstruction: _thirdBirdMessageIndex == 0
+                    ? _thirdBirdFirstMessageComplete
+                    : _thirdBirdSecondMessageComplete,
+                instruction: _thirdBirdMessageIndex == 0
+                    ? 'Tap to continue'
+                    : 'Swipe right and tap •••',
+                emphasizeInstruction: _thirdBirdMessageIndex == 1,
+              ),
             ),
           ),
         ),
@@ -1750,11 +1849,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     // Apps sheet bird and speech bubble
     if (_showAppsSheet && _showAppsSheetBird && !_isAppsSheetEditMode) {
       final postPlendyDialogues = [
-        'Excellent! That\'s how you successfully share to Plendy from other apps!',
-        'Remember, you can share to Plendy like this from all kinds of apps like Instagram, TikTok, Yelp, YouTube, Facebook, webpages, and more!',
+        'Excellent! That\'s how you share from other apps to Plendy!',
+        'Remember, you can share to Plendy from all your favorite apps like Instagram, TikTok, Yelp, YouTube, Facebook, webpages, and more!',
         'SHARE_ICONS_DIALOGUE', // Special marker for dialogue with icons
         'Before we move on, let\'s make it even easier to share to Plendy.',
-        'You can pin the Plendy app as a Favorite in your share sheet so that you don\'t have to try so hard to find the Plendy app to share to it moving forward.',
+        'You can pin the Plendy app as a Favorite in your share sheet.',
         'Tap \'Edit\' in the top-right corner to enter edit mode.',
       ];
 
@@ -1814,61 +1913,75 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ),
                     ],
                   ),
-                  child: _showPostPlendyDialogue
-                      ? (_postPlendyDialogueIndex == 2
-                          ? _buildShareIconsDialogue()
-                          : _postPlendyTypewriterComplete
-                              ? Text(
-                                  postPlendyDialogues[_postPlendyDialogueIndex],
-                                  style: GoogleFonts.fredoka(
-                                    fontSize: 15,
-                                    color: Colors.black87,
-                                    height: 1.4,
-                                  ),
-                                )
-                              : _TypewriterText(
-                                  key: _postPlendyTypewriterKey,
-                                  text: postPlendyDialogues[
-                                      _postPlendyDialogueIndex],
-                                  style: GoogleFonts.fredoka(
-                                    fontSize: 15,
-                                    color: Colors.black87,
-                                    height: 1.4,
-                                  ),
-                                  speed: const Duration(milliseconds: 30),
-                                  onComplete: () {
-                                    setState(() {
-                                      _postPlendyTypewriterComplete = true;
-                                    });
-                                  },
-                                ))
-                      : _appsSheetTypewriterComplete
-                          ? Text(
-                              'Now you can see all of your apps available to share to. Find the Plendy app in your list of apps and tap it. You might have to scroll down.',
-                              style: GoogleFonts.fredoka(
-                                fontSize: 15,
-                                color: Colors.black87,
-                                height: 1.4,
+                  child: _buildBubbleContentWithInstruction(
+                    message: _showPostPlendyDialogue
+                        ? (_postPlendyDialogueIndex == 2
+                            ? _buildShareIconsDialogue()
+                            : _postPlendyTypewriterComplete
+                                ? Text(
+                                    postPlendyDialogues[
+                                        _postPlendyDialogueIndex],
+                                    style: GoogleFonts.fredoka(
+                                      fontSize: 15,
+                                      color: Colors.black87,
+                                      height: 1.4,
+                                    ),
+                                  )
+                                : _TypewriterText(
+                                    key: _postPlendyTypewriterKey,
+                                    text: postPlendyDialogues[
+                                        _postPlendyDialogueIndex],
+                                    style: GoogleFonts.fredoka(
+                                      fontSize: 15,
+                                      color: Colors.black87,
+                                      height: 1.4,
+                                    ),
+                                    speed: const Duration(milliseconds: 30),
+                                    onComplete: () {
+                                      setState(() {
+                                        _postPlendyTypewriterComplete = true;
+                                      });
+                                    },
+                                  ))
+                        : _appsSheetTypewriterComplete
+                            ? Text(
+                                'Now you can view all apps available for sharing. Find Plendy in your list of apps and select it.',
+                                style: GoogleFonts.fredoka(
+                                  fontSize: 15,
+                                  color: Colors.black87,
+                                  height: 1.4,
+                                ),
+                              )
+                            : _TypewriterText(
+                                key: _appsSheetTypewriterKey,
+                                text:
+                                    'Now you can view all apps available for sharing. Find Plendy in your list of apps and select it.',
+                                style: GoogleFonts.fredoka(
+                                  fontSize: 15,
+                                  color: Colors.black87,
+                                  height: 1.4,
+                                ),
+                                speed: const Duration(milliseconds: 30),
+                                onComplete: () {
+                                  setState(() {
+                                    _appsSheetTypewriterComplete = true;
+                                    _showDownArrow = true;
+                                    _showPlendyHand = true;
+                                  });
+                                },
                               ),
-                            )
-                          : _TypewriterText(
-                              key: _appsSheetTypewriterKey,
-                              text:
-                                  'Now you can see all of your apps available to share to. Find the Plendy app in your list of apps and tap it. You might have to scroll down.',
-                              style: GoogleFonts.fredoka(
-                                fontSize: 15,
-                                color: Colors.black87,
-                                height: 1.4,
-                              ),
-                              speed: const Duration(milliseconds: 30),
-                              onComplete: () {
-                                setState(() {
-                                  _appsSheetTypewriterComplete = true;
-                                  _showDownArrow = true;
-                                  _showPlendyHand = true;
-                                });
-                              },
-                            ),
+                    showInstruction: _showPostPlendyDialogue
+                        ? _postPlendyTypewriterComplete
+                        : _appsSheetTypewriterComplete,
+                    instruction: _showPostPlendyDialogue
+                        ? (_postPlendyDialogueIndex == 5
+                            ? 'Tap Edit'
+                            : 'Tap to continue')
+                        : 'Scroll if needed, then tap Plendy',
+                    emphasizeInstruction: _showPostPlendyDialogue
+                        ? _postPlendyDialogueIndex == 5
+                        : true,
+                  ),
                 ),
                 // Bird animation - overlaps the speech bubble edge
                 Transform.translate(
@@ -1919,10 +2032,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (_isAppsSheetEditMode) {
       final editModeDialogues = [
         'Great! You are now in edit mode.',
-        'From here, scroll down and find the Plendy app and tap the + next to it. This will move it to your Favorites section of the share sheet.',
+        'From here, scroll down, find Plendy, and tap the + next to it. This will move it to your Favorites section of the share sheet.',
         'Excellent! You added Plendy to your Favorites list.',
-        'To really make sure that it\'s the first app you see when sharing, drag it to the top of the Favorites list.',
-        'Perfect! Now sharing to Plendy is a piece of cake!',
+        'To really make sure it\'s the first app you see when sharing, drag it to the top of the Favorites list.',
+        'Now sharing to Plendy is a piece of cake!',
         'Tap the Done button to save your changes.',
       ];
 
@@ -1977,36 +2090,49 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ),
                     ],
                   ),
-                  child: _editModeTypewriterComplete
-                      ? Text(
-                          editModeDialogues[_editModeDialogueIndex],
-                          style: GoogleFonts.fredoka(
-                            fontSize: 15,
-                            color: Colors.black87,
-                            height: 1.4,
+                  child: _buildBubbleContentWithInstruction(
+                    message: _editModeTypewriterComplete
+                        ? Text(
+                            editModeDialogues[_editModeDialogueIndex],
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          )
+                        : _TypewriterText(
+                            key: _editModeTypewriterKey,
+                            text: editModeDialogues[_editModeDialogueIndex],
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                            speed: const Duration(milliseconds: 30),
+                            onComplete: () {
+                              setState(() {
+                                _editModeTypewriterComplete = true;
+                                if (_editModeDialogueIndex == 1) {
+                                  _showEditModePlendyHand = true;
+                                  _showEditModeDownArrow = true;
+                                } else if (_editModeDialogueIndex == 3) {
+                                  _showEditModeDragHand = true;
+                                }
+                              });
+                            },
                           ),
-                        )
-                      : _TypewriterText(
-                          key: _editModeTypewriterKey,
-                          text: editModeDialogues[_editModeDialogueIndex],
-                          style: GoogleFonts.fredoka(
-                            fontSize: 15,
-                            color: Colors.black87,
-                            height: 1.4,
-                          ),
-                          speed: const Duration(milliseconds: 30),
-                          onComplete: () {
-                            setState(() {
-                              _editModeTypewriterComplete = true;
-                              if (_editModeDialogueIndex == 1) {
-                                _showEditModePlendyHand = true;
-                                _showEditModeDownArrow = true;
-                              } else if (_editModeDialogueIndex == 3) {
-                                _showEditModeDragHand = true;
-                              }
-                            });
-                          },
-                        ),
+                    showInstruction: _editModeTypewriterComplete,
+                    instruction: _editModeDialogueIndex == 1
+                        ? 'Tap the + next to Plendy'
+                        : _editModeDialogueIndex == 3
+                            ? 'Drag Plendy to the top'
+                            : _editModeDialogueIndex == 5
+                                ? 'Tap Done'
+                                : 'Tap to continue',
+                    emphasizeInstruction: _editModeDialogueIndex == 1 ||
+                        _editModeDialogueIndex == 3 ||
+                        _editModeDialogueIndex == 5,
+                  ),
                 ),
                 // Bird animation
                 Transform.translate(
@@ -2064,7 +2190,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       return _TypewriterText(
         key: _postPlendyTypewriterKey,
         text:
-            'Whenever you find something you want to save, find the share button and share it to Plendy!',
+            'Now whenever you find something you want to save, find the share button and share it to Plendy!',
         style: GoogleFonts.fredoka(
           fontSize: 15,
           color: Colors.black87,
@@ -2114,6 +2240,37 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _isSharePending) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted || !_isSharePending) return;
+        _isSharePending = false;
+        if (OnboardingScreen.onboardingShareDetected) {
+          OnboardingScreen.onboardingShareDetected = false;
+          HapticFeedback.mediumImpact();
+          setState(() {
+            _showRealShareSuccess = true;
+            _showRealShareSuccessAnimation = true;
+            _realShareSuccessDialogueIndex = 0;
+            _realShareSuccessTypewriterComplete = false;
+            _showRealSharingButtons = false;
+          });
+        } else {
+          OnboardingScreen.suppressShareHandling = false;
+        }
+      });
+    }
+  }
+
+  void _handleShareButtonTap() {
+    if (_isSharePending) return;
+    _isSharePending = true;
+    OnboardingScreen.suppressShareHandling = true;
+    OnboardingScreen.onboardingShareDetected = false;
+    Share.share('Share to Plendy!');
+  }
+
   /// Builds the "real sharing" step after the edit mode tutorial is complete
   Widget _buildRealSharingStep(ThemeData theme) {
     final realSharingDialogues = [
@@ -2137,7 +2294,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     GestureDetector(
-                      onTap: () => Share.share('Share to Plendy!'),
+                      onTap: _handleShareButtonTap,
                       child: _buildAnimatedLargeShareButton(
                         Icons.ios_share,
                         _shareButton1Animation,
@@ -2145,7 +2302,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     ),
                     const SizedBox(width: 24),
                     GestureDetector(
-                      onTap: () => Share.share('Share to Plendy!'),
+                      onTap: _handleShareButtonTap,
                       child: _buildAnimatedLargeShareButton(
                         Icons.share,
                         _shareButton2Animation,
@@ -2153,7 +2310,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     ),
                     const SizedBox(width: 24),
                     GestureDetector(
-                      onTap: () => Share.share('Share to Plendy!'),
+                      onTap: _handleShareButtonTap,
                       child: _buildAnimatedLargeShareButton(
                         Icons.reply,
                         _shareButton3Animation,
@@ -2167,6 +2324,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 GestureDetector(
                   onTap: () {
                     HapticFeedback.lightImpact();
+                    OnboardingScreen.suppressShareHandling = false;
+                    OnboardingScreen.onboardingShareDetected = false;
                     setState(() {
                       _showSaveTutorialTransition = true;
                       _saveTutorialTransitionIndex = 0;
@@ -2207,8 +2366,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
           ),
 
-        // Bird and speech bubble on bottom-right (hidden during save tutorial transition)
-        if (!_showSaveTutorialTransition)
+        // Bird and speech bubble on bottom-right (hidden during save tutorial transition or share success)
+        if (!_showSaveTutorialTransition && !_showRealShareSuccess)
           Positioned(
             right: -9,
             bottom: 40,
@@ -2231,44 +2390,52 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ),
                     ],
                   ),
-                  child: _realSharingTypewriterComplete
-                      ? Text(
-                          currentMessage,
-                          style: GoogleFonts.fredoka(
-                            fontSize: 15,
-                            color: Colors.black87,
-                            height: 1.4,
+                  child: _buildBubbleContentWithInstruction(
+                    message: _realSharingTypewriterComplete
+                        ? Text(
+                            currentMessage,
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          )
+                        : _TypewriterText(
+                            key: _realSharingTypewriterKey,
+                            text: currentMessage,
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                            speed: const Duration(milliseconds: 30),
+                            onComplete: () {
+                              setState(() {
+                                _realSharingTypewriterComplete = true;
+                                // When second dialogue completes, trigger share buttons
+                                if (_realSharingDialogueIndex == 1) {
+                                  _showRealSharingButtons = true;
+                                  _realSharingButtonsController.forward();
+                                }
+                                // When "Okie dokie" dialogue completes, auto-reset
+                                if (_realSharingDialogueIndex == 2) {
+                                  Future.delayed(
+                                      const Duration(milliseconds: 1200), () {
+                                    if (mounted &&
+                                        _realSharingDialogueIndex == 2) {
+                                      _resetInstagramTutorial();
+                                    }
+                                  });
+                                }
+                              });
+                            },
                           ),
-                        )
-                      : _TypewriterText(
-                          key: _realSharingTypewriterKey,
-                          text: currentMessage,
-                          style: GoogleFonts.fredoka(
-                            fontSize: 15,
-                            color: Colors.black87,
-                            height: 1.4,
-                          ),
-                          speed: const Duration(milliseconds: 30),
-                          onComplete: () {
-                            setState(() {
-                              _realSharingTypewriterComplete = true;
-                              // When second dialogue completes, trigger share buttons
-                              if (_realSharingDialogueIndex == 1) {
-                                _showRealSharingButtons = true;
-                                _realSharingButtonsController.forward();
-                              }
-                              // When "Okie dokie" dialogue completes, auto-reset
-                              if (_realSharingDialogueIndex == 2) {
-                                Future.delayed(const Duration(milliseconds: 1200),
-                                    () {
-                                  if (mounted && _realSharingDialogueIndex == 2) {
-                                    _resetInstagramTutorial();
-                                  }
-                                });
-                              }
-                            });
-                          },
-                        ),
+                    showInstruction: _realSharingTypewriterComplete,
+                    instruction: _realSharingDialogueIndex == 1
+                        ? 'Tap a share button or skip'
+                        : 'Tap to continue',
+                    emphasizeInstruction: _realSharingDialogueIndex == 1,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 // Bird Lottie (larger)
@@ -2288,8 +2455,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         // Tap detector for dialogue advancement
         // Hidden when second dialogue is complete (user should tap share buttons)
         if (!_showSaveTutorialTransition &&
-            !(_realSharingDialogueIndex == 1 &&
-                _realSharingTypewriterComplete))
+            !_showRealShareSuccess &&
+            !(_realSharingDialogueIndex == 1 && _realSharingTypewriterComplete))
           GestureDetector(
             onTap: () {
               HapticFeedback.lightImpact();
@@ -2311,6 +2478,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
         // Save tutorial transition dialogue overlay
         if (_showSaveTutorialTransition) ..._buildSaveTutorialTransition(),
+
+        // Real share success alternate path overlay
+        if (_showRealShareSuccess) ..._buildRealShareSuccessOverlay(),
       ],
     );
   }
@@ -2319,7 +2489,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   List<Widget> _buildSaveTutorialTransition() {
     const transitionDialogues = [
       'Okay, let\'s move on. So what happens when you share to Plendy?',
-      'This is where the magic happens! Come with me and I\'ll show you how it works.',
+      'This is where the magic happens! Stick around and I\'ll show you how it works.',
     ];
 
     final currentMessage = transitionDialogues[_saveTutorialTransitionIndex];
@@ -2355,30 +2525,37 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   ),
                 ],
               ),
-              child: _saveTutorialTransitionTypewriterComplete
-                  ? Text(
-                      currentMessage,
-                      style: GoogleFonts.fredoka(
-                        fontSize: 15,
-                        color: Colors.black87,
-                        height: 1.4,
+              child: _buildBubbleContentWithInstruction(
+                message: _saveTutorialTransitionTypewriterComplete
+                    ? Text(
+                        currentMessage,
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      )
+                    : _TypewriterText(
+                        key: _saveTutorialTransitionTypewriterKey,
+                        text: currentMessage,
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                        speed: const Duration(milliseconds: 30),
+                        onComplete: () {
+                          setState(() {
+                            _saveTutorialTransitionTypewriterComplete = true;
+                          });
+                        },
                       ),
-                    )
-                  : _TypewriterText(
-                      key: _saveTutorialTransitionTypewriterKey,
-                      text: currentMessage,
-                      style: GoogleFonts.fredoka(
-                        fontSize: 15,
-                        color: Colors.black87,
-                        height: 1.4,
-                      ),
-                      speed: const Duration(milliseconds: 30),
-                      onComplete: () {
-                        setState(() {
-                          _saveTutorialTransitionTypewriterComplete = true;
-                        });
-                      },
-                    ),
+                showInstruction: _saveTutorialTransitionTypewriterComplete,
+                instruction: _saveTutorialTransitionIndex < 1
+                    ? 'Tap to continue'
+                    : 'Tap to start the Save tutorial',
+                emphasizeInstruction: _saveTutorialTransitionIndex == 1,
+              ),
             ),
             const SizedBox(width: 8),
             // Bird Lottie
@@ -2413,6 +2590,141 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             setState(() {
               _showSaveTutorialTransition = false;
               _showSaveTutorialStep = true;
+              _showMainScreenTutorialStep = false;
+            });
+          }
+        },
+        behavior: HitTestBehavior.translucent,
+      ),
+    ];
+  }
+
+  List<Widget> _buildRealShareSuccessOverlay() {
+    const successDialogues = [
+      'Perfect! You just shared to Plendy from your phone\'s share sheet for real!',
+      'So what happens when you share to Plendy?',
+      'This is where the magic happens! Stick around and I\'ll show you how it works.',
+    ];
+
+    final currentMessage = successDialogues[_realShareSuccessDialogueIndex];
+
+    return [
+      Positioned.fill(
+        child: Container(
+          color: Colors.white.withOpacity(0.85),
+        ),
+      ),
+
+      if (_showRealShareSuccessAnimation && _successAnimationFileLoader != null)
+        Positioned.fill(
+          child: Center(
+            child: IgnorePointer(
+              child: SizedBox(
+                width: 200,
+                height: 200,
+                child: RiveWidgetBuilder(
+                  fileLoader: _successAnimationFileLoader!,
+                  builder: (context, state) => switch (state) {
+                    RiveLoading() => const SizedBox.shrink(),
+                    RiveFailed() => const SizedBox.shrink(),
+                    RiveLoaded() => RiveWidget(
+                        controller: state.controller,
+                        fit: Fit.contain,
+                      ),
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+
+      Positioned(
+        right: -9,
+        bottom: 40,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 220,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: _buildBubbleContentWithInstruction(
+                message: _realShareSuccessTypewriterComplete
+                    ? Text(
+                        currentMessage,
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      )
+                    : _TypewriterText(
+                        key: _realShareSuccessTypewriterKey,
+                        text: currentMessage,
+                        style: GoogleFonts.fredoka(
+                          fontSize: 15,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                        speed: const Duration(milliseconds: 30),
+                        onComplete: () {
+                          setState(() {
+                            _realShareSuccessTypewriterComplete = true;
+                          });
+                        },
+                      ),
+                showInstruction: _realShareSuccessTypewriterComplete,
+                instruction: _realShareSuccessDialogueIndex < 2
+                    ? 'Tap to continue'
+                    : 'Tap to start the Save tutorial',
+                emphasizeInstruction: _realShareSuccessDialogueIndex == 2,
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 100,
+              height: 100,
+              child: Lottie.asset(
+                'assets/mascot/bird_talking_head.json',
+                fit: BoxFit.contain,
+                options: LottieOptions(enableMergePaths: true),
+              ),
+            ),
+          ],
+        ),
+      ),
+
+      GestureDetector(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          if (!_realShareSuccessTypewriterComplete) {
+            _realShareSuccessTypewriterKey.currentState?.skipToEnd();
+          } else if (_realShareSuccessDialogueIndex < 2) {
+            setState(() {
+              _realShareSuccessDialogueIndex++;
+              _realShareSuccessTypewriterComplete = false;
+              if (_realShareSuccessDialogueIndex >= 1) {
+                _showRealShareSuccessAnimation = false;
+              }
+            });
+          } else {
+            OnboardingScreen.suppressShareHandling = false;
+            OnboardingScreen.onboardingShareDetected = false;
+            setState(() {
+              _showRealShareSuccess = false;
+              _showSaveTutorialStep = true;
+              _showMainScreenTutorialStep = false;
             });
           }
         },
@@ -3472,6 +3784,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   /// Resets all Instagram tutorial state back to the very beginning
   void _resetInstagramTutorial() {
+    OnboardingScreen.suppressShareHandling = false;
+    OnboardingScreen.onboardingShareDetected = false;
     setState(() {
       _speechBubbleMessageIndex = 0;
       _firstBirdTypewriterComplete = false;
@@ -3519,6 +3833,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _saveTutorialTransitionIndex = 0;
       _saveTutorialTransitionTypewriterComplete = false;
       _showSaveTutorialStep = false;
+      _showMainScreenTutorialStep = false;
+      // Reset real share success state
+      _showRealShareSuccess = false;
+      _realShareSuccessDialogueIndex = 0;
+      _realShareSuccessTypewriterComplete = false;
+      _showRealShareSuccessAnimation = false;
+      _isSharePending = false;
     });
     // Restart the Instagram video
     _startInstagramVideo();
@@ -4495,7 +4816,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       ],
     );
   }
-
 }
 
 class _TypewriterText extends StatefulWidget {
