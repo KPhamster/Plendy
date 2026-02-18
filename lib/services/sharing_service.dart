@@ -17,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ignore: unused_import
 import 'package:flutter/services.dart';
 import '../models/shared_media_compat.dart';
+import '../screens/onboarding_screen.dart';
 
 class SharingService {
   static final SharingService _instance = SharingService._internal();
@@ -392,6 +393,11 @@ class SharingService {
     print("SHARE SERVICE: Setting up intent stream listener");
 
     _intentSub = ShareHandlerPlatform.instance.sharedMediaStream.listen((SharedMedia media) {
+      if (OnboardingScreen.suppressShareHandling) {
+        print("SHARE SERVICE: Suppressed share during onboarding tutorial");
+        OnboardingScreen.onboardingShareDetected = true;
+        return;
+      }
       final value = _convertSharedMedia(media);
       print("SHARE SERVICE: Received shared files in stream: ${value.length}");
       if (value.isNotEmpty) {
@@ -448,6 +454,7 @@ class SharingService {
   }
 
   Future<void> _checkInitialIntent() async {
+    if (OnboardingScreen.suppressShareHandling) return;
     print("SHARE SERVICE: Checking for initial intent");
     try {
       final initial = await ShareHandlerPlatform.instance.getInitialSharedMedia();
@@ -511,6 +518,7 @@ class SharingService {
   // Show the receive share screen as a modal bottom sheet or full screen
   Future<void> showReceiveShareScreen(
       BuildContext context, List<SharedMediaFile> files) async {
+    if (OnboardingScreen.suppressShareHandling) return;
     print("SHARE SERVICE DEBUG: showReceiveShareScreen called with ${files.length} files");
     print("SHARE SERVICE DEBUG: isShareFlowActive=$isShareFlowActive, _isReceiveShareScreenOpen=$_isReceiveShareScreenOpen");
     

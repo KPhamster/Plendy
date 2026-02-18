@@ -1213,6 +1213,10 @@ class _MyAppState extends State<MyApp> {
       // Listen for incoming shares while the app is running
       _intentSub = ShareHandlerPlatform.instance.sharedMediaStream.listen(
           (SharedMedia media) {
+        if (OnboardingScreen.suppressShareHandling) {
+          OnboardingScreen.onboardingShareDetected = true;
+          return;
+        }
         final value = _convertSharedMedia(media);
         if (mounted) {
           setState(() {
@@ -1243,7 +1247,7 @@ class _MyAppState extends State<MyApp> {
       onResumed: () {
         // Recreate listeners when app comes to foreground
         print("MAIN: App resumed - recreating sharing service listeners");
-        if (!kIsWeb) {
+        if (!kIsWeb && !OnboardingScreen.suppressShareHandling) {
           _sharingService.recreateListeners();
         }
       },
