@@ -1,4 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -34,6 +36,8 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
   static const String _instagramVideoAsset =
       'assets/onboarding/restaurant_video.mp4';
   static const String _eggHatchVideoAsset =
@@ -78,6 +82,33 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _secondTypewriterComplete = false;
   bool _showSecondHandPointer = false;
   bool _showIOSShareSheet = false;
+  bool _showAndroidShareSheet = false;
+  bool _androidShareSheetExpanded = false;
+  late AnimationController _androidSheetExpansionController;
+  late Animation<double> _androidSheetExpansion;
+  final ScrollController _androidExpandedScrollController = ScrollController();
+  final GlobalKey _androidPlendyKey = GlobalKey();
+  final LayerLink _androidPlendyLayerLink = LayerLink();
+  final LayerLink _androidPinnedPlendyLayerLink = LayerLink();
+  bool _showAndroidExpandedDownArrow = false;
+  bool _showAndroidPlendyHand = false;
+  bool _showAndroidPinnedPlendyHand = false;
+  final LayerLink _androidPinOptionLayerLink = LayerLink();
+
+  // Android post-Plendy tap dialogue state
+  bool _showAndroidSuccessAnimation = false;
+  bool _showAndroidPostPlendyDialogue = false;
+  int _androidPostPlendyDialogueIndex = 0;
+  bool _androidPostPlendyTypewriterComplete = false;
+  final GlobalKey<_TypewriterTextState> _androidPostPlendyTypewriterKey =
+      GlobalKey<_TypewriterTextState>();
+  bool _showAndroidPinDialog = false;
+  bool _androidPlendyPinned = false;
+  bool _showAndroidPostPinDialogue = false;
+  int _androidPostPinDialogueIndex = 0;
+  bool _androidPostPinTypewriterComplete = false;
+  final GlobalKey<_TypewriterTextState> _androidPostPinTypewriterKey =
+      GlobalKey<_TypewriterTextState>();
   bool _isDismissingInstagramSheet = false;
   bool _showThirdBird = false;
   int _thirdBirdMessageIndex = 0;
@@ -316,6 +347,29 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       curve: Curves.easeOutCubic,
     );
 
+    // Initialize Android share sheet expansion controller
+    _androidSheetExpansionController = AnimationController(
+      duration: const Duration(milliseconds: 350),
+      vsync: this,
+    );
+    _androidSheetExpansion = CurvedAnimation(
+      parent: _androidSheetExpansionController,
+      curve: Curves.easeOutCubic,
+    );
+    _androidSheetExpansionController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        setState(() {
+          _showAndroidExpandedDownArrow = true;
+        });
+        // Check if Plendy is already visible without needing to scroll
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _onAndroidExpandedSheetScroll();
+        });
+      }
+    });
+    _androidExpandedScrollController
+        .addListener(_onAndroidExpandedSheetScroll);
+
     // Initialize real sharing buttons animation controller
     _realSharingButtonsController = AnimationController(
       duration: const Duration(milliseconds: 1200),
@@ -399,6 +453,30 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       if (_showDownArrow) {
         setState(() {
           _showDownArrow = false;
+        });
+      }
+    }
+  }
+
+  void _onAndroidExpandedSheetScroll() {
+    if (!_androidExpandedScrollController.hasClients) return;
+    // Don't re-enable the grid hand after pinning or during post-pin dialogue
+    if (_androidPlendyPinned || _showAndroidPostPlendyDialogue) return;
+
+    final plendyContext = _androidPlendyKey.currentContext;
+    if (plendyContext == null) return;
+
+    final box = plendyContext.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+
+    final position = box.localToGlobal(Offset.zero);
+    final screenHeight = MediaQuery.of(context).size.height;
+
+    if (position.dy < screenHeight - 60 && position.dy > 0) {
+      if (!_showAndroidPlendyHand) {
+        setState(() {
+          _showAndroidPlendyHand = true;
+          _showAndroidExpandedDownArrow = false;
         });
       }
     }
@@ -489,6 +567,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _basketCollectionImageSlideController.dispose();
     _postPlendyBirdSlideController.dispose();
     _editModeBirdSlideController.dispose();
+    _androidSheetExpansionController.dispose();
+    _androidExpandedScrollController.removeListener(_onAndroidExpandedSheetScroll);
+    _androidExpandedScrollController.dispose();
     _realSharingButtonsController.dispose();
     super.dispose();
   }
@@ -546,6 +627,21 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _secondTypewriterComplete = false;
       _showSecondHandPointer = false;
       _showIOSShareSheet = false;
+      _showAndroidShareSheet = false;
+      _androidShareSheetExpanded = false;
+      _androidSheetExpansionController.reset();
+      _showAndroidExpandedDownArrow = false;
+      _showAndroidPlendyHand = false;
+      _showAndroidPinnedPlendyHand = false;
+      _showAndroidSuccessAnimation = false;
+      _showAndroidPostPlendyDialogue = false;
+      _androidPostPlendyDialogueIndex = 0;
+      _androidPostPlendyTypewriterComplete = false;
+      _showAndroidPinDialog = false;
+      _androidPlendyPinned = false;
+      _showAndroidPostPinDialogue = false;
+      _androidPostPinDialogueIndex = 0;
+      _androidPostPinTypewriterComplete = false;
       _isDismissingInstagramSheet = false;
       _showThirdBird = false;
       _thirdBirdMessageIndex = 0;
@@ -1701,8 +1797,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       );
     }
 
-    // Third bird and speech bubble (on iOS share sheet)
-    if (_showIOSShareSheet && _showThirdBird) {
+    // Third bird and speech bubble (on iOS/Android share sheet)
+    if ((_showIOSShareSheet || _showAndroidShareSheet) && _showThirdBird) {
       // Speech bubble
       overlays.add(
         Positioned(
@@ -1791,9 +1887,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                     ),
                                   ),
                                 ),
-                                const TextSpan(
-                                    text:
-                                        ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.'),
+                                TextSpan(
+                                    text: _isAndroid
+                                        ? ' Plendy app. Scroll down to find it in your list of apps and select it'
+                                        : ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.'),
                               ],
                             ),
                           )
@@ -1801,8 +1898,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                             key: _thirdBubbleWithIconTypewriterKey,
                             textBefore: 'Now we need to find the ',
                             iconPath: 'assets/icon/icon-cropped.png',
-                            textAfter:
-                                ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.',
+                            textAfter: _isAndroid
+                                ? ' Plendy app. Scroll down to find it in your list of apps and select it'
+                                : ' Plendy app. If you don\'t see it already, scroll all the way to the right and tap the ••• button.',
                             style: GoogleFonts.fredoka(
                               fontSize: 14,
                               color: Colors.black87,
@@ -1812,7 +1910,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                             onComplete: () {
                               setState(() {
                                 _thirdBirdSecondMessageComplete = true;
-                                _showRightArrow = true;
+                                if (!_isAndroid) {
+                                  _showRightArrow = true;
+                                }
                               });
                             },
                           )),
@@ -1821,7 +1921,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     : _thirdBirdSecondMessageComplete,
                 instruction: _thirdBirdMessageIndex == 0
                     ? 'Tap to continue'
-                    : 'Swipe right and tap •••',
+                    : _isAndroid
+                        ? 'Scroll down and select Plendy.'
+                        : 'Swipe right and tap •••',
                 emphasizeInstruction: _thirdBirdMessageIndex == 1,
               ),
             ),
@@ -1977,7 +2079,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         ? (_postPlendyDialogueIndex == 5
                             ? 'Tap Edit'
                             : 'Tap to continue')
-                        : 'Scroll if needed, then tap Plendy',
+                        : 'Scroll if needed, then tap Plendy.',
                     emphasizeInstruction: _showPostPlendyDialogue
                         ? _postPlendyDialogueIndex == 5
                         : true,
@@ -2026,6 +2128,213 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           ),
         );
       }
+    }
+
+    // Android post-Plendy tap bird dialogue
+    if (_showAndroidPostPlendyDialogue) {
+      final androidPostPlendyDialogues = [
+        'Excellent! That\'s how you share from other apps to Plendy!',
+        'Remember, you can share to Plendy from all your favorite apps like Instagram, TikTok, Yelp, YouTube, Facebook, webpages, and more!',
+        'SHARE_ICONS_DIALOGUE',
+        'Before we move on, let\'s make it even easier to share to Plendy.',
+        'You can pin the Plendy app as a Favorite in your share sheet.',
+        'Tap and hold onto the Plendy app to show the \'Pin Plendy\' option.',
+        'Go ahead and \'Pin Plendy.\'',
+      ];
+
+      overlays.add(
+        Positioned(
+          right: 20,
+          top: 80,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              HapticFeedback.lightImpact();
+              if (!_androidPostPlendyTypewriterComplete) {
+                _androidPostPlendyTypewriterKey.currentState?.skipToEnd();
+              } else if (_androidPostPlendyDialogueIndex <
+                  androidPostPlendyDialogues.length - 1) {
+                setState(() {
+                  _androidPostPlendyDialogueIndex++;
+                  _androidPostPlendyTypewriterComplete = false;
+                });
+              }
+            },
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 200,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: _buildBubbleContentWithInstruction(
+                    message: _androidPostPlendyDialogueIndex == 2
+                        ? _buildAndroidShareIconsDialogue()
+                        : _androidPostPlendyTypewriterComplete
+                            ? Text(
+                                androidPostPlendyDialogues[
+                                    _androidPostPlendyDialogueIndex],
+                                style: GoogleFonts.fredoka(
+                                  fontSize: 15,
+                                  color: Colors.black87,
+                                  height: 1.4,
+                                ),
+                              )
+                            : _TypewriterText(
+                                key: _androidPostPlendyTypewriterKey,
+                                text: androidPostPlendyDialogues[
+                                    _androidPostPlendyDialogueIndex],
+                                style: GoogleFonts.fredoka(
+                                  fontSize: 15,
+                                  color: Colors.black87,
+                                  height: 1.4,
+                                ),
+                                speed: const Duration(milliseconds: 30),
+                                onComplete: () {
+                                  setState(() {
+                                    _androidPostPlendyTypewriterComplete = true;
+                                    if (_androidPostPlendyDialogueIndex == 5) {
+                                      _showAndroidPlendyHand = true;
+                                    }
+                                  });
+                                },
+                              ),
+                    showInstruction: _androidPostPlendyTypewriterComplete,
+                    instruction: _androidPostPlendyDialogueIndex == 5
+                        ? 'Tap & hold Plendy'
+                        : _androidPostPlendyDialogueIndex == 6
+                            ? 'Tap Pin Plendy'
+                            : 'Tap to continue',
+                    emphasizeInstruction:
+                        _androidPostPlendyDialogueIndex >= 5,
+                  ),
+                ),
+                Transform.translate(
+                  offset: const Offset(-12, 0),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Lottie.asset(
+                      'assets/mascot/bird_talking_head.json',
+                      fit: BoxFit.contain,
+                      options: LottieOptions(enableMergePaths: true),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Android post-pin bird dialogue
+    if (_showAndroidPostPinDialogue) {
+      final androidPostPinDialogues = [
+        'Excellent! You pinned Plendy to the top of the list.',
+        'Now sharing is a piece of cake!',
+      ];
+
+      overlays.add(
+        Positioned(
+          right: 20,
+          bottom: 100,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              HapticFeedback.lightImpact();
+              if (!_androidPostPinTypewriterComplete) {
+                _androidPostPinTypewriterKey.currentState?.skipToEnd();
+              } else if (_androidPostPinDialogueIndex <
+                  androidPostPinDialogues.length - 1) {
+                setState(() {
+                  _androidPostPinDialogueIndex++;
+                  _androidPostPinTypewriterComplete = false;
+                });
+              } else {
+                _transitionToRealSharingFromAndroid();
+              }
+            },
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 200,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: _buildBubbleContentWithInstruction(
+                    message: _androidPostPinTypewriterComplete
+                        ? Text(
+                            androidPostPinDialogues[
+                                _androidPostPinDialogueIndex],
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          )
+                        : _TypewriterText(
+                            key: _androidPostPinTypewriterKey,
+                            text: androidPostPinDialogues[
+                                _androidPostPinDialogueIndex],
+                            style: GoogleFonts.fredoka(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                            speed: const Duration(milliseconds: 30),
+                            onComplete: () {
+                              setState(() {
+                                _androidPostPinTypewriterComplete = true;
+                              });
+                            },
+                          ),
+                    showInstruction: _androidPostPinTypewriterComplete,
+                    instruction: _androidPostPinDialogueIndex <
+                            androidPostPinDialogues.length - 1
+                        ? 'Tap to continue'
+                        : 'Tap to continue',
+                  ),
+                ),
+                Transform.translate(
+                  offset: const Offset(-12, 0),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Lottie.asset(
+                      'assets/mascot/bird_talking_head.json',
+                      fit: BoxFit.contain,
+                      options: LottieOptions(enableMergePaths: true),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     }
 
     // Edit mode bird dialogue
@@ -2185,6 +2494,60 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   /// Builds the special dialogue with share button icons
+  Widget _buildAndroidShareIconsDialogue() {
+    if (!_androidPostPlendyTypewriterComplete) {
+      return _TypewriterText(
+        key: _androidPostPlendyTypewriterKey,
+        text:
+            'Now whenever you find something you want to save, find the share button and share it to Plendy!',
+        style: GoogleFonts.fredoka(
+          fontSize: 15,
+          color: Colors.black87,
+          height: 1.4,
+        ),
+        speed: const Duration(milliseconds: 30),
+        onComplete: () {
+          setState(() {
+            _androidPostPlendyTypewriterComplete = true;
+          });
+        },
+      );
+    }
+
+    return RichText(
+      text: TextSpan(
+        style: GoogleFonts.fredoka(
+          fontSize: 15,
+          color: Colors.black87,
+          height: 1.4,
+        ),
+        children: [
+          const TextSpan(
+              text:
+                  'Whenever you find something you want to save, find the share button ('),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Icon(Icons.ios_share, size: 18, color: Colors.black87),
+          ),
+          const TextSpan(text: ' '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Icon(Icons.share, size: 18, color: Colors.black87),
+          ),
+          const TextSpan(text: ' '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Transform.flip(
+              flipX: true,
+              child: Icon(Icons.reply, size: 18, color: Colors.black87),
+            ),
+          ),
+          const TextSpan(text: ') and share it to Plendy!'),
+        ],
+      ),
+    );
+  }
+
   Widget _buildShareIconsDialogue() {
     if (!_postPlendyTypewriterComplete) {
       return _TypewriterText(
@@ -2930,7 +3293,104 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           // iOS share sheet overlay
           if (_showIOSShareSheet) _buildIOSShareSheet(),
 
-          // Apps sheet overlay (3rd share sheet)
+          // Android share sheet overlay
+          if (_showAndroidShareSheet) _buildAndroidShareSheet(),
+
+          // Android Plendy hand pointer — rendered at screen level so it
+          // is above the GridView's paint order
+          if (_showAndroidPlendyHand && _rightArrowFileLoader != null)
+            _buildAndroidPlendyScreenOverlay(),
+
+          // Android pinned Plendy hand pointer — points at the pinned app in the 2nd row
+          if (_showAndroidPinnedPlendyHand && _rightArrowFileLoader != null)
+            Positioned(
+              left: 0,
+              top: 0,
+              child: CompositedTransformFollower(
+                link: _androidPinnedPlendyLayerLink,
+                offset: const Offset(44, -4),
+                child: Transform.flip(
+                  flipX: true,
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: RiveWidgetBuilder(
+                      fileLoader: _rightArrowFileLoader!,
+                      builder: (context, state) => switch (state) {
+                        RiveLoading() => const SizedBox.shrink(),
+                        RiveFailed() => const SizedBox.shrink(),
+                        RiveLoaded() => RiveWidget(
+                            controller: state.controller,
+                            fit: Fit.contain,
+                          ),
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Android success animation — follows the Plendy icon via LayerLink
+          if (_showAndroidSuccessAnimation && _successAnimationFileLoader != null)
+            Positioned(
+              left: 0,
+              top: 0,
+              child: CompositedTransformFollower(
+                link: _androidPlendyLayerLink,
+                // Centre horizontally on icon, place above it
+                offset: const Offset(-(200 / 2 - 44 / 2), -180),
+                child: IgnorePointer(
+                  child: SizedBox(
+                    width: 200,
+                    height: 200,
+                    child: RiveWidgetBuilder(
+                      fileLoader: _successAnimationFileLoader!,
+                      builder: (context, state) => switch (state) {
+                        RiveLoading() => const SizedBox.shrink(),
+                        RiveFailed() => const SizedBox.shrink(),
+                        RiveLoaded() => RiveWidget(
+                            controller: state.controller,
+                            fit: Fit.contain,
+                          ),
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Android "Pin Plendy" context menu dialog
+          if (_showAndroidPinDialog) _buildAndroidPinDialog(),
+
+          // Hand pointing at "Pin Plendy" option
+          if (_showAndroidPinDialog && _rightArrowFileLoader != null)
+            Positioned(
+              left: 0,
+              top: 0,
+              child: CompositedTransformFollower(
+                link: _androidPinOptionLayerLink,
+                offset: const Offset(-52, -4),
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: RiveWidgetBuilder(
+                    fileLoader: _rightArrowFileLoader!,
+                    builder: (context, state) => switch (state) {
+                      RiveLoading() => const SizedBox.shrink(),
+                      RiveFailed() => const SizedBox.shrink(),
+                      RiveLoaded() => RiveWidget(
+                          controller: state.controller,
+                          fit: Fit.contain,
+                        ),
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+
+
+          // Apps sheet overlay (3rd share sheet - iOS)
           if (_showAppsSheet) _buildAppsSheet(),
 
           // Tap detector to skip apps sheet bird dialogue typewriter
@@ -3012,7 +3472,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
           // Tap detector for advancing third bird messages
           // Disabled when hand is showing so More button can be tapped
-          if (_showIOSShareSheet && _showThirdBird && !_showMoreButtonHand)
+          // Disabled when Android sheet is expanded so Plendy grid item can be tapped
+          if ((_showIOSShareSheet || _showAndroidShareSheet) &&
+              _showThirdBird &&
+              !_showMoreButtonHand &&
+              !_androidShareSheetExpanded)
             GestureDetector(
               onTap: () {
                 HapticFeedback.lightImpact();
@@ -3058,6 +3522,44 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   }
                 }
                 // Do nothing when last dialogue is dismissed (index 5)
+              },
+              behavior: HitTestBehavior.translucent,
+            ),
+
+          // Tap detector for Android post-Plendy dialogues
+          // Disabled at index 5+ so user can interact with the sheet / pin dialog
+          if (_showAndroidPostPlendyDialogue &&
+              _androidPostPlendyDialogueIndex < 5)
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                if (!_androidPostPlendyTypewriterComplete) {
+                  _androidPostPlendyTypewriterKey.currentState?.skipToEnd();
+                } else if (_androidPostPlendyDialogueIndex < 5) {
+                  setState(() {
+                    _androidPostPlendyDialogueIndex++;
+                    _androidPostPlendyTypewriterComplete = false;
+                  });
+                }
+              },
+              behavior: HitTestBehavior.translucent,
+            ),
+
+          // Tap detector for Android post-pin dialogues
+          if (_showAndroidPostPinDialogue)
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                if (!_androidPostPinTypewriterComplete) {
+                  _androidPostPinTypewriterKey.currentState?.skipToEnd();
+                } else if (_androidPostPinDialogueIndex < 1) {
+                  setState(() {
+                    _androidPostPinDialogueIndex++;
+                    _androidPostPinTypewriterComplete = false;
+                  });
+                } else {
+                  _transitionToRealSharingFromAndroid();
+                }
               },
               behavior: HitTestBehavior.translucent,
             ),
@@ -3230,7 +3732,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                                   _showShareSheet = false;
                                                   _isDismissingInstagramSheet =
                                                       false;
-                                                  _showIOSShareSheet = true;
+                                                  if (_isAndroid) {
+                                                    _showAndroidShareSheet =
+                                                        true;
+                                                  } else {
+                                                    _showIOSShareSheet = true;
+                                                  }
                                                 });
                                                 // Show third bird after 1 second
                                                 Future.delayed(
@@ -3248,7 +3755,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                           }
                                         : null,
                                     child: _buildShareAction(
-                                        Icons.ios_share, 'Share to...'),
+                                        _isAndroid
+                                            ? Icons.share
+                                            : Icons.ios_share,
+                                        'Share to...'),
                                   ),
                                   // Hand pointer - positioned to the left of the button, scrolls with it
                                   if (_showSecondHandPointer &&
@@ -3525,6 +4035,776 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  void _expandAndroidShareSheet() {
+    if (_androidShareSheetExpanded) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _androidShareSheetExpanded = true;
+    });
+    _androidSheetExpansionController.forward();
+  }
+
+  static const double _androidSheetCompactHeight = 380.0;
+
+  Widget _buildAndroidShareSheet() {
+    final bool canExpand =
+        _thirdBirdSecondMessageComplete && _isAndroid && !_androidShareSheetExpanded;
+
+    return Positioned.fill(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(
+          begin: 1.0,
+          end: _showAndroidShareSheet ? 0.0 : 1.0,
+        ),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        builder: (context, slideValue, child) {
+          return Transform.translate(
+            offset:
+                Offset(0, MediaQuery.of(context).size.height * slideValue),
+            child: child,
+          );
+        },
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final maxHeight = constraints.maxHeight;
+            return GestureDetector(
+              onVerticalDragUpdate: canExpand
+                  ? (details) {
+                      if (details.delta.dy < -5) {
+                        _expandAndroidShareSheet();
+                      }
+                    }
+                  : null,
+              child: AnimatedBuilder(
+                animation: _androidSheetExpansion,
+                builder: (context, child) {
+              final t = _androidSheetExpansion.value;
+              final currentHeight = _androidSheetCompactHeight +
+                  (maxHeight - _androidSheetCompactHeight) * t;
+              final borderRadius = 20.0 * (1 - t);
+              final isFullyExpanded = t == 1.0;
+
+              return Align(
+                alignment: Alignment.bottomCenter,
+                child: SizedBox(
+                height: currentHeight,
+                child: Container(
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF282828),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(borderRadius),
+                      topRight: Radius.circular(borderRadius),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Drag handle
+                      Center(
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.only(top: 12, bottom: 16),
+                            child: Container(
+                              width: 32,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[600],
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // "Sharing link" header
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              left: 16, right: 16, bottom: 12),
+                          child: Text(
+                            'Sharing link',
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ),
+
+                        // Scrollable content
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              SingleChildScrollView(
+                                controller: isFullyExpanded
+                                    ? _androidExpandedScrollController
+                                    : null,
+                                physics: isFullyExpanded
+                                    ? null
+                                    : const NeverScrollableScrollPhysics(),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    _buildAndroidShareSheetScrollableBody(),
+
+                                    // Divider + grid
+                                    if (_androidShareSheetExpanded) ...[
+                                      const SizedBox(height: 8),
+                                      Container(
+                                        height: 1,
+                                        color: Colors.grey[700],
+                                        margin: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      GridView.builder(
+                                        shrinkWrap: true,
+                                        clipBehavior: Clip.none,
+                                        physics:
+                                            const NeverScrollableScrollPhysics(),
+                                        padding:
+                                            const EdgeInsets.fromLTRB(
+                                                12, 0, 12, 40),
+                                        gridDelegate:
+                                            const SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 5,
+                                          mainAxisSpacing: 8,
+                                          crossAxisSpacing: 4,
+                                          childAspectRatio: 0.75,
+                                        ),
+                                        itemCount:
+                                            _androidAlphabeticalApps
+                                                .length,
+                                        itemBuilder: (context, index) {
+                                          final app =
+                                              _androidAlphabeticalApps[
+                                                  index];
+                                          final name = app.$1;
+                                          final icon = app.$2;
+                                          final color = app.$3;
+
+                                          if (name == 'Plendy') {
+                                            return _buildAndroidGridAppPlendy();
+                                          }
+
+                                          final bool isDarkIcon =
+                                              name == 'Snapchat';
+                                          return _buildAndroidGridApp(
+                                              name,
+                                              icon!,
+                                              color!,
+                                              isDarkIcon);
+                                        },
+                                      ),
+                                    ],
+
+                                    if (!_androidShareSheetExpanded)
+                                      const SizedBox(height: 24),
+                                  ],
+                                ),
+                              ),
+
+                              // Down arrow overlays
+                              if (canExpand)
+                                Positioned(
+                                  bottom: 4,
+                                  left: 0,
+                                  right: 0,
+                                  child: Center(
+                                      child: _AnimatedDownArrow()),
+                                ),
+                              if (_showAndroidExpandedDownArrow)
+                                Positioned(
+                                  bottom: 12,
+                                  left: 0,
+                                  right: 0,
+                                  child: Center(
+                                      child: _AnimatedDownArrow()),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAndroidShareSheetScrollableBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // URL bar
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3C3C3C),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'https://www.instagram.com/reel/DSWQ14yE\n-mP/?igsh=MTc4MmM1YmI2Ng==',
+                    style: GoogleFonts.inter(
+                      color: Colors.grey[400],
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4A4A4A),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.copy_rounded,
+                      color: Colors.grey[300], size: 18),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // Top apps row
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                  child: _buildAndroidShareContact(
+                      'Instagram', const Color(0xFFE4405F),
+                      icon: Icons.camera_alt_rounded)),
+              Expanded(
+                  child: _buildAndroidShareContact(
+                      'YouTube', const Color(0xFFFF0000),
+                      icon: Icons.play_circle_fill_rounded)),
+              Expanded(
+                  child: _buildAndroidShareContact(
+                      'Snapchat', const Color(0xFFFFFC00),
+                      icon: Icons.photo_camera_rounded,
+                      darkIcon: true)),
+              Expanded(
+                  child: _buildAndroidShareContact(
+                      'WhatsApp', const Color(0xFF25D366),
+                      icon: Icons.phone_rounded)),
+              Expanded(
+                  child: _buildAndroidShareContact(
+                      'TikTok', const Color(0xFF000000),
+                      icon: Icons.music_note_rounded)),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 12),
+
+        // Bottom apps row
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                  child: _buildAndroidShareApp('Quick Share',
+                      Icons.share_rounded, const Color(0xFF4285F4))),
+              if (_androidPlendyPinned)
+                Expanded(child: _buildAndroidPinnedPlendyApp()),
+              Expanded(
+                  child: _buildAndroidShareApp(
+                      _androidPlendyPinned ? 'Messages' : 'Gmail',
+                      _androidPlendyPinned
+                          ? Icons.chat_bubble_rounded
+                          : Icons.email_rounded,
+                      _androidPlendyPinned
+                          ? const Color(0xFF1A73E8)
+                          : const Color(0xFFEA4335))),
+              Expanded(
+                  child: _buildAndroidShareApp(
+                      _androidPlendyPinned ? 'Drive' : 'Messages',
+                      _androidPlendyPinned
+                          ? Icons.add_to_drive_rounded
+                          : Icons.chat_bubble_rounded,
+                      _androidPlendyPinned
+                          ? const Color(0xFF0F9D58)
+                          : const Color(0xFF1A73E8))),
+              Expanded(
+                  child: _buildAndroidShareApp(
+                      _androidPlendyPinned ? 'Voicenotes' : 'Drive',
+                      _androidPlendyPinned
+                          ? Icons.graphic_eq_rounded
+                          : Icons.add_to_drive_rounded,
+                      _androidPlendyPinned
+                          ? const Color(0xFF1B5E20)
+                          : const Color(0xFF0F9D58))),
+              if (!_androidPlendyPinned)
+                Expanded(
+                    child: _buildAndroidShareApp('Voicenotes',
+                        Icons.graphic_eq_rounded, const Color(0xFF1B5E20))),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static const _androidAlphabeticalApps = <(String, IconData?, Color?)>[
+    ('Adobe Acrobat', Icons.picture_as_pdf_rounded, Color(0xFFFF0000)),
+    ('Airbnb', Icons.house_rounded, Color(0xFFFF5A5F)),
+    ('Amazon', Icons.shopping_bag_rounded, Color(0xFF232F3E)),
+    ('Android Auto', Icons.directions_car_rounded, Color(0xFF4285F4)),
+    ('Bluetooth', Icons.bluetooth_rounded, Color(0xFF1976D2)),
+    ('Box', Icons.inbox_rounded, Color(0xFF0061D5)),
+    ('Brave', Icons.shield_rounded, Color(0xFFFF5722)),
+    ('Business Suite', Icons.business_center_rounded, Color(0xFF1877F2)),
+    ('ChatGPT', Icons.psychology_rounded, Color(0xFF10A37F)),
+    ('Chrome', Icons.public_rounded, Color(0xFF4285F4)),
+    ('Claude', Icons.auto_awesome_rounded, Color(0xFFD97706)),
+    ('Comet', Icons.all_inclusive_rounded, Color(0xFF6366F1)),
+    ('Copilot', Icons.assistant_rounded, Color(0xFF7C3AED)),
+    ('Discord', Icons.headset_rounded, Color(0xFF5865F2)),
+    ('Drive', Icons.add_to_drive_rounded, Color(0xFF0F9D58)),
+    ('Dropbox', Icons.cloud_rounded, Color(0xFF0061FF)),
+    ('ElevenReader', Icons.record_voice_over_rounded, Color(0xFF000000)),
+    ('Evernote', Icons.note_rounded, Color(0xFF2DBE60)),
+    ('Facebook', Icons.facebook_rounded, Color(0xFF1877F2)),
+    ('Files', Icons.folder_rounded, Color(0xFF5F6368)),
+    ('Gmail', Icons.email_rounded, Color(0xFFEA4335)),
+    ('Google Keep', Icons.lightbulb_rounded, Color(0xFFFBBC04)),
+    ('Google Maps', Icons.map_rounded, Color(0xFF34A853)),
+    ('Instagram', Icons.camera_alt_rounded, Color(0xFFE4405F)),
+    ('LinkedIn', Icons.work_rounded, Color(0xFF0A66C2)),
+    ('Messages', Icons.chat_bubble_rounded, Color(0xFF1A73E8)),
+    ('Messenger', Icons.message_rounded, Color(0xFF006AFF)),
+    ('Netflix', Icons.movie_rounded, Color(0xFFE50914)),
+    ('Notes', Icons.sticky_note_2_rounded, Color(0xFFFFEB3B)),
+    ('Outlook', Icons.mail_rounded, Color(0xFF0078D4)),
+    ('Pinterest', Icons.push_pin_rounded, Color(0xFFE60023)),
+    ('Plendy', null, null),
+    ('Pocket', Icons.bookmark_rounded, Color(0xFFEF4154)),
+    ('Reddit', Icons.forum_rounded, Color(0xFFFF4500)),
+    ('Signal', Icons.security_rounded, Color(0xFF3A76F0)),
+    ('Slack', Icons.tag_rounded, Color(0xFF4A154B)),
+    ('Snapchat', Icons.photo_camera_rounded, Color(0xFFFFFC00)),
+    ('Spotify', Icons.library_music_rounded, Color(0xFF1DB954)),
+    ('Telegram', Icons.send_rounded, Color(0xFF0088CC)),
+    ('TikTok', Icons.music_note_rounded, Color(0xFF000000)),
+    ('X', Icons.alternate_email_rounded, Color(0xFF000000)),
+    ('YouTube', Icons.play_circle_fill_rounded, Color(0xFFFF0000)),
+  ];
+
+  Widget _buildAndroidGridApp(
+      String name, IconData icon, Color color, bool darkIcon) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon,
+              color: darkIcon ? Colors.black87 : Colors.white, size: 22),
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 26,
+          child: Text(
+            name,
+            style: GoogleFonts.inter(
+              color: Colors.grey[400],
+              fontSize: 10,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAndroidGridAppPlendy() {
+    // Allow tap as soon as the sheet is expanded and before the post-dialogue starts
+    final canTap = _androidShareSheetExpanded &&
+        !_showAndroidPostPlendyDialogue &&
+        !_showAndroidSuccessAnimation;
+    // Allow long press on the last dialogue step
+    final canLongPress = _showAndroidPostPlendyDialogue &&
+        _androidPostPlendyDialogueIndex == 5 &&
+        _androidPostPlendyTypewriterComplete &&
+        !_showAndroidPinDialog;
+    return GestureDetector(
+      onTap: canTap
+          ? () {
+              HapticFeedback.lightImpact();
+              setState(() {
+                _showAndroidSuccessAnimation = true;
+                _showAndroidPlendyHand = false;
+                _showAndroidExpandedDownArrow = false;
+                _showThirdBird = false;
+              });
+              Future.delayed(const Duration(milliseconds: 2000), () {
+                if (mounted) {
+                  setState(() {
+                    _showAndroidSuccessAnimation = false;
+                    _showAndroidPostPlendyDialogue = true;
+                  });
+                }
+              });
+            }
+          : null,
+      onLongPress: canLongPress
+          ? () {
+              HapticFeedback.mediumImpact();
+              setState(() {
+                _showAndroidPinDialog = true;
+                _showAndroidPlendyHand = false;
+                _androidPostPlendyDialogueIndex = 6;
+                _androidPostPlendyTypewriterComplete = false;
+              });
+            }
+          : null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CompositedTransformTarget(
+            link: _androidPlendyLayerLink,
+            child: Container(
+              key: _androidPlendyKey,
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.backgroundColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/icon/icon.png',
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 26,
+            child: Text(
+              'Plendy',
+              style: GoogleFonts.inter(
+                color: Colors.grey[400],
+                fontSize: 10,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAndroidPlendyScreenOverlay() {
+    return Positioned(
+      left: 0,
+      top: 0,
+      child: CompositedTransformFollower(
+        link: _androidPlendyLayerLink,
+        offset: const Offset(44, -4),
+        child: Transform.flip(
+          flipX: true,
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: RiveWidgetBuilder(
+              fileLoader: _rightArrowFileLoader!,
+              builder: (context, state) => switch (state) {
+                RiveLoading() => const SizedBox.shrink(),
+                RiveFailed() => const SizedBox.shrink(),
+                RiveLoaded() => RiveWidget(
+                    controller: state.controller,
+                    fit: Fit.contain,
+                  ),
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAndroidPinDialog() {
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {},
+        child: Stack(
+          children: [
+            // Dim the background
+            Container(color: Colors.black.withOpacity(0.4)),
+            // Position the dialog near the Plendy icon
+            Positioned(
+              left: 0,
+              top: 0,
+              child: CompositedTransformFollower(
+                link: _androidPlendyLayerLink,
+                targetAnchor: Alignment.topLeft,
+                followerAnchor: Alignment.topLeft,
+                offset: const Offset(-16, -8),
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    width: 240,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3C3C3C),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // App name row
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                          child: Row(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.asset(
+                                  'assets/icon/icon.png',
+                                  width: 28,
+                                  height: 28,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                'Plendy',
+                                style: GoogleFonts.inter(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Divider
+                        Container(
+                          height: 0.5,
+                          color: Colors.grey[600],
+                        ),
+                        // Pin Plendy option
+                        CompositedTransformTarget(
+                          link: _androidPinOptionLayerLink,
+                          child: InkWell(
+                          onTap: () {
+                            HapticFeedback.mediumImpact();
+                            setState(() {
+                              _showAndroidPinDialog = false;
+                              _androidPlendyPinned = true;
+                              _showAndroidPlendyHand = false;
+                              _showAndroidPinnedPlendyHand = true;
+                              _showAndroidPostPlendyDialogue = false;
+                              _showAndroidPostPinDialogue = true;
+                            });
+                            // Scroll to top so user sees the pinned app
+                            if (_androidExpandedScrollController.hasClients) {
+                              _androidExpandedScrollController.animateTo(
+                                0,
+                                duration: const Duration(milliseconds: 400),
+                                curve: Curves.easeOutCubic,
+                              );
+                            }
+                          },
+                          borderRadius: const BorderRadius.only(
+                            bottomLeft: Radius.circular(16),
+                            bottomRight: Radius.circular(16),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.push_pin_outlined,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  'Pin Plendy',
+                                  style: GoogleFonts.inter(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAndroidShareContact(String name, Color color,
+      {IconData? icon, bool darkIcon = false}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color,
+          ),
+          child: icon != null
+              ? Icon(icon,
+                  color: darkIcon ? Colors.black87 : Colors.white, size: 24)
+              : Center(
+                  child: Text(
+                    name.isNotEmpty ? name[0].toUpperCase() : '',
+                    style: GoogleFonts.inter(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 28,
+          child: Text(
+            name,
+            style: GoogleFonts.inter(
+              color: Colors.grey[400],
+              fontSize: 11,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAndroidPinnedPlendyApp() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CompositedTransformTarget(
+          link: _androidPinnedPlendyLayerLink,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.backgroundColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.asset(
+                'assets/icon/icon.png',
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 28,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.push_pin, color: Colors.grey[400], size: 10),
+              const SizedBox(width: 2),
+              Flexible(
+                child: Text(
+                  'Plendy',
+                  style: GoogleFonts.inter(
+                    color: Colors.grey[400],
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAndroidShareApp(String name, IconData icon, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: Colors.white, size: 22),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 28,
+          child: Text(
+            name,
+            style: GoogleFonts.inter(
+              color: Colors.grey[400],
+              fontSize: 11,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAppsSheet() {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 1.0, end: 0.0),
@@ -3769,6 +5049,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     });
   }
 
+  void _transitionToRealSharingFromAndroid() {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _showAndroidShareSheet = false;
+      _showAndroidPostPinDialogue = false;
+      _showAndroidPinnedPlendyHand = false;
+      _showRealSharingStep = true;
+      _realSharingDialogueIndex = 0;
+      _realSharingTypewriterComplete = false;
+      _showRealSharingButtons = false;
+      _realSharingButtonsController.reset();
+    });
+  }
+
   void _exitAppsSheetEditMode() {
     HapticFeedback.lightImpact();
     setState(() {
@@ -3796,6 +5090,21 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _secondTypewriterComplete = false;
       _showSecondHandPointer = false;
       _showIOSShareSheet = false;
+      _showAndroidShareSheet = false;
+      _androidShareSheetExpanded = false;
+      _androidSheetExpansionController.reset();
+      _showAndroidExpandedDownArrow = false;
+      _showAndroidPlendyHand = false;
+      _showAndroidPinnedPlendyHand = false;
+      _showAndroidSuccessAnimation = false;
+      _showAndroidPostPlendyDialogue = false;
+      _androidPostPlendyDialogueIndex = 0;
+      _androidPostPlendyTypewriterComplete = false;
+      _showAndroidPinDialog = false;
+      _androidPlendyPinned = false;
+      _showAndroidPostPinDialogue = false;
+      _androidPostPinDialogueIndex = 0;
+      _androidPostPinTypewriterComplete = false;
       _isDismissingInstagramSheet = false;
       _showThirdBird = false;
       _thirdBirdMessageIndex = 0;
