@@ -25,7 +25,7 @@ class GeminiService {
   static const String _baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
   
   // Default model - using flash for speed and cost efficiency
-  static const String _defaultModel = 'gemini-2.0-flash';
+  static const String _defaultModel = 'gemini-3-flash-preview';
 
   /// Get the API key
   static String get _apiKey => ApiSecrets.geminiApiKey;
