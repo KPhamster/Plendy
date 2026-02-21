@@ -18,7 +18,7 @@ import '../widgets/save_tutorial_widget.dart';
 // DEV MODE: Set to true to enable onboarding testing for kevinphamster1
 // This user will always see onboarding and profile saves will be skipped
 // TODO: Remove this when done testing onboarding
-const bool devModeOnboardingTest = true;
+const bool devModeOnboardingTest = false;
 const String devModeTestUsername = 'aaa';
 const bool devModeStartAtMainScreenTutorial = false;
 
@@ -936,9 +936,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       disabledForegroundColor: Colors.white70,
     );
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      body: Stack(
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: AppColors.backgroundColor,
+        body: Stack(
         children: [
           SafeArea(
             child: Column(
@@ -1053,6 +1055,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               },
             ),
         ],
+      ),
       ),
     );
   }

@@ -409,7 +409,7 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
           ),
           label: Text(
             'Map',
-            style: GoogleFonts.notoSerif(
+            style: const TextStyle(
               fontWeight: FontWeight.w700,
               fontSize: 14,
             ),

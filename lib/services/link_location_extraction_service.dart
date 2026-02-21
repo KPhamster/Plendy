@@ -195,6 +195,65 @@ class LinkLocationExtractionService {
     List<ExtractedLocationData> results = [];
 
     try {
+      // Extract explicit street addresses from caption (e.g. "📍603 N La Cienega Blvd, West Hollywood, CA 90069")
+      final explicitAddresses = _extractExplicitAddresses(caption);
+      if (explicitAddresses.isNotEmpty) {
+        print('📍 CAPTION: Found ${explicitAddresses.length} explicit address(es) in caption');
+        for (final addr in explicitAddresses) {
+          print('   → "$addr"');
+        }
+      }
+      
+      // Extract city/location context from the caption for better Places API searches
+      final locationContext = _extractLocationContext(caption);
+      if (locationContext != null) {
+        print('📍 CAPTION: Detected location context: "$locationContext"');
+      }
+      
+      // Track seen locations to avoid duplicates
+      final Set<String> seenPlaceIds = {};
+      final Set<String> seenLocationNames = {};
+      final Set<String> seenAddresses = {};
+      
+      // === STEP 1: Direct handle search ===
+      // Before any Gemini parsing, search each @mention handle as-is in Places API.
+      // Google understands handles like "eplosangeles" → "E.P. & L.P." directly.
+      if (mentions.isNotEmpty) {
+        print('🔎 HANDLE SEARCH: Searching ${mentions.length} handle(s) directly in Places API...');
+        
+        for (final handle in mentions.take(5)) {
+          final handleResult = await _searchHandleDirectly(
+            handle,
+            locationContext: locationContext,
+            explicitAddress: explicitAddresses.isNotEmpty ? explicitAddresses.first : null,
+            userLocation: userLocation,
+          );
+          
+          if (handleResult != null) {
+            if (handleResult.placeId != null && seenPlaceIds.contains(handleResult.placeId)) {
+              print('⏭️ HANDLE SEARCH: Skipping duplicate Place ID for @$handle');
+              continue;
+            }
+            if (handleResult.placeId != null) {
+              seenPlaceIds.add(handleResult.placeId!);
+            }
+            seenLocationNames.add(handleResult.name.toLowerCase().trim());
+            if (handleResult.address != null && handleResult.address!.isNotEmpty) {
+              seenAddresses.add(handleResult.address!.toLowerCase().trim());
+            }
+            results.add(handleResult.copyWith(originalQuery: '@$handle'));
+            print('✅ HANDLE SEARCH: @$handle → "${handleResult.name}"');
+            
+            if (maxLocations != null && results.length >= maxLocations) break;
+          }
+        }
+        
+        if (results.isNotEmpty) {
+          print('🔎 HANDLE SEARCH: Resolved ${results.length} location(s) directly from handles');
+        }
+      }
+      
+      // === STEP 2: Gemini text extraction (for additional locations not found via handles) ===
       // Build context-rich prompt for Gemini
       final contextualCaption = _buildCaptionContext(
         caption: caption,
@@ -207,16 +266,6 @@ class LinkLocationExtractionService {
         contextualCaption,
         userLocation: userLocation,
       );
-      
-      // Extract city/location context from the caption for better Places API searches
-      final locationContext = _extractLocationContext(caption);
-      if (locationContext != null) {
-        print('📍 CAPTION: Detected location context: "$locationContext"');
-      }
-      
-      // Track seen locations to avoid duplicates
-      final Set<String> seenPlaceIds = {};
-      final Set<String> seenLocationNames = {};
       
       // Check if we have grounding chunks with location data
       // Prioritize grounding results (with valid placeId) over text-parsed results
@@ -255,6 +304,13 @@ class LinkLocationExtractionService {
         
         // Filter text-parsed locations more strictly - require caption text match
         final lowerCaption = caption.toLowerCase();
+        // Build a set of handle-derived names for matching (e.g. "7paintings" from @7paintings_la)
+        final handleNames = mentions.map((m) {
+          // Strip common suffixes like _la, _nyc, _sf, etc.
+          String clean = m.toLowerCase().replaceAll(RegExp(r'[._](la|nyc|sf|us|co|uk|ca|au)$'), '');
+          return clean.replaceAll(RegExp(r'[._]'), '');
+        }).toSet();
+        
         final relevantTextParsed = textParsedLocations.where((location) {
           final nameLower = location.name.toLowerCase().trim();
           
@@ -262,6 +318,16 @@ class LinkLocationExtractionService {
           if (genericRegions.contains(nameLower)) {
             print('⏭️ CAPTION: Skipping generic region/county: "${location.name}"');
             return false;
+          }
+          
+          // Check if the name matches a @mention handle from the caption
+          // e.g. "7 Paintings" matches @7paintings_la, "EP Los Angeles" matches @eplosangeles
+          final nameCompact = nameLower.replaceAll(RegExp(r'[^a-z0-9]'), '');
+          for (final handle in handleNames) {
+            if (handle == nameCompact || handle.contains(nameCompact) || nameCompact.contains(handle)) {
+              print('✅ CAPTION: "${location.name}" matches mention handle ($handle)');
+              return true;
+            }
           }
           
           final nameParts = nameLower.split(' ');
@@ -334,13 +400,17 @@ class LinkLocationExtractionService {
           } else {
             // Location needs Places API lookup for coordinates
             // Include location context from caption for better results
+            // Use explicit address from caption if available (most reliable signal)
+            final effectiveAddress = location.formattedAddress ?? 
+                (explicitAddresses.isNotEmpty ? explicitAddresses.first : null);
             print('🔍 CAPTION: "${location.name}" missing coords, searching Places API...');
             final resolvedLocation = await _resolveLocationWithPlacesApi(
               location.name,
-              address: location.formattedAddress,
-              locationContext: locationContext, // Add city/region context
+              address: effectiveAddress,
+              explicitAddress: explicitAddresses.isNotEmpty ? explicitAddresses.first : null,
+              locationContext: locationContext,
               userLocation: userLocation,
-              geographicHints: geographicHints, // Pass geographic hints for disambiguation
+              geographicHints: geographicHints,
             );
             
             // Check if this location name came from a mention
@@ -355,12 +425,19 @@ class LinkLocationExtractionService {
                 print('⏭️ CAPTION: Skipping duplicate resolved Place ID: ${resolvedLocation.placeId}');
                 continue;
               }
+              // Skip if a business at this address was already found (e.g., handle search found it)
+              if (resolvedLocation.address != null && resolvedLocation.address!.isNotEmpty) {
+                final addrLower = resolvedLocation.address!.toLowerCase().trim();
+                if (seenAddresses.any((seen) => addrLower.contains(seen) || seen.contains(addrLower))) {
+                  print('⏭️ CAPTION: Skipping "${resolvedLocation.name}" - business at this address already found');
+                  continue;
+                }
+              }
               if (resolvedLocation.placeId != null) {
                 seenPlaceIds.add(resolvedLocation.placeId!);
               }
               
               print('✅ CAPTION: Resolved "${location.name}" via Places API');
-              // Add with mention as originalQuery if found, otherwise use whatever originalQuery the resolver set
               results.add(resolvedLocation.copyWith(
                 originalQuery: matchingMention ?? resolvedLocation.originalQuery,
               ));
@@ -469,10 +546,11 @@ class LinkLocationExtractionService {
             
             final resolvedLocation = await _resolveLocationWithPlacesApi(
               name,
-              address: address,
+              address: address ?? (explicitAddresses.isNotEmpty ? explicitAddresses.first : null),
+              explicitAddress: explicitAddresses.isNotEmpty ? explicitAddresses.first : null,
               locationContext: effectiveContext,
               userLocation: userLocation,
-              geographicHints: geographicHints, // Pass geographic hints for disambiguation
+              geographicHints: geographicHints,
             );
             
             // Check if this location name came from a mention
@@ -883,6 +961,43 @@ class LinkLocationExtractionService {
     return false;
   }
 
+  /// Extract explicit street addresses from caption text.
+  /// Looks for patterns like "📍603 N La Cienega Blvd, West Hollywood, CA 90069"
+  /// or standard US address formats with street number + street type + city + state.
+  List<String> _extractExplicitAddresses(String text) {
+    final addresses = <String>[];
+    
+    // Full address with ZIP: "603 N La Cienega Blvd, West Hollywood, CA 90069"
+    final fullPattern = RegExp(
+      r'(\d+\s+[\w\s.]+(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)\.?\s*,?\s*[\w\s]+,?\s*(?:CA|NY|TX|FL|WA|AZ|NV|OR|CO|IL|PA|OH|GA|NC|MI|NJ|VA|MA|TN|IN|MO|MD|WI|MN|SC|AL|LA|KY|OK|CT|UT|IA|NE|MS|AR|KS|NM|ID|WV|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC)\.?\s*\d{5}(?:-\d{4})?)',
+      caseSensitive: false,
+    );
+    
+    // Address without ZIP: "603 N La Cienega Blvd, West Hollywood, CA"
+    final partialPattern = RegExp(
+      r'(\d+\s+[\w\s.]+(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)\.?\s*,?\s*[\w\s]+,?\s*(?:CA|NY|TX|FL|WA|AZ|NV|OR|CO|IL|PA|OH|GA|NC|MI|NJ|VA|MA|TN|IN|MO|MD|WI|MN|SC|AL|LA|KY|OK|CT|UT|IA|NE|MS|AR|KS|NM|ID|WV|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC))',
+      caseSensitive: false,
+    );
+    
+    for (final match in fullPattern.allMatches(text)) {
+      final addr = match.group(1)?.trim();
+      if (addr != null && addr.length > 10) {
+        addresses.add(addr);
+      }
+    }
+    
+    if (addresses.isEmpty) {
+      for (final match in partialPattern.allMatches(text)) {
+        final addr = match.group(1)?.trim();
+        if (addr != null && addr.length > 10) {
+          addresses.add(addr);
+        }
+      }
+    }
+    
+    return addresses;
+  }
+
   /// Extract city/region context from caption text
   /// Returns the most specific location mentioned (city > region > state)
   String? _extractLocationContext(String caption) {
@@ -1085,19 +1200,140 @@ class LinkLocationExtractionService {
   Future<ExtractedLocationData?> _resolveLocationWithPlacesApi(
     String locationName, {
     String? address,
+    String? explicitAddress,
     String? locationContext,
     LatLng? userLocation,
-    String? surroundingText, // Optional caption/page text for AI reranking context
-    String? geminiType, // Optional expected type from Gemini extraction
-    GeographicHints? geographicHints, // Optional geographic hints for disambiguation
+    String? surroundingText,
+    String? geminiType,
+    GeographicHints? geographicHints,
   }) async {
     try {
+      // If we have an explicit street address from the caption, try searching by address first.
+      // A specific address like "603 N La Cienega Blvd, West Hollywood, CA 90069" is
+      // the most reliable signal for finding the correct place.
+      if (explicitAddress != null && explicitAddress.isNotEmpty) {
+        // Strategy A: Search "business name, address" together to find the actual business
+        print('🏠 PLACES RESOLVE: Trying "$locationName" at "$explicitAddress"');
+        
+        final nameAndAddress = '$locationName, $explicitAddress';
+        List<Map<String, dynamic>> businessResults;
+        if (userLocation != null) {
+          businessResults = await _maps.searchPlaces(
+            nameAndAddress,
+            latitude: userLocation.latitude,
+            longitude: userLocation.longitude,
+          );
+        } else {
+          businessResults = await _maps.searchPlaces(nameAndAddress);
+        }
+        
+        if (businessResults.isNotEmpty) {
+          final topResult = businessResults.first;
+          final topName = (topResult['name'] ?? topResult['description']?.toString().split(',').first ?? '') as String;
+          final topPlaceId = topResult['placeId'] as String?;
+          
+          if (topPlaceId != null && topPlaceId.isNotEmpty) {
+            try {
+              final placeDetails = await _maps.getPlaceDetails(topPlaceId, includePhotoUrl: false);
+              if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
+                final resolvedName = placeDetails.displayName ?? topName;
+                
+                // Check if the result is just a geocoded street address, not a real business.
+                // If name starts with a number (e.g. "18380 Brookhurst St"), it's just an
+                // address geocode — skip it and let Strategy B handle it with the original name.
+                final isJustAddress = RegExp(r'^\d+\s').hasMatch(resolvedName);
+                if (isJustAddress) {
+                  print('🏠 PLACES RESOLVE: Result "$resolvedName" is just a street address, trying Strategy B...');
+                } else {
+                  print('✅ PLACES RESOLVE: Found business "$resolvedName" at ${placeDetails.address}');
+                  
+                  final placeType = ExtractedLocationData.inferPlaceType(
+                    placeDetails.placeTypes ?? (topResult['types'] as List<dynamic>?)?.cast<String>(),
+                  );
+                  
+                  return ExtractedLocationData(
+                    placeId: topPlaceId,
+                    name: resolvedName,
+                    address: placeDetails.address ?? explicitAddress,
+                    coordinates: LatLng(placeDetails.latitude, placeDetails.longitude),
+                    type: placeType,
+                    source: ExtractionSource.placesSearch,
+                    confidence: 0.9,
+                    website: placeDetails.website,
+                    placeTypes: placeDetails.placeTypes ?? (topResult['types'] as List<dynamic>?)?.cast<String>(),
+                  );
+                }
+              }
+            } catch (e) {
+              print('⚠️ PLACES RESOLVE: Business+address details failed: $e');
+            }
+          }
+        }
+        
+        // Strategy B: If business name + address didn't work, geocode just the address
+        // but preserve the original business name from the caption
+        print('🏠 PLACES RESOLVE: Business not found by name, geocoding address: "$explicitAddress"');
+        
+        List<Map<String, dynamic>> addressResults;
+        if (userLocation != null) {
+          addressResults = await _maps.searchPlaces(
+            explicitAddress,
+            latitude: userLocation.latitude,
+            longitude: userLocation.longitude,
+          );
+        } else {
+          addressResults = await _maps.searchPlaces(explicitAddress);
+        }
+        
+        if (addressResults.isNotEmpty) {
+          final topPlaceId = addressResults.first['placeId'] as String?;
+          if (topPlaceId != null && topPlaceId.isNotEmpty) {
+            try {
+              final placeDetails = await _maps.getPlaceDetails(topPlaceId, includePhotoUrl: false);
+              if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
+                // Use the original business name from the caller, not the geocoded address name
+                final resolvedName = placeDetails.displayName ?? '';
+                final isJustAddress = resolvedName.isEmpty || 
+                    RegExp(r'^\d+\s').hasMatch(resolvedName);
+                final displayName = isJustAddress ? locationName : resolvedName;
+                
+                print('✅ PLACES RESOLVE: Geocoded address → "$displayName" at ${placeDetails.address}');
+                
+                final placeType = ExtractedLocationData.inferPlaceType(placeDetails.placeTypes);
+                
+                return ExtractedLocationData(
+                  placeId: topPlaceId,
+                  name: displayName,
+                  address: placeDetails.address ?? explicitAddress,
+                  coordinates: LatLng(placeDetails.latitude, placeDetails.longitude),
+                  type: placeType,
+                  source: ExtractionSource.placesSearch,
+                  confidence: 0.75,
+                  website: placeDetails.website,
+                  placeTypes: placeDetails.placeTypes,
+                );
+              }
+            } catch (e) {
+              print('⚠️ PLACES RESOLVE: Address geocode failed: $e');
+            }
+          }
+        } else {
+          print('⚠️ PLACES RESOLVE: No results for explicit address, falling back to name search');
+        }
+      }
+      
       // Build search query - combine name with location context for better results
       String searchQuery = locationName;
       
-      // Prioritize location context over generic address
-      if (locationContext != null && locationContext.isNotEmpty) {
-        // Use comma-separated format for more specific matching
+      // A specific street address is more useful than a generic city name from hashtags
+      final hasStreetAddress = address != null && 
+          address.isNotEmpty && 
+          RegExp(r'\d+\s+[\w\s]+(Ave|St|Blvd|Dr|Rd|Road|Ln|Way|Pl|Ct|Pkwy|Hwy)', caseSensitive: false).hasMatch(address);
+      
+      if (hasStreetAddress) {
+        searchQuery = '$locationName, $address';
+        print('🔍 PLACES RESOLVE: Using street address: "$searchQuery"');
+      } else if (locationContext != null && locationContext.isNotEmpty) {
         searchQuery = '$locationName, $locationContext';
         print('🔍 PLACES RESOLVE: Using location context: "$searchQuery"');
       } else if (address != null && address.isNotEmpty) {
@@ -1355,6 +1591,84 @@ class LinkLocationExtractionService {
     final mentionRegex = RegExp(r'@([a-zA-Z0-9_.]+)');
     final matches = mentionRegex.allMatches(caption);
     return matches.map((m) => m.group(1)!.toLowerCase()).toList();
+  }
+
+  /// Search a @mention handle via Google Search (through Gemini) to find the
+  /// real business name, then verify in Places API for coordinates/Place ID.
+  /// Searches exactly "@handle" — Google understands Instagram handles directly.
+  Future<ExtractedLocationData?> _searchHandleDirectly(
+    String handle, {
+    String? locationContext,
+    String? explicitAddress,
+    LatLng? userLocation,
+  }) async {
+    try {
+      if (handle.length < 3) return null;
+      
+      // Step 1: Search "@handle" via Gemini with Google Search grounding
+      print('🔎 HANDLE SEARCH: Looking up @$handle via Google Search...');
+      final businessName = await _gemini.lookupInstagramHandle(handle);
+      
+      if (businessName == null || businessName.isEmpty) {
+        print('🔎 HANDLE SEARCH: Google Search could not resolve @$handle');
+        return null;
+      }
+      
+      print('🔎 HANDLE SEARCH: @$handle → "$businessName" (from Google Search)');
+      
+      // Step 2: Verify the business in Places API
+      final verified = await _verifyLocationWithPlacesAPI(
+        name: businessName,
+        groundedAddress: explicitAddress,
+        regionContext: locationContext,
+        userLocation: userLocation,
+      );
+      
+      if (verified != null) {
+        print('✅ HANDLE SEARCH: Verified @$handle → "${verified.name}" at ${verified.address}');
+        return verified;
+      }
+      
+      // Step 3: If Places couldn't verify but we have an explicit address, geocode it
+      if (explicitAddress != null && explicitAddress.isNotEmpty) {
+        print('🔎 HANDLE SEARCH: Places couldn\'t verify "$businessName", trying address geocode...');
+        final addressResults = await _maps.searchPlaces(
+          explicitAddress,
+          latitude: userLocation?.latitude,
+          longitude: userLocation?.longitude,
+        );
+        
+        if (addressResults.isNotEmpty) {
+          final topPlaceId = addressResults.first['placeId'] as String?;
+          if (topPlaceId != null) {
+            try {
+              final details = await _maps.getPlaceDetails(topPlaceId, includePhotoUrl: false);
+              if (details.latitude != 0.0 || details.longitude != 0.0) {
+                return ExtractedLocationData(
+                  placeId: topPlaceId,
+                  name: businessName,
+                  address: details.address ?? explicitAddress,
+                  coordinates: LatLng(details.latitude, details.longitude),
+                  type: ExtractedLocationData.inferPlaceType(details.placeTypes),
+                  source: ExtractionSource.placesSearch,
+                  confidence: 0.8,
+                  website: details.website,
+                  placeTypes: details.placeTypes,
+                );
+              }
+            } catch (e) {
+              print('⚠️ HANDLE SEARCH: Address geocode failed: $e');
+            }
+          }
+        }
+      }
+      
+      print('⚠️ HANDLE SEARCH: Could not verify @$handle in Places API');
+      return null;
+    } catch (e) {
+      print('⚠️ HANDLE SEARCH ERROR for @$handle: $e');
+      return null;
+    }
   }
 
   /// Find a matching mention for a location name

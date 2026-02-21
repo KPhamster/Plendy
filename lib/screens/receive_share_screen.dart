@@ -2708,7 +2708,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _currentSharedFiles = widget.sharedFiles;
     // Inform sharing service that this screen is open so Yelp-only shares update in-place
     try {
-      _sharingService.markReceiveShareScreenOpen(context: context);
+      _sharingService.markReceiveShareScreenOpen(context: context, sharedFiles: widget.sharedFiles);
     } catch (_) {}
 
     // If URL-first mode, auto-focus the URL field on first open

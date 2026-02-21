@@ -43,7 +43,6 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'screens/share_preview_screen.dart';
 import 'screens/category_share_preview_screen.dart';
 import 'screens/public_profile_screen.dart';
@@ -1210,7 +1209,9 @@ class _MyAppState extends State<MyApp> {
         }
       });
 
-      // Listen for incoming shares while the app is running
+      // Listen for incoming shares while the app is running.
+      // Only update local state here; SharingService's own stream listener
+      // handles navigation to ReceiveShareScreen to avoid duplicate pushes.
       _intentSub = ShareHandlerPlatform.instance.sharedMediaStream.listen(
           (SharedMedia media) {
         if (OnboardingScreen.suppressShareHandling) {
@@ -1223,12 +1224,6 @@ class _MyAppState extends State<MyApp> {
             _sharedFiles = value;
             _initialCheckComplete = true;
           });
-        }
-        // Optionally, navigate immediately if context is available
-        // This might need refinement depending on app structure
-        if (navigatorKey.currentContext != null && value.isNotEmpty) {
-          _sharingService.showReceiveShareScreen(
-              navigatorKey.currentContext!, value);
         }
       }, onError: (err) {
         print("getIntentDataStream error (expected on web): $err");
@@ -1602,11 +1597,11 @@ class _MyAppState extends State<MyApp> {
         secondary: Colors.white, // Lighter red for secondary elements
       ),
     );
-    final TextStyle appBarTitleStyle = GoogleFonts.notoSerif(
-      textStyle: baseTheme.textTheme.titleLarge,
-      fontSize: 24.0,
-      fontWeight: FontWeight.w700,
-    );
+    final TextStyle appBarTitleStyle = baseTheme.textTheme.titleLarge?.copyWith(
+          fontSize: 24.0,
+          fontWeight: FontWeight.w700,
+        ) ??
+        const TextStyle(fontSize: 24.0, fontWeight: FontWeight.w700);
 
     return MaterialApp(
       navigatorKey: navigatorKey, // Assign the key to MaterialApp

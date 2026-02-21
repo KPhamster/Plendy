@@ -24,8 +24,8 @@ class GeminiService {
   // Gemini API base URL
   static const String _baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
   
-  // Default model - using flash for speed and cost efficiency
-  static const String _defaultModel = 'gemini-3-flash-preview';
+  // Default model - 2.5 Flash supports Maps grounding on AI Studio API
+  static const String _defaultModel = 'gemini-2.5-flash';
 
   /// Get the API key
   static String get _apiKey => ApiSecrets.geminiApiKey;
@@ -659,6 +659,8 @@ WRONG (do NOT do this):
         options: Options(
           headers: {'Content-Type': 'application/json'},
           validateStatus: (status) => status != null && status < 500,
+          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 60),
         ),
       );
 
@@ -670,7 +672,7 @@ WRONG (do NOT do this):
         return null;
       }
     } on DioException catch (e) {
-      print('❌ GEMINI SEARCH DIO ERROR: ${e.message}');
+      print('❌ GEMINI SEARCH DIO ERROR: ${e.type} - ${e.message}');
       return null;
     }
   }
@@ -691,6 +693,23 @@ WRONG (do NOT do this):
       if (text == null || text.isEmpty) return null;
       
       String businessName = text.trim();
+      
+      // Strategy 0: Handle truncated JSON responses wrapped in markdown code blocks.
+      // Gemini sometimes returns ```json { "name": "Foo", ... } ``` that gets truncated.
+      // Extract the "name" field directly rather than returning the raw JSON as a name.
+      if (businessName.contains('```json') || businessName.contains('"found"') || businessName.contains('"name"')) {
+        final nameMatch = RegExp(r'"name"\s*:\s*"([^"]+)"').firstMatch(businessName);
+        if (nameMatch != null) {
+          final extracted = nameMatch.group(1)!.trim();
+          if (extracted.isNotEmpty && extracted.toLowerCase() != 'null') {
+            print('📝 HANDLE PARSE: Extracted name from JSON response: "$extracted"');
+            return extracted;
+          }
+        }
+        // If we detected JSON but couldn't extract a name, return null rather than garbage
+        print('⚠️ HANDLE PARSE: Detected JSON response but could not extract name');
+        return null;
+      }
       
       // Strategy 1: Extract from markdown bold **Business Name**
       final boldMatch = RegExp(r'\*\*([^*]+)\*\*').firstMatch(businessName);
@@ -1126,7 +1145,8 @@ Return a JSON array with ONLY relevant locations:
 ''';
   }
 
-  /// Call Gemini API with Google Maps grounding enabled
+  /// Call Gemini API with Google Maps grounding enabled.
+  /// Falls back to Google Search grounding if Maps grounding is unavailable.
   Future<Map<String, dynamic>?> _callGeminiWithMapsGrounding(
     String prompt, {
     LatLng? userLocation,
@@ -1142,19 +1162,16 @@ Return a JSON array with ONLY relevant locations:
           ]
         }
       ],
-      // Enable Google Maps grounding tool
       'tools': [
         {
           'googleMaps': {}
         }
       ],
-      // Configure tool usage
       'toolConfig': {
         'functionCallingConfig': {
           'mode': 'ANY'
         }
       },
-      // Generation config for factual responses
       'generationConfig': {
         'temperature': 0.1,
         'topP': 0.8,
@@ -1187,13 +1204,14 @@ Return a JSON array with ONLY relevant locations:
             'Content-Type': 'application/json',
           },
           validateStatus: (status) => status != null && status < 500,
+          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 60),
         ),
       );
 
       if (response.statusCode == 200) {
         print('✅ GEMINI: API returned 200 OK');
         
-        // Log the actual response for debugging
         final responseData = response.data as Map<String, dynamic>;
         final candidates = responseData['candidates'] as List?;
         if (candidates != null && candidates.isNotEmpty) {
@@ -1207,12 +1225,10 @@ Return a JSON array with ONLY relevant locations:
             } else if (text != null) {
               print('📝 GEMINI Response: $text');
             }
-            // Debug: Log if response is suspiciously short (might indicate API issue)
             if (text == null || text.trim().isEmpty || text.trim() == '```' || text.length < 10) {
               print('⚠️ GEMINI DEBUG: Response appears empty or malformed');
               print('   Full response text: "${text ?? "null"}"');
               print('   Candidate finishReason: ${candidate['finishReason']}');
-              // Check for safety ratings or blocks
               final safetyRatings = candidate['safetyRatings'];
               if (safetyRatings != null) {
                 print('   Safety ratings: $safetyRatings');
@@ -1223,7 +1239,6 @@ Return a JSON array with ONLY relevant locations:
             print('   Content: $content');
           }
           
-          // Log grounding metadata
           final groundingMetadata = candidate['groundingMetadata'];
           if (groundingMetadata != null) {
             final chunks = groundingMetadata['groundingChunks'];
@@ -1235,17 +1250,12 @@ Return a JSON array with ONLY relevant locations:
         
         return responseData;
       } else {
-        print('❌ GEMINI: API returned ${response.statusCode}');
-        print('   Response: ${jsonEncode(response.data)}');
-        return null;
+        print('⚠️ GEMINI: Maps grounding returned ${response.statusCode}, falling back to Search grounding...');
+        return _callGeminiWithSearchGrounding(prompt);
       }
     } on DioException catch (e) {
-      print('❌ GEMINI DIO ERROR: ${e.message}');
-      if (e.response != null) {
-        print('   Status: ${e.response?.statusCode}');
-        print('   Data: ${e.response?.data}');
-      }
-      return null;
+      print('⚠️ GEMINI: Maps grounding network error (${e.type}), falling back to Search grounding...');
+      return _callGeminiWithSearchGrounding(prompt);
     }
   }
 
@@ -3075,6 +3085,8 @@ If you cannot verify the place exists, return:
         options: Options(
           headers: {'Content-Type': 'application/json'},
           validateStatus: (status) => status != null && status < 500,
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 90),
         ),
       );
 
@@ -3279,6 +3291,8 @@ If you cannot verify the place exists, return:
             'Content-Type': 'application/json',
           },
           validateStatus: (status) => status != null && status < 500,
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 90),
         ),
       );
 

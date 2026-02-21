@@ -105,7 +105,6 @@ class WebMediaPreviewCard extends StatelessWidget {
                     color: Colors.white,
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    fontFamily: 'Noto Serif',
                   ),
                   textAlign: TextAlign.center,
                   maxLines: 2,

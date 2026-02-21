@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/event.dart';
@@ -525,8 +524,7 @@ class _EventsScreenState extends State<EventsScreen>
                   Flexible(
                     child: Text(
                       DateFormat('MMMM y').format(_focusedDay),
-                      style: GoogleFonts.notoSerif(
-                        textStyle: theme.textTheme.headlineSmall,
+                      style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                       overflow: TextOverflow.ellipsis,

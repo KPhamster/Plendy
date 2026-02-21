@@ -22,7 +22,6 @@ import 'package:plendy/models/enums/share_enums.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -1559,10 +1558,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     // Modal Title
                     Text(
                       'Edit Experience',
-                      style: GoogleFonts.notoSerif(
-                        fontSize: Theme.of(context).textTheme.headlineSmall?.fontSize,
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: Theme.of(context).textTheme.headlineSmall?.color,
                       ),
                     ),
                     const SizedBox(height: 20),
