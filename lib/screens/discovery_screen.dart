@@ -1645,7 +1645,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                         ),
                   label: Text(
                     'Map',
-                    style: GoogleFonts.notoSerif(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
                       fontWeight: FontWeight.w600,

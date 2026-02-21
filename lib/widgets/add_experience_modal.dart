@@ -22,7 +22,6 @@ import 'package:plendy/config/app_constants.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class AddExperienceModal extends StatefulWidget {
   final List<UserCategory> userCategories;
@@ -1336,10 +1335,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               const SizedBox(height: 16), // Padding above header
               Text(
                 'Add Experience',
-                style: GoogleFonts.notoSerif(
-                  fontSize: Theme.of(context).textTheme.headlineSmall?.fontSize,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: Theme.of(context).textTheme.headlineSmall?.color,
                 ),
               ),
               const SizedBox(height: 20),

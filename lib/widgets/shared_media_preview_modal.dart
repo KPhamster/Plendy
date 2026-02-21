@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 import 'package:share_plus/share_plus.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -435,8 +434,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                                 }),
                                 child: Text(
                                   experience.name,
-                                  style: GoogleFonts.notoSerif(
-                                    textStyle: theme.textTheme.titleMedium,
+                                  style: theme.textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 20,
                                   ),

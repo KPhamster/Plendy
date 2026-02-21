@@ -589,14 +589,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   _currentEvent.title.isEmpty ? 'Untitled Event' : _currentEvent.title,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: foregroundColor,
-                    fontFamily: 'Noto Serif',
+                    fontWeight: FontWeight.bold,
                   ),
                 )
               : TextField(
             controller: _titleController,
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: foregroundColor,
-              fontFamily: 'Noto Serif',
+              fontWeight: FontWeight.bold,
             ),
             decoration: InputDecoration(
               hintText: 'Untitled Event',

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import '../../firebase_options.dart';
@@ -1340,20 +1339,20 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                 // Name
                                 Text(
                                   experience.name,
-                                style: GoogleFonts.notoSerif(
-                                  textStyle: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                      offset: Offset(1.0, 1.0),
-                                      blurRadius: 2.0,
-                                      color: Colors.black.withOpacity(0.5),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                          offset: Offset(1.0, 1.0),
+                                          blurRadius: 2.0,
+                                          color: Colors.black.withOpacity(0.5),
+                                        ),
+                                      ],
                                     ),
-                                  ],
-                                ),
                               ),
                             ],
                           ),

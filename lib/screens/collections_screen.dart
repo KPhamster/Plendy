@@ -16,7 +16,6 @@ import 'package:geolocator/geolocator.dart';
 import 'dart:async'; // <-- ADDED Import for TimeoutException
 import 'package:url_launcher/url_launcher.dart'; // ADDED for launching URLs
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for icons
-import 'package:google_fonts/google_fonts.dart';
 // ADDED: Import Instagram Preview Widget (adjust alias if needed)
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
@@ -3953,7 +3952,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               ),
               label: Text(
                 'Map',
-                style: GoogleFonts.notoSerif(fontWeight: FontWeight.w700),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               onPressed: () {
                 triggerHeavyHaptic();
