@@ -287,11 +287,14 @@ class InstagramWebViewState extends State<InstagramWebView> {
       padding: 0;
       width: calc(100% - 2px);
     }
-    /* Hide captions in Instagram embeds for Default Mode */
+    /* Hide captions in Instagram embeds for Default Mode - DISABLED for dynamic height */
+    /*
     .instagram-media-rendered {
       overflow: hidden !important;
     }
+    */
     /* Hide caption text containers - target various Instagram render structures */
+    /*
     .instagram-media-rendered > div:last-child,
     .instagram-media-rendered > *:last-child,
     .instagram-media article > div:nth-child(2),
@@ -306,12 +309,15 @@ class InstagramWebViewState extends State<InstagramWebView> {
       visibility: hidden !important;
       overflow: hidden !important;
     }
+    */
     /* Additional aggressive caption hiding */
+    /*
     .instagram-media-rendered svg,
     .instagram-media article > svg {
       max-height: 500px !important;
       overflow: hidden !important;
     }
+    */
   </style>
 </head>
 <body>
@@ -329,8 +335,12 @@ class InstagramWebViewState extends State<InstagramWebView> {
       });
     }
 
-    // Hide captions in Instagram embeds for Default Mode
+    // Hide captions in Instagram embeds for Default Mode - DISABLED
     function hideInstagramCaptions() {
+      // Function disabled to allow full content height
+      return;
+      
+      /* Original hiding logic:
       try {
         // Find all Instagram embed containers
         var instagramEmbeds = document.querySelectorAll('.instagram-media, blockquote.instagram-media, .instagram-media-rendered');
@@ -390,6 +400,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
       } catch(e) {
         console.log('Error hiding Instagram captions:', e);
       }
+      */
     }
 
     // Run immediately and after embed loads

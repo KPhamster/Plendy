@@ -54,6 +54,7 @@ class ExperienceCardForm extends StatefulWidget {
   final void Function(String cardId)? onYelpButtonTapped; // ADDED
   final VoidCallback? onEventSelect; // ADDED: Callback to show event selection dialog
   final String? selectedEventTitle; // ADDED: Title of currently selected event (for indicator)
+  final String? Function()? getDetectedEventName;
 
   const ExperienceCardForm({
     super.key,
@@ -70,6 +71,7 @@ class ExperienceCardForm extends StatefulWidget {
     this.onYelpButtonTapped, // ADDED
     this.onEventSelect, // ADDED
     this.selectedEventTitle, // ADDED
+    this.getDetectedEventName,
   });
 
   @override
@@ -421,21 +423,39 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // --- ADDED: Method to launch Ticketmaster search ---
   Future<void> _launchTicketmasterSearch() async {
-    // Get the title to search for
-    String searchTerm = widget.cardData.titleController.text.trim();
+    // Prioritize detected event name for the search (called at tap time to get latest value)
+    String searchTerm = widget.getDetectedEventName?.call()?.trim() ?? '';
     
-    // If no title, try using location name
+    // Fall back to title field, then location name
+    if (searchTerm.isEmpty) {
+      searchTerm = widget.cardData.titleController.text.trim();
+    }
     if (searchTerm.isEmpty && widget.cardData.selectedLocation != null) {
       searchTerm = widget.cardData.selectedLocation!.displayName ?? '';
     }
     
+    // Build location string from the card's selected location
+    String locationTerm = '';
+    final location = widget.cardData.selectedLocation;
+    if (location != null) {
+      final parts = <String>[];
+      if (location.city != null && location.city!.isNotEmpty) {
+        parts.add(location.city!);
+      }
+      if (location.state != null && location.state!.isNotEmpty) {
+        parts.add(location.state!);
+      }
+      locationTerm = parts.join(', ');
+    }
+    
     String ticketmasterUrl;
     if (searchTerm.isNotEmpty) {
-      // Search Ticketmaster for the event
       final searchQuery = Uri.encodeComponent(searchTerm);
       ticketmasterUrl = 'https://www.ticketmaster.com/search?q=$searchQuery';
+      if (locationTerm.isNotEmpty) {
+        ticketmasterUrl += '&where=${Uri.encodeComponent(locationTerm)}';
+      }
     } else {
-      // Fallback to Ticketmaster homepage
       ticketmasterUrl = 'https://www.ticketmaster.com';
     }
 
@@ -1544,30 +1564,33 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          InkWell(
-                            onTap: withHeavyTap(_launchTicketmasterSearch),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(4.0),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: Image.asset(
-                                  'assets/icon/misc/ticketmaster_logo.png',
-                                  height: 22,
-                                  width: 22,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Icon(
-                                      Icons.confirmation_number,
-                                      size: 22,
-                                      color: const Color(0xFF026CDF),
-                                    );
-                                  },
+                          if ((widget.getDetectedEventName?.call()?.isNotEmpty ?? false) ||
+                              widget.selectedEventTitle != null) ...[
+                            const SizedBox(width: 6),
+                            InkWell(
+                              onTap: withHeavyTap(_launchTicketmasterSearch),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.asset(
+                                    'assets/icon/misc/ticketmaster_logo.png',
+                                    height: 22,
+                                    width: 22,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Icon(
+                                        Icons.confirmation_number,
+                                        size: 22,
+                                        color: const Color(0xFF026CDF),
+                                      );
+                                    },
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                       SizedBox(height: 16),
