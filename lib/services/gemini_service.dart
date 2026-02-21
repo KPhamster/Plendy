@@ -4931,7 +4931,7 @@ Return ONLY the JSON object, no other text.
           ],
           'generationConfig': {
             'temperature': 0.1,
-            'maxOutputTokens': 500,
+            'responseMimeType': 'application/json',
           },
         },
         options: Options(
@@ -4953,7 +4953,13 @@ Return ONLY the JSON object, no other text.
         return null;
       }
       
-      final content = candidates[0]['content'];
+      final candidate = candidates[0] as Map<String, dynamic>;
+      final finishReason = candidate['finishReason'] as String?;
+      if (finishReason == 'MAX_TOKENS') {
+        print('⚠️ GEMINI EVENT: Response truncated (MAX_TOKENS)');
+      }
+      
+      final content = candidate['content'];
       final parts = content['parts'] as List?;
       if (parts == null || parts.isEmpty) {
         print('⚠️ GEMINI EVENT: No parts in response');
@@ -4974,6 +4980,18 @@ Return ONLY the JSON object, no other text.
       }
       responseText = responseText.trim();
       
+      // Strip non-JSON prefixes (model sometimes prepends text)
+      final jsonStart = responseText.indexOf('{');
+      if (jsonStart > 0) {
+        responseText = responseText.substring(jsonStart);
+      }
+      // Strip trailing text after JSON object
+      final lastBrace = responseText.lastIndexOf('}');
+      if (lastBrace >= 0 && lastBrace < responseText.length - 1) {
+        responseText = responseText.substring(0, lastBrace + 1);
+      }
+      responseText = responseText.trim();
+      
       // Parse JSON response
       final Map<String, dynamic> parsed;
       try {
@@ -4981,6 +4999,12 @@ Return ONLY the JSON object, no other text.
       } catch (e) {
         print('❌ GEMINI EVENT: Failed to parse JSON: $e');
         print('   Response was: $responseText');
+        
+        // Fallback: if truncated but we can see is_event:true, retry with non-thinking model
+        if (responseText.contains('"is_event": true') || responseText.contains('"is_event":true')) {
+          print('🔄 GEMINI EVENT: Detected is_event:true in truncated response, retrying with condensed prompt...');
+          return _retryEventDetection(text);
+        }
         return null;
       }
       
@@ -5052,6 +5076,136 @@ Return ONLY the JSON object, no other text.
       );
     } catch (e) {
       print('❌ GEMINI EVENT ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Retry event detection with a condensed prompt to avoid truncation from thinking overhead
+  Future<ExtractedEventInfo?> _retryEventDetection(String text) async {
+    try {
+      print('🔄 GEMINI EVENT RETRY: Using condensed prompt...');
+      
+      final truncatedText = text.length > 600 ? text.substring(0, 600) : text;
+      
+      final prompt = '''
+Extract event info from this text. Return ONLY a JSON object, no other text.
+
+TEXT: """
+$truncatedText
+"""
+
+TODAY: ${DateTime.now().toIso8601String().split('T')[0]}
+
+JSON format: {"is_event":true,"event_name":"Name","start_datetime":"YYYY-MM-DDTHH:MM:SS","end_datetime":"YYYY-MM-DDTHH:MM:SS","confidence":0.9}
+If no event with explicit date: {"is_event":false}
+''';
+
+      final endpoint = '$_baseUrl/models/$_defaultModel:generateContent?key=$_apiKey';
+      
+      final response = await _dio.post(
+        endpoint,
+        data: {
+          'contents': [
+            {
+              'parts': [
+                {'text': prompt}
+              ]
+            }
+          ],
+          'generationConfig': {
+            'temperature': 0.1,
+            'responseMimeType': 'application/json',
+          },
+        },
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+      
+      if (response.statusCode != 200) {
+        print('❌ GEMINI EVENT RETRY: API returned ${response.statusCode}');
+        return null;
+      }
+      
+      final candidates = response.data['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+      
+      final candidate = candidates[0] as Map<String, dynamic>;
+      final content = candidate['content'];
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+      
+      String responseText = (parts[0]['text'] as String? ?? '').trim();
+      
+      // Strip markdown code blocks
+      if (responseText.startsWith('```json')) {
+        responseText = responseText.substring(7);
+      } else if (responseText.startsWith('```')) {
+        responseText = responseText.substring(3);
+      }
+      if (responseText.endsWith('```')) {
+        responseText = responseText.substring(0, responseText.length - 3);
+      }
+      responseText = responseText.trim();
+      
+      // Strip non-JSON prefixes (e.g., "Here is the JSON requested:")
+      final jsonStart = responseText.indexOf('{');
+      if (jsonStart > 0) {
+        print('🔄 GEMINI EVENT RETRY: Stripping ${jsonStart} chars of non-JSON prefix');
+        responseText = responseText.substring(jsonStart);
+      }
+      
+      // Strip any trailing text after the JSON object
+      final lastBrace = responseText.lastIndexOf('}');
+      if (lastBrace >= 0 && lastBrace < responseText.length - 1) {
+        responseText = responseText.substring(0, lastBrace + 1);
+      }
+      
+      print('🔄 GEMINI EVENT RETRY: Parsing response: $responseText');
+      
+      final parsed = jsonDecode(responseText) as Map<String, dynamic>;
+      final isEvent = parsed['is_event'] as bool? ?? false;
+      if (!isEvent) {
+        print('📅 GEMINI EVENT RETRY: Not an event');
+        return null;
+      }
+      
+      final startDateTimeStr = parsed['start_datetime'] as String?;
+      if (startDateTimeStr == null) {
+        print('⚠️ GEMINI EVENT RETRY: No start time');
+        return null;
+      }
+      
+      final startDateTime = DateTime.tryParse(startDateTimeStr);
+      if (startDateTime == null) {
+        print('⚠️ GEMINI EVENT RETRY: Could not parse start: $startDateTimeStr');
+        return null;
+      }
+      
+      final endDateTimeStr = parsed['end_datetime'] as String?;
+      DateTime? endDateTime;
+      if (endDateTimeStr != null) {
+        endDateTime = DateTime.tryParse(endDateTimeStr);
+      }
+      endDateTime ??= startDateTime.add(const Duration(hours: 2));
+      
+      final confidence = (parsed['confidence'] as num?)?.toDouble() ?? 0.8;
+      final eventName = parsed['event_name'] as String?;
+      
+      print('✅ GEMINI EVENT RETRY: Detected "$eventName"');
+      print('   Start: $startDateTime, End: $endDateTime, Confidence: ${(confidence * 100).toInt()}%');
+      
+      return ExtractedEventInfo(
+        eventName: eventName,
+        startDateTime: startDateTime,
+        endDateTime: endDateTime,
+        confidence: confidence,
+        rawText: text.length > 100 ? text.substring(0, 100) : text,
+      );
+    } catch (e) {
+      print('❌ GEMINI EVENT RETRY ERROR: $e');
       return null;
     }
   }

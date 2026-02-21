@@ -96,6 +96,7 @@ class _ExperienceCardsSection extends StatelessWidget {
   final void Function(String cardId)? onYelpButtonTapped; // ADDED
   final void Function(ExperienceCardData card)?
       showSelectEventDialog; // ADDED: Show event selection dialog for a specific card
+  final String? Function()? getDetectedEventName;
 
   const _ExperienceCardsSection({
     super.key,
@@ -115,6 +116,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     this.sectionKey, // ADDED for scrolling
     this.onYelpButtonTapped, // ADDED
     this.showSelectEventDialog, // ADDED
+    this.getDetectedEventName,
   });
 
   @override
@@ -201,6 +203,7 @@ class _ExperienceCardsSection extends StatelessWidget {
                           ? () => showSelectEventDialog!(card)
                           : null,
                       selectedEventTitle: card.selectedEvent?.title,
+                      getDetectedEventName: getDetectedEventName,
                     );
                   }),
             if (!isSpecialUrl(currentSharedFiles.isNotEmpty
@@ -665,20 +668,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: OutlinedButton.icon(
+        child: OutlinedButton(
           onPressed: isLoading ? null : _showScreenshotUploadOptions,
-          icon: Icon(
-            Icons.add_photo_alternate_outlined,
-            size: 20,
-            color: isLoading ? Colors.grey : AppColors.sage,
-          ),
-          label: Text(
-            'Upload Screenshot',
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              color: isLoading ? Colors.grey : AppColors.sage,
-            ),
-          ),
           style: OutlinedButton.styleFrom(
             backgroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -688,6 +679,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
+          ),
+          child: Icon(
+            Icons.add_photo_alternate_outlined,
+            size: 20,
+            color: isLoading ? Colors.grey : AppColors.sage,
           ),
         ),
       ),
@@ -10452,6 +10448,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                       _trackYelpButtonTapped,
                                                   showSelectEventDialog:
                                                       _showSelectEventDialogForCard,
+                                                  getDetectedEventName:
+                                                      () => _detectedEventInfo?.eventName,
                                                 );
                                               },
                                             ),
@@ -12709,6 +12707,9 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   /// This is temporary/local state only - does NOT persist to settings
   bool _isWebViewMode = false;
 
+  /// Dynamic content height reported by the WebView
+  double? _dynamicContentHeight;
+
   @override
   void dispose() {
     _isDisposed = true;
@@ -12744,6 +12745,22 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   void _handleWebViewCreated(inapp.InAppWebViewController controller) {
     if (!mounted || _isDisposed) return;
     _controller = controller;
+  }
+
+  /// Handle content height changes from the WebView
+  void _handleContentHeightChanged(double height) {
+    if (!mounted || _isDisposed) return;
+    
+    // Only update if height is significantly different to avoid jitter
+    // and ensure we have a reasonable minimum height
+    if (_dynamicContentHeight == null || (height - _dynamicContentHeight!).abs() > 20) {
+      // Ensure minimum height of 400 to avoid tiny previews
+      final newHeight = height < 400.0 ? 400.0 : height;
+      
+      _safeSetState(() {
+        _dynamicContentHeight = newHeight;
+      });
+    }
   }
 
   /// Take a screenshot of the Instagram WebView
@@ -12846,7 +12863,11 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    final double height = _isExpanded ? 2800.0 : 910.0;
+    // Use dynamic height if available for default view, otherwise fallback to 910.0
+    // For expanded view, use fixed large height
+    final double height = _isExpanded 
+        ? 2800.0 
+        : (_dynamicContentHeight ?? 910.0);
 
     // Use a consistent key to prevent widget recreation across rebuilds
     final widgetKey = ValueKey('instagram_preview_${widget.url}');
@@ -12863,6 +12884,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           launchUrlCallback: _handleUrlLaunch,
           onWebViewCreated: _handleWebViewCreated,
           onPageFinished: _handlePageFinished,
+          onContentHeightChanged: _handleContentHeightChanged,
           overrideWebViewMode: _isWebViewMode,
           onRequestWebViewMode: _handleRequestWebViewMode,
         ),
