@@ -98,6 +98,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       GoogleMapsService(); // ADDED: Maps Service
   final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
   bool _isLoading = true;
+  bool _dataLoadDeferred = false;
 
   // Animation controller for smooth marker animations
   AnimationController? _markerAnimationController;
@@ -513,6 +514,14 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   /// Public method to refresh map data (called from MainScreen when experiences are updated)
   Future<void> refreshData() async {
     await _loadDataAndGenerateMarkers();
+  }
+
+  /// Run the deferred data load if one was skipped during the share flow.
+  Future<void> runDeferredLoadIfNeeded() async {
+    if (_dataLoadDeferred) {
+      print("🗺️ MAP SCREEN: Running deferred data load after share flow ended.");
+      await _loadDataAndGenerateMarkers(force: true);
+    }
   }
 
   void _initializeFiltersAndData() {
@@ -1134,7 +1143,16 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return experience.isPrivate;
   }
 
-  Future<void> _loadDataAndGenerateMarkers() async {
+  Future<void> _loadDataAndGenerateMarkers({bool force = false}) async {
+    // Defer heavy loading while the share flow is active -- the map is hidden
+    // behind the ReceiveShareScreen and doesn't need fresh data yet.
+    if (!force && _sharingService.isShareFlowActive) {
+      print("🗺️ MAP SCREEN: Share flow active, deferring data load.");
+      _dataLoadDeferred = true;
+      return;
+    }
+    _dataLoadDeferred = false;
+
     print("🗺️ MAP SCREEN: Starting data load...");
     setState(() {
       _isLoading = true;
@@ -8016,6 +8034,15 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // If data load was deferred (share flow was active) and the share flow has
+    // since ended, trigger the load now that the map is visible again.
+    if (_dataLoadDeferred && !_sharingService.isShareFlowActive) {
+      _dataLoadDeferred = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadDataAndGenerateMarkers(force: true);
+      });
+    }
+
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
 
     // Calculate keyboard height and adjust layout accordingly

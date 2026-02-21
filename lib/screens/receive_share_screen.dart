@@ -301,6 +301,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   String? _lastProcessedUrl;
   // Track URLs that have been auto-scanned to prevent duplicate scans
   final Set<String> _autoScannedUrls = {};
+  // Track URLs where location extraction (Maps grounding or page scan) has already completed
+  final Set<String> _locationExtractionCompletedUrls = {};
 
   // Add flag to prevent double processing
   bool _isProcessingUpdate = false;
@@ -493,7 +495,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 // Scan All Locations button (only show below for non-generic URLs)
                 if (!_isGenericWebUrl()) _buildScanPageContentButton(),
                 // AI Location Extraction loading indicator
-                if (_isExtractingLocation) ...[
+                if (_isExtractingLocation || _isAiScanInProgress) ...[
                   const SizedBox(height: 12),
                   Column(
                     mainAxisSize: MainAxisSize.min,
@@ -564,8 +566,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     ],
                   ),
                 ],
-                // Screenshot processing loading indicator
-                if (_isProcessingScreenshot) ...[
+                // Screenshot processing loading indicator (skip if first chip already visible)
+                if (_isProcessingScreenshot && !_isExtractingLocation && !_isAiScanInProgress) ...[
                   const SizedBox(height: 12),
                   Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1211,6 +1213,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<void> _scanPageContent() async {
     if (_isProcessingScreenshot || _isExtractingLocation) return;
 
+    // Resolve URL before try block so it's accessible in finally for tracking
+    final url = _currentSharedFiles.isNotEmpty
+        ? _extractFirstUrl(_currentSharedFiles.first.path)
+        : null;
+
     setState(() {
       _isProcessingScreenshot = true;
       _isAiScanInProgress = true;
@@ -1226,11 +1233,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       _updateScanProgress(0.1);
       print('📄 SCAN PAGE: Extracting page content...');
-
-      // Get the URL for context
-      final url = _currentSharedFiles.isNotEmpty
-          ? _extractFirstUrl(_currentSharedFiles.first.path)
-          : null;
 
       // Try to extract page content from the active WebView
       String? pageContent = await _tryExtractPageContent();
@@ -1385,6 +1387,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     } finally {
+      if (url != null) _locationExtractionCompletedUrls.add(url);
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
@@ -4895,13 +4898,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      // Skip if location extraction is already in progress
-      if (_isExtractingLocation || _isProcessingScreenshot) {
-        print('📸 INSTAGRAM: Extraction already in progress, skipping');
-        return;
-      }
+      // Yield to the event loop so any pending UI work (e.g. background
+      // experience loading or marker generation) can complete first,
+      // reducing perceived UI freeze.
+      await Future.delayed(Duration.zero);
+      if (!mounted) return;
 
       print('📸 INSTAGRAM: Extracting content from WebView...');
+
+      // Show the "Plendy AI analyzing..." chip immediately so the user sees
+      // progress while the WebView content is being extracted.
+      if (mounted) {
+        setState(() {
+          _isAiScanInProgress = true;
+        });
+      }
 
       // Try to get content from the Instagram preview WebView
       final previewKey = _instagramPreviewKeys[url];
@@ -4928,7 +4939,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             print('--- CLEANED END ---');
 
             if (caption.length > 10) {
-              // Store the extracted content
+              // Always store the caption -- it's useful for the experience card
+              // regardless of whether location extraction proceeds here.
               _storeExtractedContent(
                 caption: caption,
                 sourceUrl: url,
@@ -4939,24 +4951,38 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print('📸 INSTAGRAM: Hashtags: $_extractedHashtags');
               print('📸 INSTAGRAM: Mentions: $_extractedMentions');
 
-              // Use text extraction with Maps grounding (no city context bias)
-              // This is the same approach as Preview Scan's text path, but without OCR
-              print('📸 INSTAGRAM: Using Maps-grounded text extraction...');
-              await _autoExtractWithMapsGrounding(url);
+              // Only proceed to Maps grounding if no other extraction is active
+              // or already completed for this URL.
+              if (_isExtractingLocation || _isProcessingScreenshot) {
+                print('📸 INSTAGRAM: Another extraction in progress, skipping Maps grounding (caption stored)');
+                if (mounted) setState(() => _isAiScanInProgress = false);
+              } else if (_locationExtractionCompletedUrls.contains(url)) {
+                print('📸 INSTAGRAM: Extraction already completed for this URL, skipping Maps grounding (caption stored)');
+                if (mounted) setState(() => _isAiScanInProgress = false);
+              } else {
+                // _autoExtractWithMapsGrounding sets its own flags and clears
+                // _isAiScanInProgress in its finally block.
+                print('📸 INSTAGRAM: Using Maps-grounded text extraction...');
+                await _autoExtractWithMapsGrounding(url);
+              }
             } else {
               print('⚠️ INSTAGRAM: Caption too short after cleaning');
+              if (mounted) setState(() => _isAiScanInProgress = false);
               _showInstagramScanHint();
             }
           } else {
             print('⚠️ INSTAGRAM: No useful content in WebView');
+            if (mounted) setState(() => _isAiScanInProgress = false);
             _showInstagramScanHint();
           }
         } catch (e) {
           print('❌ INSTAGRAM EXTRACT ERROR: $e');
+          if (mounted) setState(() => _isAiScanInProgress = false);
           _showInstagramScanHint();
         }
       } else {
         print('⚠️ INSTAGRAM: No preview widget available yet');
+        if (mounted) setState(() => _isAiScanInProgress = false);
         _showInstagramScanHint();
       }
     });
@@ -5531,6 +5557,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } finally {
       // Disable wakelock and stop foreground service
       print('🔍 MAPS GROUNDING: Finally block - cleaning up');
+      _locationExtractionCompletedUrls.add(sourceUrl);
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
       if (mounted) {
@@ -7493,6 +7520,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (contentChanged) {
       print('🔄 SHARE: Content changed, clearing auto-scan state');
       _autoScannedUrls.clear();
+      _locationExtractionCompletedUrls.clear();
       _facebookUrlsProcessed.clear();
       _tiktokCaptionsProcessed.clear();
       _instagramUrlsProcessed.clear();
@@ -10895,7 +10923,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
-  /// Called when Instagram preview finishes loading - auto-triggers location scan
+  /// Called when Instagram preview finishes loading.
+  ///
+  /// For Instagram, _scheduleInstagramWebViewExtraction (5s timer) is the
+  /// primary extraction path: it extracts the caption from the WebView and
+  /// feeds it to the lighter Maps-grounded extraction. This callback only
+  /// serves as a fallback -- if the caption was already extracted but Maps
+  /// grounding hasn't run yet, it triggers it here. We intentionally avoid
+  /// calling _scanPageContent because it would redundantly re-extract the
+  /// same WebView content and use the heavier full-page Gemini scan.
   void _onInstagramPageLoaded(String url) {
     // Only auto-scan once per URL
     if (_autoScannedUrls.contains(url)) {
@@ -10915,19 +10951,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print(
         '🚀 AUTO-SCAN: Instagram preview loaded, waiting for embed to render...');
 
-    // Longer delay for Instagram to ensure embed.js fully renders the content
-    // Instagram embeds need more time for the JavaScript to:
-    // 1. Load embed.js from instagram.com
-    // 2. Process the blockquote and create an iframe
-    // 3. Load the actual Instagram content in the iframe
-    // 4 seconds gives time for all of this to complete
     Future.delayed(const Duration(milliseconds: 4000), () async {
       if (!mounted || _isProcessingScreenshot || _isExtractingLocation) {
         return;
       }
+      if (_locationExtractionCompletedUrls.contains(url)) {
+        print('🔄 AUTO-SCAN: Location extraction already completed for $url, skipping');
+        return;
+      }
       if (!await _shouldAutoExtractLocations()) return;
-      print('🚀 AUTO-SCAN: Starting Instagram location scan...');
-      _scanPageContent();
+
+      // If the caption was already extracted by _scheduleInstagramWebViewExtraction
+      // but Maps grounding hasn't run yet, trigger the lighter path here.
+      if (_extractedCaption != null && _extractedFromUrl == url) {
+        print('🚀 AUTO-SCAN: Caption already available, running Maps grounding...');
+        await _autoExtractWithMapsGrounding(url);
+        return;
+      }
+
+      // Caption not yet available -- _scheduleInstagramWebViewExtraction is
+      // likely still running. Let it finish; failures show a hint toast for
+      // manual scanning.
+      print('🔄 AUTO-SCAN: Instagram caption extraction still pending, deferring to WebView extraction path');
     });
   }
 
@@ -12955,26 +13000,29 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
             padding: EdgeInsets.zero,
             onPressed: () => _handleUrlLaunch(widget.url),
           ),
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                icon: Icon(
-                    _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-                iconSize: 24,
-                color: AppColors.teal,
-                tooltip: _isExpanded ? 'Collapse' : 'Expand',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                onPressed: () {
-                  _safeSetState(() {
-                    _isExpanded = !_isExpanded;
-                    widget.onExpansionChanged?.call(_isExpanded, widget.url);
-                  });
-                },
+          if (_isWebViewMode)
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  icon: Icon(
+                      _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                  iconSize: 24,
+                  color: AppColors.teal,
+                  tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  onPressed: () {
+                    _safeSetState(() {
+                      _isExpanded = !_isExpanded;
+                      widget.onExpansionChanged?.call(_isExpanded, widget.url);
+                    });
+                  },
+                ),
               ),
-            ),
-          ),
+            )
+          else
+            const Expanded(child: SizedBox()),
         ],
       ),
     );
