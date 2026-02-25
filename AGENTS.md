@@ -34,4 +34,6 @@ The update script handles creating these placeholders automatically.
 
 - `api_secrets.dart` template is missing fields that the codebase references (`geminiApiKey`, `facebookAppId`, `facebookAppSecret`, `facebookAccessToken`). The update script creates the file with all required fields using placeholder values.
 - `flutter analyze` exits non-zero due to ~3300 pre-existing lint warnings — this is normal for this codebase.
-- The app connects to the live Firebase project `plendy-7df50`. Full end-to-end testing (login, data operations) requires valid Firebase credentials and API keys.
+- The app connects to the live Firebase project `plendy-7df50`. Login and data operations work with the live backend using test credentials (`PLENDY_TEST_EMAIL` / `PLENDY_TEST_PASSWORD` env vars).
+- The Map tab requires a valid Google Maps API key in `web/index.html` and `api_secrets.dart`; with placeholder keys it shows "Oops! Something went wrong" — all other tabs work without real API keys.
+- Cloud Functions ESLint has pre-existing `linebreak-style` errors (CRLF vs LF); use `npm run lint` (includes `--fix`) rather than bare `npx eslint .`.
