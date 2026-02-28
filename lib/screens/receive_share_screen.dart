@@ -38,7 +38,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
 import '../widgets/select_saved_experience_modal_content.dart'; // Attempting relative import again
 import '../widgets/privacy_toggle_button.dart';
-import 'receive_share/widgets/privacy_tooltip_icon.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
@@ -69,6 +68,40 @@ import '../config/api_secrets.dart'
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../models/help_flow_state.dart';
+import '../models/receive_share_help_target.dart';
+import '../config/receive_share_help_content.dart';
+import '../models/help_target.dart';
+import '../widgets/help_bubble.dart';
+import '../widgets/help_spotlight_painter.dart';
+
+Rect? _resolveTargetRect(BuildContext ctx) {
+  final renderObject = ctx.findRenderObject();
+  final box = renderObject is RenderBox && renderObject.hasSize
+      ? renderObject
+      : (ctx is Element ? _findNearestDescendantRenderBox(ctx) : null) ??
+          ctx.findAncestorRenderObjectOfType<RenderBox>();
+  if (box == null || !box.hasSize) return null;
+  final topLeft = box.localToGlobal(Offset.zero);
+  return topLeft & box.size;
+}
+
+RenderBox? _findNearestDescendantRenderBox(Element element) {
+  final children = <Element>[];
+  element.visitChildren(children.add);
+
+  for (final child in children) {
+    final ro = child.renderObject;
+    if (ro is RenderBox && ro.hasSize) return ro;
+  }
+
+  for (final child in children) {
+    final nested = _findNearestDescendantRenderBox(child);
+    if (nested != null) return nested;
+  }
+
+  return null;
+}
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -97,6 +130,8 @@ class _ExperienceCardsSection extends StatelessWidget {
   final void Function(ExperienceCardData card)?
       showSelectEventDialog; // ADDED: Show event selection dialog for a specific card
   final String? Function()? getDetectedEventName;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const _ExperienceCardsSection({
     super.key,
@@ -117,6 +152,8 @@ class _ExperienceCardsSection extends StatelessWidget {
     this.onYelpButtonTapped, // ADDED
     this.showSelectEventDialog, // ADDED
     this.getDetectedEventName,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -204,6 +241,8 @@ class _ExperienceCardsSection extends StatelessWidget {
                           : null,
                       selectedEventTitle: card.selectedEvent?.title,
                       getDetectedEventName: getDetectedEventName,
+                      isHelpMode: isHelpMode,
+                      onHelpTap: onHelpTap,
                     );
                   }),
             if (!isSpecialUrl(currentSharedFiles.isNotEmpty
@@ -215,19 +254,28 @@ class _ExperienceCardsSection extends StatelessWidget {
                     color: AppColors.backgroundColorDark,
                     padding: const EdgeInsets.only(top: 12.0),
                     child: Center(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Another Experience'),
-                        onPressed: () {
-                          addExperienceCard();
-                        },
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 12, horizontal: 24),
-                          side: BorderSide(
-                              color: Theme.of(context).colorScheme.primary),
-                        ),
-                      ),
+                      child: Builder(builder: (addBtnCtx) {
+                        return OutlinedButton.icon(
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Another Experience'),
+                          onPressed: () {
+                            if (onHelpTap != null &&
+                                onHelpTap!(
+                                    ReceiveShareHelpTargetId
+                                        .addAnotherExperienceButton,
+                                    addBtnCtx)) {
+                              return;
+                            }
+                            addExperienceCard();
+                          },
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 12, horizontal: 24),
+                            side: BorderSide(
+                                color: Theme.of(context).colorScheme.primary),
+                          ),
+                        );
+                      }),
                     ),
                   ),
                   Container(
@@ -260,7 +308,7 @@ class ReceiveShareScreen extends StatefulWidget {
 }
 
 class _ReceiveShareScreenState extends State<ReceiveShareScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   // Services
   final ExperienceService _experienceService = ExperienceService();
   final CategoryOrderingService _categoryOrderingService =
@@ -286,6 +334,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _isCategorizing = false;
   // Track scan progress (0.0 to 1.0)
   double _scanProgress = 0.0;
+  // Token used to invalidate stale async scan work after user cancellation
+  int _analysisSessionId = 0;
   // Store pending scan results to apply when app returns to foreground
   List<ExtractedLocationData>? _pendingScanResults;
   String? _pendingScanSingleMessage; // Toast message for single result
@@ -382,6 +432,162 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Event service for managing events
   final EventService _eventService = EventService();
 
+  // ─── Help mode state ──────────────────────────────────────
+  late final HelpFlowState<ReceiveShareHelpTargetId> _helpFlow;
+  late final AnimationController _spotlightController;
+  final GlobalKey _helpButtonKey = GlobalKey();
+  final GlobalKey<HelpBubbleState> _helpBubbleKey = GlobalKey();
+  bool _isHelpTyping = false;
+
+  void _toggleHelpMode() {
+    triggerHeavyHaptic();
+    setState(() {
+      final nowActive = _helpFlow.toggle();
+      if (nowActive) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _helpButtonKey.currentContext != null) {
+            _showHelpForTarget(ReceiveShareHelpTargetId.helpButton,
+                _helpButtonKey.currentContext!);
+          }
+        });
+      }
+    });
+  }
+
+  void _showHelpForTarget(ReceiveShareHelpTargetId id, BuildContext targetCtx) {
+    final rect = _resolveTargetRect(targetCtx);
+    if (rect == null) return;
+    setState(() {
+      _helpFlow.showTarget(id, rect);
+      _isHelpTyping = true;
+    });
+  }
+
+  void _advanceHelpStep() {
+    setState(() {
+      _helpFlow.advance();
+      if (_helpFlow.hasActiveTarget) {
+        _isHelpTyping = true;
+      }
+    });
+  }
+
+  void _dismissHelpBubble() {
+    setState(() {
+      _helpFlow.dismiss();
+      _isHelpTyping = false;
+    });
+  }
+
+  void _onHelpBarrierTap() {
+    if (_isHelpTyping) {
+      _helpBubbleKey.currentState?.skipTypewriter();
+    } else {
+      _advanceHelpStep();
+    }
+  }
+
+  bool _tryHelpTap(ReceiveShareHelpTargetId id, BuildContext targetCtx) {
+    if (!_helpFlow.isActive) return false;
+    triggerHeavyHaptic();
+    _showHelpForTarget(id, targetCtx);
+    return true;
+  }
+
+  Widget _buildHelpOverlay() {
+    final flow = _helpFlow;
+    final spec = flow.activeSpec;
+    final step = flow.activeHelpStep;
+
+    return Positioned.fill(
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 200),
+        opacity: flow.hasActiveTarget ? 1.0 : 0.0,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _onHelpBarrierTap,
+          child: Stack(
+            children: [
+              if (flow.activeTargetRect != null)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _spotlightController,
+                    builder: (context, _) => CustomPaint(
+                      painter: HelpSpotlightPainter(
+                        targetRect: flow.activeTargetRect!,
+                        glowProgress: _spotlightController.value,
+                      ),
+                    ),
+                  ),
+                ),
+              if (spec != null && step != null && flow.activeTargetRect != null)
+                HelpBubble(
+                  key: _helpBubbleKey,
+                  text: step.text,
+                  instruction: step.instruction,
+                  isLastStep: flow.isLastStep,
+                  targetRect: flow.activeTargetRect!,
+                  onAdvance: _advanceHelpStep,
+                  onDismiss: _dismissHelpBubble,
+                  onTypingStarted: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = true);
+                    });
+                  },
+                  onTypingFinished: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = false);
+                    });
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHelpBanner() {
+    if (!_helpFlow.isActive) return const SizedBox.shrink();
+    return GestureDetector(
+      onTap: _toggleHelpMode,
+      child: AnimatedBuilder(
+        animation: _spotlightController,
+        builder: (context, _) {
+          final opacity = 0.6 + 0.4 * _spotlightController.value;
+          return Opacity(
+            opacity: opacity,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              color: AppColors.teal.withValues(alpha: 0.08),
+              child: Text(
+                'Help mode is ON  •  Tap here to exit',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppColors.teal,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _pauseHelpForDialog() {
+    if (_helpFlow.isActive) {
+      setState(() => _helpFlow.pause());
+    }
+  }
+
+  void _resumeHelpAfterDialog() {
+    setState(() => _helpFlow.resume());
+  }
+  // ─── End help mode state ──────────────────────────────────
+
   Widget _buildSharedUrlBar({required bool showInstructions}) {
     // Rebuilds show suffix icons immediately based on controller text
     return StatefulBuilder(
@@ -397,83 +603,121 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: _sharedUrlController,
-                  focusNode: _sharedUrlFocusNode,
-                  autofocus: widget.requireUrlFirst && !_didDeferredInit,
-                  keyboardType: TextInputType.url,
-                  decoration: InputDecoration(
-                    labelText: 'Shared URL',
-                    hintText: 'https://... or paste content with a URL',
-                    border: const OutlineInputBorder(),
-                    enabledBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: AppColors.backgroundColorDark,
+                Builder(builder: (urlFieldCtx) {
+                  return TextField(
+                    controller: _sharedUrlController,
+                    focusNode: _sharedUrlFocusNode,
+                    autofocus: widget.requireUrlFirst && !_didDeferredInit,
+                    keyboardType: TextInputType.url,
+                    readOnly: _helpFlow.isActive,
+                    decoration: InputDecoration(
+                      labelText: 'Shared URL',
+                      hintText: 'https://... or paste content with a URL',
+                      border: const OutlineInputBorder(),
+                      enabledBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: AppColors.backgroundColorDark,
+                        ),
                       ),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: AppColors.backgroundColorDark,
-                        width: 2,
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: AppColors.backgroundColorDark,
+                          width: 2,
+                        ),
                       ),
-                    ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    prefixIcon: const Icon(Icons.link),
-                    contentPadding: const EdgeInsets.symmetric(
-                        vertical: 8.0, horizontal: 12.0),
-                    suffixIconConstraints: const BoxConstraints.tightFor(
-                      width: 120,
-                      height: 40,
-                    ),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (_sharedUrlController.text.isNotEmpty)
-                          InkWell(
-                            onTap: withHeavyTap(() {
-                              _sharedUrlController.clear();
-                              setInnerState(() {});
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon: const Icon(Icons.link),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 8.0, horizontal: 12.0),
+                      suffixIconConstraints: const BoxConstraints.tightFor(
+                        width: 120,
+                        height: 40,
+                      ),
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          if (_sharedUrlController.text.isNotEmpty)
+                            Builder(builder: (clearCtx) {
+                              return InkWell(
+                                onTap: withHeavyTap(() {
+                                  if (_tryHelpTap(
+                                      ReceiveShareHelpTargetId.urlClearButton,
+                                      clearCtx)) {
+                                    return;
+                                  }
+                                  _sharedUrlController.clear();
+                                  setInnerState(() {});
+                                }),
+                                borderRadius: BorderRadius.circular(16),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(4.0),
+                                  child: Icon(Icons.clear, size: 22),
+                                ),
+                              );
                             }),
-                            borderRadius: BorderRadius.circular(16),
-                            child: const Padding(
-                              padding: EdgeInsets.all(4.0),
-                              child: Icon(Icons.clear, size: 22),
-                            ),
-                          ),
-                        if (_sharedUrlController.text.isNotEmpty)
-                          const SizedBox(width: 4),
-                        InkWell(
-                          onTap: withHeavyTap(() async {
-                            await _pasteSharedUrlFromClipboard();
-                            setInnerState(() {});
+                          if (_sharedUrlController.text.isNotEmpty)
+                            const SizedBox(width: 4),
+                          Builder(builder: (pasteCtx) {
+                            return InkWell(
+                              onTap: withHeavyTap(() async {
+                                if (_tryHelpTap(
+                                    ReceiveShareHelpTargetId.urlPasteButton,
+                                    pasteCtx)) {
+                                  return;
+                                }
+                                await _pasteSharedUrlFromClipboard();
+                                setInnerState(() {});
+                              }),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: const Icon(Icons.content_paste,
+                                    size: 22, color: Color(0xFF1F2A44)),
+                              ),
+                            );
                           }),
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: const EdgeInsets.all(4.0),
-                            child: const Icon(Icons.content_paste,
-                                size: 22, color: Color(0xFF1F2A44)),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        InkWell(
-                          onTap: withHeavyTap(_handleSharedUrlSubmit),
-                          borderRadius: BorderRadius.circular(16),
-                          child: const Padding(
-                            padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
-                            child: Icon(Icons.arrow_circle_right,
-                                size: 22, color: Color(0xFF1F2A44)),
-                          ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Builder(builder: (submitCtx) {
+                            return InkWell(
+                              onTap: withHeavyTap(() {
+                                if (_tryHelpTap(
+                                    ReceiveShareHelpTargetId.urlSubmitButton,
+                                    submitCtx)) {
+                                  return;
+                                }
+                                _handleSharedUrlSubmit();
+                              }),
+                              borderRadius: BorderRadius.circular(16),
+                              child: const Padding(
+                                padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
+                                child: Icon(Icons.arrow_circle_right,
+                                    size: 22, color: Color(0xFF1F2A44)),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
                     ),
-                  ),
-                  onSubmitted: (_) => _handleSharedUrlSubmit(),
-                  onChanged: (_) {
-                    setInnerState(() {});
-                  },
-                ),
+                    onTap: () {
+                      if (_tryHelpTap(ReceiveShareHelpTargetId.urlInputField,
+                          urlFieldCtx)) {
+                        return;
+                      }
+                    },
+                    onSubmitted: (_) {
+                      if (_tryHelpTap(ReceiveShareHelpTargetId.urlSubmitButton,
+                          urlFieldCtx)) {
+                        return;
+                      }
+                      _handleSharedUrlSubmit();
+                    },
+                    onChanged: (_) {
+                      setInnerState(() {});
+                    },
+                  );
+                }),
                 if (showInstructions) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -500,47 +744,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: AppColors.wineLight.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: AppColors.wineLight.withOpacity(0.35)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                    AppColors.wineLight),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Image.asset(
-                              'assets/icon/icon-cropped.png',
-                              width: 16,
-                              height: 16,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _isCategorizing
-                                  ? 'Categorizing...'
-                                  : 'Plendy AI analyzing...',
-                              style: TextStyle(
-                                color: AppColors.wineLight,
-                                fontWeight: FontWeight.w500,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      _buildAnalyzingChip(),
                       const SizedBox(height: 8),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(4),
@@ -567,52 +771,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ),
                 ],
                 // Screenshot processing loading indicator (skip if first chip already visible)
-                if (_isProcessingScreenshot && !_isExtractingLocation && !_isAiScanInProgress) ...[
+                if (_isProcessingScreenshot &&
+                    !_isExtractingLocation &&
+                    !_isAiScanInProgress) ...[
                   const SizedBox(height: 12),
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: AppColors.wineLight.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: AppColors.wineLight.withOpacity(0.35)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                    AppColors.wineLight),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Image.asset(
-                              'assets/icon/icon-cropped.png',
-                              width: 16,
-                              height: 16,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _isCategorizing
-                                  ? 'Categorizing...'
-                                  : 'Plendy AI analyzing...',
-                              style: TextStyle(
-                                color: AppColors.wineLight,
-                                fontWeight: FontWeight.w500,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      _buildAnalyzingChip(),
                       const SizedBox(height: 8),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(4),
@@ -646,8 +812,110 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
+  Widget _buildAnalyzingChip() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: _cancelActiveAnalysis,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.wineLight.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.wineLight.withOpacity(0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(AppColors.wineLight),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Image.asset(
+                'assets/icon/icon-cropped.png',
+                width: 16,
+                height: 16,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _isCategorizing ? 'Categorizing...' : 'Plendy AI analyzing...',
+                style: TextStyle(
+                  color: AppColors.wineLight,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.close,
+                size: 14,
+                color: AppColors.wineLight,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  int _startAnalysisSession() {
+    _analysisSessionId += 1;
+    return _analysisSessionId;
+  }
+
+  bool _isAnalysisSessionActive(int sessionId) {
+    return mounted && sessionId == _analysisSessionId;
+  }
+
+  Future<void> _cancelActiveAnalysis() async {
+    final hadActiveAnalysis = _isProcessingScreenshot ||
+        _isExtractingLocation ||
+        _isAiScanInProgress ||
+        _isCategorizing;
+
+    _analysisSessionId += 1;
+    _locationUpdateDebounce?.cancel();
+    _pendingScanResults = null;
+    _pendingScanSingleMessage = null;
+    _pendingDeepScanProvider = null;
+    _pendingDeepScanEventInfo = null;
+    _pendingDeepScanConfirmedLocations = null;
+
+    if (mounted) {
+      final provider = context.read<ReceiveShareProvider>();
+      for (final card in provider.experienceCards) {
+        card.isSelectingLocation = false;
+      }
+      setState(() {
+        _isProcessingScreenshot = false;
+        _isExtractingLocation = false;
+        _isAiScanInProgress = false;
+        _isCategorizing = false;
+        _scanProgress = 0.0;
+      });
+    }
+
+    WakelockPlus.disable();
+    await _foregroundScanService.stopScanService();
+
+    if (hadActiveAnalysis) {
+      Fluttertoast.showToast(
+        msg: 'Analysis canceled',
+        toastLength: Toast.LENGTH_SHORT,
+      );
+    }
+  }
+
   /// Helper method to update scan progress
-  void _updateScanProgress(double progress) {
+  void _updateScanProgress(double progress, {int? sessionId}) {
+    if (sessionId != null && sessionId != _analysisSessionId) return;
     if (mounted) {
       setState(() {
         _scanProgress = progress.clamp(0.0, 1.0);
@@ -670,24 +938,35 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: OutlinedButton(
-          onPressed: isLoading ? null : _showScreenshotUploadOptions,
-          style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            side: BorderSide(
-              color: isLoading ? Colors.grey[300]! : AppColors.sage,
+        child: Builder(builder: (screenshotBtnCtx) {
+          return OutlinedButton(
+            onPressed: isLoading
+                ? null
+                : () {
+                    if (_tryHelpTap(
+                        ReceiveShareHelpTargetId.screenshotUploadButton,
+                        screenshotBtnCtx)) {
+                      return;
+                    }
+                    _showScreenshotUploadOptions();
+                  },
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              side: BorderSide(
+                color: isLoading ? Colors.grey[300]! : AppColors.sage,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+            child: Icon(
+              Icons.add_photo_alternate_outlined,
+              size: 20,
+              color: isLoading ? Colors.grey : AppColors.sage,
             ),
-          ),
-          child: Icon(
-            Icons.add_photo_alternate_outlined,
-            size: 20,
-            color: isLoading ? Colors.grey : AppColors.sage,
-          ),
-        ),
+          );
+        }),
       ),
     );
   }
@@ -733,35 +1012,46 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: OutlinedButton.icon(
-          onPressed: (isLoading || !hasPreview) ? null : _scanCurrentPreview,
-          icon: Icon(
-            Icons.screenshot_monitor,
-            size: 20,
-            color: (isLoading || !hasPreview)
-                ? Colors.grey
-                : const Color(0xFF2F6F6D),
-          ),
-          label: Text(
-            buttonText,
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              color: (isLoading || !hasPreview) ? Colors.grey : AppColors.teal,
-            ),
-          ),
-          style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            side: BorderSide(
+        child: Builder(builder: (scanBtnCtx) {
+          return OutlinedButton.icon(
+            onPressed: (isLoading || !hasPreview)
+                ? null
+                : () {
+                    if (_tryHelpTap(
+                        ReceiveShareHelpTargetId.scanButton, scanBtnCtx)) {
+                      return;
+                    }
+                    _scanCurrentPreview();
+                  },
+            icon: Icon(
+              Icons.screenshot_monitor,
+              size: 20,
               color: (isLoading || !hasPreview)
-                  ? Colors.grey[300]!
+                  ? Colors.grey
                   : const Color(0xFF2F6F6D),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+            label: Text(
+              buttonText,
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color:
+                    (isLoading || !hasPreview) ? Colors.grey : AppColors.teal,
+              ),
             ),
-          ),
-        ),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              side: BorderSide(
+                color: (isLoading || !hasPreview)
+                    ? Colors.grey[300]!
+                    : const Color(0xFF2F6F6D),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
@@ -774,33 +1064,43 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: OutlinedButton.icon(
-          onPressed: (isLoading || !hasPreview) ? null : _scanPageContent,
-          icon: Icon(
-            Icons.article_outlined,
-            size: 20,
-            color:
-                (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
-          ),
-          label: const Text(
-            'Scan Locations',
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
+        child: Builder(builder: (scanBtnCtx) {
+          return OutlinedButton.icon(
+            onPressed: (isLoading || !hasPreview)
+                ? null
+                : () {
+                    if (_tryHelpTap(
+                        ReceiveShareHelpTargetId.scanButton, scanBtnCtx)) {
+                      return;
+                    }
+                    _scanPageContent();
+                  },
+            icon: Icon(
+              Icons.article_outlined,
+              size: 20,
+              color:
+                  (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
             ),
-          ),
-          style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            side: BorderSide(
-              color: (isLoading || !hasPreview)
-                  ? Colors.grey[300]!
-                  : Colors.purple[300]!,
+            label: const Text(
+              'Scan Locations',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+              ),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              side: BorderSide(
+                color: (isLoading || !hasPreview)
+                    ? Colors.grey[300]!
+                    : Colors.purple[300]!,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-          ),
-        ),
+          );
+        }),
       ),
     );
   }
@@ -832,35 +1132,46 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       padding: const EdgeInsets.only(left: 4, top: 8),
       child: SizedBox(
         width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: (isLoading || !hasPreview) ? null : _scanPageContent,
-          icon: Icon(
-            Icons.article_outlined,
-            size: 20,
-            color:
-                (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
-          ),
-          label: Text(
-            'Scan Locations',
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
+        child: Builder(builder: (scanBtnCtx) {
+          return OutlinedButton.icon(
+            onPressed: (isLoading || !hasPreview)
+                ? null
+                : () {
+                    if (_tryHelpTap(
+                        ReceiveShareHelpTargetId.scanButton, scanBtnCtx)) {
+                      return;
+                    }
+                    _scanPageContent();
+                  },
+            icon: Icon(
+              Icons.article_outlined,
+              size: 20,
               color:
                   (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
             ),
-          ),
-          style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            side: BorderSide(
-              color: (isLoading || !hasPreview)
-                  ? Colors.grey[300]!
-                  : Colors.purple[300]!,
+            label: Text(
+              'Scan Locations',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color: (isLoading || !hasPreview)
+                    ? Colors.grey
+                    : Colors.purple[700],
+              ),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              side: BorderSide(
+                color: (isLoading || !hasPreview)
+                    ? Colors.grey[300]!
+                    : Colors.purple[300]!,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-          ),
-        ),
+          );
+        }),
       ),
     );
   }
@@ -1033,6 +1344,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return _scanPreviewCombined();
     }
 
+    final scanSessionId = _startAnalysisSession();
+
     // For other platforms, use standard screenshot-only scan
     setState(() {
       _isProcessingScreenshot = true;
@@ -1045,14 +1358,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
       print('📷 SCAN PREVIEW: Capturing WebView content...');
 
       // Try to capture the WebView screenshot from any active preview
       Uint8List? screenshotBytes = await _tryCaptureaActiveWebView();
-      _updateScanProgress(0.25);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.25, sessionId: scanSessionId);
 
       if (screenshotBytes == null || screenshotBytes.isEmpty) {
         Fluttertoast.showToast(
@@ -1066,7 +1381,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print(
           '📷 SCAN PREVIEW: Captured ${screenshotBytes.length} bytes, sending to AI...');
-      _updateScanProgress(0.35);
+      _updateScanProgress(0.35, sessionId: scanSessionId);
 
       // Get user location for better results
       LatLng? userLocation;
@@ -1078,7 +1393,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // Process the captured image
-      _updateScanProgress(0.45);
+      _updateScanProgress(0.45, sessionId: scanSessionId);
       final result = await _locationExtractor.extractLocationsFromImageBytes(
         screenshotBytes,
         mimeType: 'image/png',
@@ -1086,15 +1401,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         onProgress: (current, total, phase) {
           // Map progress from 0.45 to 0.85 range
           if (current == 0) {
-            _updateScanProgress(0.50); // AI analysis
+            _updateScanProgress(0.50, sessionId: scanSessionId); // AI analysis
           } else {
             final progress = 0.50 + (0.35 * current / total);
-            _updateScanProgress(progress);
+            _updateScanProgress(progress, sessionId: scanSessionId);
           }
         },
       );
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
       final locations = result.locations;
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -1121,7 +1437,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCAN PREVIEW: Found ${locations.length} location(s)');
-      _updateScanProgress(0.88);
+      _updateScanProgress(0.88, sessionId: scanSessionId);
 
       // Try to detect event information from available text content
       // Priority 1: WebView extracted caption (e.g., from Instagram/TikTok)
@@ -1131,6 +1447,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (_extractedCaption != null && _extractedCaption!.isNotEmpty) {
         print('📅 SCAN PREVIEW: Checking WebView caption for event info...');
         detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
 
       // Check location metadata for extracted text if no event found yet
@@ -1143,13 +1460,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print(
                   '📅 SCAN PREVIEW: Checking location metadata for event info...');
               detectedEvent = await _detectEventFromTextAsync(extractedText);
+              if (!_isAnalysisSessionActive(scanSessionId)) return;
               if (detectedEvent != null) break;
             }
           }
         }
       }
 
-      _updateScanProgress(0.95);
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -1169,7 +1487,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         detectedEventInfo: detectedEvent,
         scannedText: scannedTextForDialog,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -1178,7 +1497,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCAN PREVIEW ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -1189,7 +1508,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
@@ -1199,7 +1518,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -1217,6 +1538,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final url = _currentSharedFiles.isNotEmpty
         ? _extractFirstUrl(_currentSharedFiles.first.path)
         : null;
+    final scanSessionId = _startAnalysisSession();
 
     setState(() {
       _isProcessingScreenshot = true;
@@ -1229,14 +1551,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
       print('📄 SCAN PAGE: Extracting page content...');
 
       // Try to extract page content from the active WebView
       String? pageContent = await _tryExtractPageContent();
-      _updateScanProgress(0.25);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.25, sessionId: scanSessionId);
 
       if (pageContent == null || pageContent.isEmpty) {
         Fluttertoast.showToast(
@@ -1250,7 +1574,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print(
           '📄 SCAN PAGE: Extracted ${pageContent.length} characters, sending to Gemini...');
-      _updateScanProgress(0.35);
+      _updateScanProgress(0.35, sessionId: scanSessionId);
 
       // Get user location for better results
       LatLng? userLocation;
@@ -1262,14 +1586,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // Process with Gemini
-      _updateScanProgress(0.45);
+      _updateScanProgress(0.45, sessionId: scanSessionId);
       final geminiService = GeminiService();
       final result = await geminiService.extractLocationsFromWebPage(
         pageContent,
         pageUrl: url,
         userLocation: userLocation,
       );
-      _updateScanProgress(0.75);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.75, sessionId: scanSessionId);
 
       // Convert Gemini results to ExtractedLocationData first (doesn't need mounted)
       List<ExtractedLocationData> locations = [];
@@ -1314,13 +1639,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // If any locations are missing coordinates (grounding failed), try to resolve via Places API
-      final locationsWithoutCoords = locations.where((loc) => loc.coordinates == null).length;
+      final locationsWithoutCoords =
+          locations.where((loc) => loc.coordinates == null).length;
       if (locationsWithoutCoords > 0) {
-        print('🔍 SCAN PAGE: $locationsWithoutCoords location(s) missing coordinates, resolving via Places API...');
-        _updateScanProgress(0.80);
-        locations = await _resolveLocationsWithoutCoordinates(locations, userLocation);
-        final resolvedCount = locations.where((loc) => loc.coordinates != null).length;
-        print('✅ SCAN PAGE: Resolved ${resolvedCount}/${locations.length} location(s) with coordinates');
+        print(
+            '🔍 SCAN PAGE: $locationsWithoutCoords location(s) missing coordinates, resolving via Places API...');
+        _updateScanProgress(0.80, sessionId: scanSessionId);
+        locations =
+            await _resolveLocationsWithoutCoordinates(locations, userLocation);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
+        final resolvedCount =
+            locations.where((loc) => loc.coordinates != null).length;
+        print(
+            '✅ SCAN PAGE: Resolved ${resolvedCount}/${locations.length} location(s) with coordinates');
       }
 
       // Check if mounted - if not, store results to apply when app resumes
@@ -1346,16 +1677,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
 
       // Try to detect event information from the page content
       ExtractedEventInfo? detectedEvent;
       if (pageContent.isNotEmpty) {
         print('📅 SCAN PAGE: Checking page content for event info...');
         detectedEvent = await _detectEventFromTextAsync(pageContent);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
 
-      _updateScanProgress(0.95);
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -1370,7 +1702,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         detectedEventInfo: detectedEvent,
         scannedText: pageContent,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -1379,7 +1712,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCAN PAGE ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -1391,7 +1724,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
@@ -1401,7 +1734,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -1416,6 +1751,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   /// 2. Text extraction gets captions, handles, and uses Maps grounding for accuracy
   Future<void> _scanPreviewCombined() async {
     if (_isProcessingScreenshot || _isExtractingLocation) return;
+    final scanSessionId = _startAnalysisSession();
 
     setState(() {
       _isProcessingScreenshot = true;
@@ -1428,9 +1764,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan (prevents interruption when minimized)
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
       print(
           '🔄 COMBINED SCAN: Starting both screenshot and text extraction...');
 
@@ -1447,7 +1784,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.2);
+      _updateScanProgress(0.2, sessionId: scanSessionId);
 
       // Run both extraction methods in parallel
       // The screenshot extraction reports per-location progress
@@ -1458,17 +1795,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // Map progress from 0.2 to 0.75 range
             // Phase 0 = AI analysis (0.2-0.35), Phase 1+ = verifying locations (0.35-0.75)
             if (current == 0) {
-              _updateScanProgress(0.25); // AI analysis starting
+              _updateScanProgress(0.25,
+                  sessionId: scanSessionId); // AI analysis starting
             } else {
               // Location verification: spread 0.35-0.75 across all locations
               final progress = 0.35 + (0.40 * current / total);
-              _updateScanProgress(progress);
+              _updateScanProgress(progress, sessionId: scanSessionId);
             }
           },
         ),
         _extractLocationsFromPageText(url, userLocation),
       ]);
-      _updateScanProgress(0.75);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.75, sessionId: scanSessionId);
 
       final screenshotLocations = results[0];
       final textLocations = results[1];
@@ -1483,20 +1822,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Text extraction results have Maps grounding and are more accurate
       var mergedLocations =
           _mergeExtractedLocations(textLocations, screenshotLocations);
-      _updateScanProgress(0.80);
+      _updateScanProgress(0.80, sessionId: scanSessionId);
 
       print(
           '🔄 COMBINED SCAN: Merged to ${mergedLocations.length} unique location(s)');
 
       // If any locations are missing coordinates (grounding failed), try to resolve via Places API
-      final locationsWithoutCoords = mergedLocations.where((loc) => loc.coordinates == null).length;
+      final locationsWithoutCoords =
+          mergedLocations.where((loc) => loc.coordinates == null).length;
       if (locationsWithoutCoords > 0) {
-        print('🔍 COMBINED SCAN: $locationsWithoutCoords location(s) missing coordinates, resolving via Places API...');
-        mergedLocations = await _resolveLocationsWithoutCoordinates(mergedLocations, userLocation);
-        final resolvedCount = mergedLocations.where((loc) => loc.coordinates != null).length;
-        print('✅ COMBINED SCAN: Resolved ${resolvedCount}/${mergedLocations.length} location(s) with coordinates');
+        print(
+            '🔍 COMBINED SCAN: $locationsWithoutCoords location(s) missing coordinates, resolving via Places API...');
+        mergedLocations = await _resolveLocationsWithoutCoordinates(
+            mergedLocations, userLocation);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
+        final resolvedCount =
+            mergedLocations.where((loc) => loc.coordinates != null).length;
+        print(
+            '✅ COMBINED SCAN: Resolved ${resolvedCount}/${mergedLocations.length} location(s) with coordinates');
       }
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -1523,7 +1868,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      _updateScanProgress(0.88);
+      _updateScanProgress(0.88, sessionId: scanSessionId);
 
       // Try to detect event information from any available text content
       // Priority 1: Use the OCR extracted text from Gemini (has dates like "April 4-6, 2025")
@@ -1538,6 +1883,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             '📅 COMBINED SCAN: Checking OCR extracted text for event info (${_lastScanExtractedText!.length} chars)...');
         detectedEvent =
             await _detectEventFromTextAsync(_lastScanExtractedText!);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
 
       // Priority 2: WebView extracted caption (might have additional context)
@@ -1546,6 +1892,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _extractedCaption!.isNotEmpty) {
         print('📅 COMBINED SCAN: Checking WebView caption for event info...');
         detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
 
       // Priority 3: Check location metadata for event-related text
@@ -1558,6 +1905,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print(
                   '📅 COMBINED SCAN: Checking location metadata for event info...');
               detectedEvent = await _detectEventFromTextAsync(extractedText);
+              if (!_isAnalysisSessionActive(scanSessionId)) return;
               if (detectedEvent != null) break;
             }
           }
@@ -1567,7 +1915,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Clear the stored extracted text after use
       _lastScanExtractedText = null;
 
-      _updateScanProgress(0.95);
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -1585,7 +1933,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         detectedEventInfo: detectedEvent,
         scannedText: scannedTextForDialog,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -1594,7 +1943,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ COMBINED SCAN ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -1605,7 +1954,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
@@ -1615,7 +1964,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -1830,7 +2181,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Resolve locations that don't have coordinates via Places API
-  /// 
+  ///
   /// When Gemini's Maps grounding doesn't return coordinates (e.g., for generic web pages),
   /// we fall back to searching Places Text Search API using the location name.
   /// Text Search API returns full place details including coordinates (unlike Autocomplete).
@@ -1840,26 +2191,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     LatLng? userLocation,
   ) async {
     final resolved = <ExtractedLocationData>[];
-    
+
     for (final loc in locations) {
       // If already has coordinates, keep it as-is
       if (loc.coordinates != null) {
         resolved.add(loc);
         continue;
       }
-      
+
       // Try to resolve via Places Text Search API (returns coordinates directly)
       final searchQuery = loc.address != null && loc.address!.isNotEmpty
           ? '${loc.name} ${loc.address}'
           : loc.name ?? '';
-      
+
       if (searchQuery.isEmpty) {
         print('⏭️ RESOLVE: Skipping location with no name');
         continue;
       }
-      
-      print('🔍 RESOLVE: Searching Places Text Search API for "$searchQuery"...');
-      
+
+      print(
+          '🔍 RESOLVE: Searching Places Text Search API for "$searchQuery"...');
+
       try {
         // Use searchPlacesTextSearch which returns full details including lat/lng
         // (unlike searchPlaces which uses Autocomplete and only returns place IDs)
@@ -1868,7 +2220,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           latitude: userLocation?.latitude,
           longitude: userLocation?.longitude,
         );
-        
+
         if (results.isNotEmpty) {
           final firstResult = results.first;
           final placeId = firstResult['placeId'] as String?;
@@ -1879,9 +2231,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           final address = firstResult['address'] as String?;
           final resolvedName = firstResult['name'] as String?;
           final placeTypes = (firstResult['types'] as List?)?.cast<String>();
-          
+
           if (lat != null && lng != null) {
-            print('✅ RESOLVE: Found "${loc.name}" → placeId: ${placeId ?? "none"}, coords: ($lat, $lng)');
+            print(
+                '✅ RESOLVE: Found "${loc.name}" → placeId: ${placeId ?? "none"}, coords: ($lat, $lng)');
             resolved.add(loc.copyWith(
               placeId: placeId,
               coordinates: LatLng(lat, lng),
@@ -1897,8 +2250,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             continue;
           }
         }
-        
-        print('⏭️ RESOLVE: Could not resolve "${loc.name}" - no Places API match');
+
+        print(
+            '⏭️ RESOLVE: Could not resolve "${loc.name}" - no Places API match');
         // Keep the unresolved location so it shows in the dialog (with a "not found" indicator)
         resolved.add(loc);
       } catch (e) {
@@ -1906,7 +2260,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         resolved.add(loc); // Keep unresolved
       }
     }
-    
+
     return resolved;
   }
 
@@ -2402,6 +2756,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<void> _processScreenshotForLocations(File imageFile) async {
     // Skip if already processing
     if (_isProcessingScreenshot || _isExtractingLocation) return;
+    final scanSessionId = _startAnalysisSession();
 
     setState(() {
       _isProcessingScreenshot = true;
@@ -2414,9 +2769,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results (optional)
       LatLng? userLocation;
@@ -2427,26 +2783,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.2);
+      _updateScanProgress(0.2, sessionId: scanSessionId);
       print('📷 SCREENSHOT: Starting AI location extraction from image...');
 
       // Extract locations using Gemini Vision
-      _updateScanProgress(0.35);
+      _updateScanProgress(0.35, sessionId: scanSessionId);
       final result = await _locationExtractor.extractLocationsFromImage(
         imageFile,
         userLocation: userLocation,
         onProgress: (current, total, phase) {
           // Map progress from 0.35 to 0.8 range
           if (current == 0) {
-            _updateScanProgress(0.40); // AI analysis
+            _updateScanProgress(0.40, sessionId: scanSessionId); // AI analysis
           } else {
             final progress = 0.40 + (0.40 * current / total);
-            _updateScanProgress(progress);
+            _updateScanProgress(progress, sessionId: scanSessionId);
           }
         },
       );
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
       final locations = result.locations;
-      _updateScanProgress(0.8);
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -2473,7 +2830,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCREENSHOT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
 
       // Try to detect event information from the extracted text (OCR result)
       // For uploaded screenshots, we use the extracted text from OCR
@@ -2481,9 +2838,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (result.extractedText != null && result.extractedText!.isNotEmpty) {
         print('📅 SCREENSHOT: Checking OCR extracted text for event info...');
         detectedEvent = await _detectEventFromTextAsync(result.extractedText!);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
 
-      _updateScanProgress(0.95);
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -2499,7 +2857,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         detectedEventInfo: detectedEvent,
         scannedText: result.extractedText,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -2508,7 +2867,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCREENSHOT ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -2519,7 +2878,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
@@ -2529,7 +2888,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -2691,6 +3052,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   void initState() {
     super.initState();
+    // Help flow + spotlight animation
+    _helpFlow = HelpFlowState<ReceiveShareHelpTargetId>(
+        content: receiveShareHelpContent);
+    _spotlightController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
     // Initialize URL bar controller and focus
     _sharedUrlController = TextEditingController();
     _sharedUrlFocusNode = FocusNode();
@@ -2707,7 +3076,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _currentSharedFiles = widget.sharedFiles;
     // Inform sharing service that this screen is open so Yelp-only shares update in-place
     try {
-      _sharingService.markReceiveShareScreenOpen(context: context, sharedFiles: widget.sharedFiles);
+      _sharingService.markReceiveShareScreenOpen(
+          context: context, sharedFiles: widget.sharedFiles);
     } catch (_) {}
 
     // If URL-first mode, auto-focus the URL field on first open
@@ -3280,6 +3650,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('🔍 EXTRACTION: Skipping AI extraction for platform-specific URL');
       return;
     }
+    final scanSessionId = _startAnalysisSession();
 
     setState(() {
       _isExtractingLocation = true;
@@ -3292,9 +3663,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results (optional)
       LatLng? userLocation;
@@ -3305,18 +3677,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.2);
+      _updateScanProgress(0.2, sessionId: scanSessionId);
       print('🤖 AI EXTRACTION: Starting location extraction from URL...');
 
       // Extract locations using Gemini + Maps grounding
       // No limit on locations extracted from URLs
-      _updateScanProgress(0.35);
+      _updateScanProgress(0.35, sessionId: scanSessionId);
       final locations = await _locationExtractor.extractLocationsFromSharedLink(
         url,
         userLocation: userLocation,
         maxLocations: null, // No limit
       );
-      _updateScanProgress(0.8);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -3347,7 +3720,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ AI EXTRACTION: Found ${locations.length} location(s)');
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.9, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -3361,16 +3734,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // 3. Fallback is handled by _handleMultipleExtractedLocations
       final analyzedContent = _locationExtractor.lastAnalyzedContent;
       final scannedTextForDialog = analyzedContent ?? _extractedCaption;
-      
+
       final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
         scannedText: scannedTextForDialog,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
-      print('🔍 URL EXTRACTION: deepScanRequested=$deepScanRequested, mounted=$mounted');
+      print(
+          '🔍 URL EXTRACTION: deepScanRequested=$deepScanRequested, mounted=$mounted');
       if (deepScanRequested && mounted) {
         print('🔍 URL EXTRACTION: Setting _pendingDeepScanProvider');
         _pendingDeepScanProvider = provider;
@@ -3378,7 +3753,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -3390,19 +3765,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('🔍 URL EXTRACTION: Finally block - cleaning up');
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
           _scanProgress = 0.0;
         });
       }
-      print('🔍 URL EXTRACTION: Finally block complete, _pendingDeepScanProvider=${_pendingDeepScanProvider != null}');
+      print(
+          '🔍 URL EXTRACTION: Finally block complete, _pendingDeepScanProvider=${_pendingDeepScanProvider != null}');
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    print('🔍 URL EXTRACTION: After finally - _pendingDeepScanProvider=${_pendingDeepScanProvider != null}, mounted=$mounted');
-    if (_pendingDeepScanProvider != null && mounted) {
+    print(
+        '🔍 URL EXTRACTION: After finally - _pendingDeepScanProvider=${_pendingDeepScanProvider != null}, mounted=$mounted');
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       print('🔍 URL EXTRACTION: Starting deep scan...');
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
@@ -3410,7 +3789,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _pendingDeepScanEventInfo = null;
       await _runDeepScan(provider, detectedEventInfo: eventInfo);
     } else {
-      print('🔍 URL EXTRACTION: NOT starting deep scan - provider null or not mounted');
+      print(
+          '🔍 URL EXTRACTION: NOT starting deep scan - provider null or not mounted');
     }
   }
 
@@ -4561,6 +4941,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Mark as processed to prevent duplicate extractions
     _tiktokCaptionsProcessed.add(url);
+    final scanSessionId = _startAnalysisSession();
 
     print('🎬 TIKTOK AUTO-EXTRACT: Starting automatic location extraction...');
     print('🎬 Caption: ${data.title}');
@@ -4577,9 +4958,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results (optional)
       LatLng? userLocation;
@@ -4590,7 +4972,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.25);
+      _updateScanProgress(0.25, sessionId: scanSessionId);
 
       // Extract locations from the TikTok caption using quick extraction
       // Deep scan option available in the results dialog if needed
@@ -4599,7 +4981,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         platform: 'TikTok',
         userLocation: userLocation,
       );
-      _updateScanProgress(0.8);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -4626,7 +5009,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ TIKTOK AUTO-EXTRACT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.9, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -4639,7 +5022,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         provider,
         scannedText: _extractedCaption,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -4648,7 +5032,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -4659,7 +5043,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
@@ -4669,7 +5053,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -4699,6 +5085,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Mark as processed to prevent duplicate extractions
     _facebookUrlsProcessed.add(url);
+    final scanSessionId = _startAnalysisSession();
 
     print(
         '📘 FACEBOOK AUTO-EXTRACT: Starting automatic location extraction...');
@@ -4714,9 +5101,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results (optional)
       LatLng? userLocation;
@@ -4727,7 +5115,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.2);
+      _updateScanProgress(0.2, sessionId: scanSessionId);
 
       // Try to extract page content from the Facebook WebView
       String? pageContent;
@@ -4735,11 +5123,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (previewKey?.currentState != null) {
         try {
           pageContent = await previewKey!.currentState!.extractPageContent();
+          if (!_isAnalysisSessionActive(scanSessionId)) return;
         } catch (e) {
           print('⚠️ FACEBOOK AUTO-EXTRACT: Content extraction failed: $e');
         }
       }
-      _updateScanProgress(0.35);
+      _updateScanProgress(0.35, sessionId: scanSessionId);
 
       if (pageContent == null ||
           pageContent.isEmpty ||
@@ -4760,7 +5149,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           '📘 FACEBOOK AUTO-EXTRACT: Extracted ${pageContent.length} characters');
       print(
           '📘 FACEBOOK AUTO-EXTRACT: Content preview: ${pageContent.substring(0, pageContent.length > 200 ? 200 : pageContent.length)}...');
-      _updateScanProgress(0.45);
+      _updateScanProgress(0.45, sessionId: scanSessionId);
 
       // Extract locations using quick extraction
       // Deep scan option available in the results dialog if needed
@@ -4769,7 +5158,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         platform: 'Facebook',
         userLocation: userLocation,
       );
-      _updateScanProgress(0.8);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -4796,7 +5186,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ FACEBOOK AUTO-EXTRACT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.9, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -4809,7 +5199,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         provider,
         scannedText: pageContent,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -4818,7 +5209,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -4829,7 +5220,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
@@ -4839,7 +5230,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -4897,6 +5290,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print('📸 INSTAGRAM: Caption already extracted, skipping');
         return;
       }
+      final scanSessionId = _analysisSessionId;
 
       // Yield to the event loop so any pending UI work (e.g. background
       // experience loading or marker generation) can complete first,
@@ -4911,6 +5305,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (mounted) {
         setState(() {
           _isAiScanInProgress = true;
+          _scanProgress = 0.0;
         });
       }
 
@@ -4919,6 +5314,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (previewKey?.currentState != null) {
         try {
           final content = await previewKey!.currentState!.extractPageContent();
+          if (!_isAnalysisSessionActive(scanSessionId)) return;
 
           if (content != null && content.isNotEmpty && content.length > 20) {
             print(
@@ -4954,49 +5350,49 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               // Only proceed to Maps grounding if no other extraction is active
               // or already completed for this URL.
               if (_isExtractingLocation || _isProcessingScreenshot) {
-                print('📸 INSTAGRAM: Another extraction in progress, skipping Maps grounding (caption stored)');
-                if (mounted) setState(() => _isAiScanInProgress = false);
+                print(
+                    '📸 INSTAGRAM: Another extraction in progress, skipping Maps grounding (caption stored)');
+                if (_isAnalysisSessionActive(scanSessionId)) {
+                  setState(() => _isAiScanInProgress = false);
+                }
               } else if (_locationExtractionCompletedUrls.contains(url)) {
-                print('📸 INSTAGRAM: Extraction already completed for this URL, skipping Maps grounding (caption stored)');
-                if (mounted) setState(() => _isAiScanInProgress = false);
+                print(
+                    '📸 INSTAGRAM: Extraction already completed for this URL, skipping Maps grounding (caption stored)');
+                if (_isAnalysisSessionActive(scanSessionId)) {
+                  setState(() => _isAiScanInProgress = false);
+                }
               } else {
                 // _autoExtractWithMapsGrounding sets its own flags and clears
                 // _isAiScanInProgress in its finally block.
                 print('📸 INSTAGRAM: Using Maps-grounded text extraction...');
+                if (!_isAnalysisSessionActive(scanSessionId)) return;
                 await _autoExtractWithMapsGrounding(url);
               }
             } else {
               print('⚠️ INSTAGRAM: Caption too short after cleaning');
-              if (mounted) setState(() => _isAiScanInProgress = false);
-              _showInstagramScanHint();
+              if (_isAnalysisSessionActive(scanSessionId)) {
+                setState(() => _isAiScanInProgress = false);
+              }
             }
           } else {
             print('⚠️ INSTAGRAM: No useful content in WebView');
-            if (mounted) setState(() => _isAiScanInProgress = false);
-            _showInstagramScanHint();
+            if (_isAnalysisSessionActive(scanSessionId)) {
+              setState(() => _isAiScanInProgress = false);
+            }
           }
         } catch (e) {
           print('❌ INSTAGRAM EXTRACT ERROR: $e');
-          if (mounted) setState(() => _isAiScanInProgress = false);
-          _showInstagramScanHint();
+          if (_isAnalysisSessionActive(scanSessionId)) {
+            setState(() => _isAiScanInProgress = false);
+          }
         }
       } else {
         print('⚠️ INSTAGRAM: No preview widget available yet');
-        if (mounted) setState(() => _isAiScanInProgress = false);
-        _showInstagramScanHint();
+        if (_isAnalysisSessionActive(scanSessionId)) {
+          setState(() => _isAiScanInProgress = false);
+        }
       }
     });
-  }
-
-  /// Show a hint toast when automatic Instagram extraction fails
-  void _showInstagramScanHint() {
-    if (!mounted) return;
-    Fluttertoast.showToast(
-      msg:
-          '💡 Tip: Use "Scan Preview" button to extract location from visible content.',
-      toastLength: Toast.LENGTH_LONG,
-      backgroundColor: Colors.blue[700],
-    );
   }
 
   /// Clean Instagram caption by removing UI boilerplate and formatting nicely
@@ -5271,6 +5667,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '📍 $platform AUTO-EXTRACT: Starting automatic location extraction from oEmbed caption...');
     print(
         '📍 Caption preview: ${caption.substring(0, caption.length > 100 ? 100 : caption.length)}...');
+    final scanSessionId = _startAnalysisSession();
 
     setState(() {
       _isExtractingLocation = true;
@@ -5283,9 +5680,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results (optional)
       LatLng? userLocation;
@@ -5296,7 +5694,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.25);
+      _updateScanProgress(0.25, sessionId: scanSessionId);
 
       // Extract locations using quick extraction
       // Deep scan option available in the results dialog if needed
@@ -5305,7 +5703,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         platform: platform,
         userLocation: userLocation,
       );
-      _updateScanProgress(0.8);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -5332,11 +5731,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ $platform AUTO-EXTRACT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
 
       // Try to detect event information from the caption
       final detectedEvent = await _detectEventFromTextAsync(caption);
-      _updateScanProgress(0.95);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -5351,7 +5751,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         detectedEventInfo: detectedEvent,
         scannedText: caption,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -5360,7 +5761,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ $platform AUTO-EXTRACT ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Location scan failed. Try the "Scan Preview" button.',
           toastLength: Toast.LENGTH_LONG,
@@ -5371,7 +5772,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
@@ -5381,7 +5782,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -5428,6 +5831,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '📍 MAPS GROUNDING: Starting location extraction with Maps grounding...');
     print(
         '📍 MAPS GROUNDING: Using pre-extracted caption (${_extractedCaption!.length} chars)');
+    final scanSessionId = _startAnalysisSession();
 
     setState(() {
       _isExtractingLocation = true;
@@ -5440,9 +5844,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Start foreground service to keep app alive during scan
     await _foregroundScanService.startScanService();
+    if (!_isAnalysisSessionActive(scanSessionId)) return;
 
     try {
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results (optional)
       LatLng? userLocation;
@@ -5453,28 +5858,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.2);
+      _updateScanProgress(0.2, sessionId: scanSessionId);
 
       // Check if user prefers deep scan for auto-extraction
       final useDeepScan = await _shouldUseDeepScan();
-      
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+
       List<ExtractedLocationData> locations;
       bool isDeepScanResult = false;
-      
+
       if (useDeepScan) {
         // ========== USE DEEP EXTRACTION ==========
         // More thorough analysis using unified extraction
         print('📍 AUTO SCAN: Using deep extraction (user preference)...');
-        
+
         final unifiedResult =
             await _locationExtractor.extractLocationsFromTextUnified(
           _extractedCaption!,
           userLocation: userLocation,
           onProgress: (current, total, message) {
             // Map progress from 0.2 to 0.8
-            _updateScanProgress(0.2 + (0.6 * current / total));
+            _updateScanProgress(0.2 + (0.6 * current / total),
+                sessionId: scanSessionId);
           },
         );
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
         locations = unifiedResult.locations;
         isDeepScanResult = true;
       } else {
@@ -5488,8 +5896,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           platform: 'social media',
           userLocation: userLocation,
         );
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
-      _updateScanProgress(0.8);
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -5512,14 +5921,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print(
             '✅ AUTO SCAN: Found ${locations.length} location(s) via $scanType extraction');
       }
-      _updateScanProgress(0.85);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
 
       // Try to detect event information from the extracted caption
       ExtractedEventInfo? detectedEvent;
       if (_extractedCaption != null && _extractedCaption!.isNotEmpty) {
         detectedEvent = await _detectEventFromTextAsync(_extractedCaption!);
+        if (!_isAnalysisSessionActive(scanSessionId)) return;
       }
-      _updateScanProgress(0.95);
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -5535,10 +5945,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         scannedText: _extractedCaption,
         isDeepScan: isDeepScanResult,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
 
       // If user requested deep scan, run it after cleanup (only if we didn't already do deep scan)
-      print('🔍 MAPS GROUNDING: deepScanRequested=$deepScanRequested, mounted=$mounted, isDeepScanResult=$isDeepScanResult');
+      print(
+          '🔍 MAPS GROUNDING: deepScanRequested=$deepScanRequested, mounted=$mounted, isDeepScanResult=$isDeepScanResult');
       if (deepScanRequested && mounted && !isDeepScanResult) {
         // Store provider and event info for use after finally block
         print('🔍 MAPS GROUNDING: Setting _pendingDeepScanProvider');
@@ -5547,7 +5959,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ MAPS GROUNDING ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Location scan failed. Try the "Scan Preview" button.',
           toastLength: Toast.LENGTH_LONG,
@@ -5560,19 +5972,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _locationExtractionCompletedUrls.add(sourceUrl);
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
           _scanProgress = 0.0;
         });
       }
-      print('🔍 MAPS GROUNDING: Finally block complete, _pendingDeepScanProvider=${_pendingDeepScanProvider != null}');
+      print(
+          '🔍 MAPS GROUNDING: Finally block complete, _pendingDeepScanProvider=${_pendingDeepScanProvider != null}');
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    print('🔍 MAPS GROUNDING: After finally - _pendingDeepScanProvider=${_pendingDeepScanProvider != null}, mounted=$mounted');
-    if (_pendingDeepScanProvider != null && mounted) {
+    print(
+        '🔍 MAPS GROUNDING: After finally - _pendingDeepScanProvider=${_pendingDeepScanProvider != null}, mounted=$mounted');
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       print('🔍 MAPS GROUNDING: Starting deep scan...');
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
@@ -5580,7 +5996,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _pendingDeepScanEventInfo = null;
       await _runDeepScan(provider, detectedEventInfo: eventInfo);
     } else {
-      print('🔍 MAPS GROUNDING: NOT starting deep scan - provider null or not mounted');
+      print(
+          '🔍 MAPS GROUNDING: NOT starting deep scan - provider null or not mounted');
     }
   }
 
@@ -5829,7 +6246,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Sort locations by order of appearance in the scanned text
     // This ensures the dialog shows locations in the same order as the original content
-    final sortedLocations = _sortLocationsByTextAppearance(locations, effectiveScannedText);
+    final sortedLocations =
+        _sortLocationsByTextAppearance(locations, effectiveScannedText);
 
     // Check for duplicates before showing dialog (using sorted list)
     final duplicates = await _checkLocationsForDuplicates(sortedLocations);
@@ -5838,6 +6256,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Show dialog with selectable checklist (including duplicate info)
     // If event info is detected, the dialog will show a second page for event designation
+    _pauseHelpForDialog();
     final result = await showDialog<_MultiLocationSelectionResult>(
       context: context,
       builder: (dialogContext) => _MultiLocationSelectionDialog(
@@ -5851,6 +6270,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         scannedText: effectiveScannedText,
       ),
     );
+    _resumeHelpAfterDialog();
 
     // Check if user requested deep scan
     if (result?.deepScanRequested == true) {
@@ -6103,6 +6523,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }) async {
     // Make sure widget is still mounted
     if (!mounted) return;
+    final scanSessionId = _startAnalysisSession();
 
     // For YouTube URLs, the analyzed content is stored in lastAnalyzedContent, not _extractedCaption
     // Use lastAnalyzedContent as fallback if _extractedCaption is empty
@@ -6112,7 +6533,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Make sure we have caption text to scan
     if (contentToScan == null || contentToScan.isEmpty) {
-      print('🔍 DEEP SCAN: No content to scan - _extractedCaption=${_extractedCaption?.length ?? 0}, lastAnalyzedContent=${_locationExtractor.lastAnalyzedContent?.length ?? 0}');
+      print(
+          '🔍 DEEP SCAN: No content to scan - _extractedCaption=${_extractedCaption?.length ?? 0}, lastAnalyzedContent=${_locationExtractor.lastAnalyzedContent?.length ?? 0}');
       Fluttertoast.showToast(
         msg: '❌ No content to scan. Please try again.',
         toastLength: Toast.LENGTH_LONG,
@@ -6120,8 +6542,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
       return;
     }
-    
-    print('🔍 DEEP SCAN: Content to scan length: ${contentToScan.length} chars');
+
+    print(
+        '🔍 DEEP SCAN: Content to scan length: ${contentToScan.length} chars');
 
     // Get confirmed locations from quick scan (user-verified correct locations)
     final confirmedLocations = _pendingDeepScanConfirmedLocations;
@@ -6171,9 +6594,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Enable wakelock to prevent screen from sleeping during deep scan
       WakelockPlus.enable();
       await _foregroundScanService.startScanService();
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
 
       print('🔍 DEEP SCAN: Starting unified extraction...');
-      _updateScanProgress(0.1);
+      _updateScanProgress(0.1, sessionId: scanSessionId);
 
       // Get user location for better results
       LatLng? userLocation;
@@ -6184,7 +6608,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
-      _updateScanProgress(0.2);
+      _updateScanProgress(0.2, sessionId: scanSessionId);
 
       // Run unified extraction (deep scan)
       // Pass confirmed location names to skip verification for those locations
@@ -6195,15 +6619,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         userLocation: userLocation,
         onProgress: (current, total, message) {
           // Map progress from 0.2 to 0.8
-          _updateScanProgress(0.2 + (0.6 * current / total));
+          _updateScanProgress(0.2 + (0.6 * current / total),
+              sessionId: scanSessionId);
         },
         skipLocationNames: confirmedOriginalQueries.isNotEmpty
             ? confirmedOriginalQueries
             : null,
       );
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
 
       var deepScanLocations = unifiedResult.locations;
-      _updateScanProgress(0.8);
+      _updateScanProgress(0.8, sessionId: scanSessionId);
 
       // Check if mounted
       if (!mounted) {
@@ -6254,7 +6680,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      _updateScanProgress(0.9);
+      _updateScanProgress(0.9, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -6267,10 +6693,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         isDeepScan: true,
         scannedText: _extractedCaption,
       );
-      _updateScanProgress(1.0);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(1.0, sessionId: scanSessionId);
     } catch (e) {
       print('❌ DEEP SCAN ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Deep scan failed. Please try again.',
           toastLength: Toast.LENGTH_LONG,
@@ -6281,7 +6708,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
       await _foregroundScanService.stopScanService();
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
@@ -6400,10 +6827,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Skip common words like "the", "cafe", "coffee", etc.
         if (index == -1) {
           const commonWords = [
-            'the', 'and', '&', 'bar', 'cafe', 'café', 'coffee', 'house',
-            'restaurant', 'shop', 'market', 'bakery', 'dessert', 'tea',
-            'room', 'north', 'south', 'east', 'west', 'park', 'mesa',
-            'mira', 'beach',
+            'the',
+            'and',
+            '&',
+            'bar',
+            'cafe',
+            'café',
+            'coffee',
+            'house',
+            'restaurant',
+            'shop',
+            'market',
+            'bakery',
+            'dessert',
+            'tea',
+            'room',
+            'north',
+            'south',
+            'east',
+            'west',
+            'park',
+            'mesa',
+            'mira',
+            'beach',
           ];
           final words = lowerName.split(' ');
           final distinctiveWords = words
@@ -6427,7 +6873,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Sort by index (order of appearance)
     locationsWithIndex.sort((a, b) => a.index.compareTo(b.index));
 
-    print('📍 SORT: Final order: ${locationsWithIndex.map((e) => '"${e.location.name}" @${e.index}').join(', ')}');
+    print(
+        '📍 SORT: Final order: ${locationsWithIndex.map((e) => '"${e.location.name}" @${e.index}').join(', ')}');
 
     return locationsWithIndex.map((e) => e.location).toList();
   }
@@ -6442,7 +6889,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // originalQuery is the raw text extracted before Places API resolution
     final originalQueries = <String>[];
     for (final location in locations) {
-      if (location.originalQuery != null && location.originalQuery!.isNotEmpty) {
+      if (location.originalQuery != null &&
+          location.originalQuery!.isNotEmpty) {
         // Use originalQuery if available (the raw extracted text before resolution)
         if (!originalQueries.contains(location.originalQuery!)) {
           originalQueries.add(location.originalQuery!);
@@ -6459,19 +6907,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Also try to get the current URL as additional context
     final currentUrl = _sharedUrlController.text.trim();
-    
+
     // Build the fallback text
     final buffer = StringBuffer();
-    
+
     // Add explanatory note about what AI detected
     buffer.writeln('AI detected the following location(s) from the scan:');
     buffer.writeln();
-    
+
     // Add the extracted location names/queries
     for (var i = 0; i < originalQueries.length; i++) {
       buffer.writeln('${i + 1}. ${originalQueries[i]}');
     }
-    
+
     // Add URL if available (helps user know what was scanned)
     if (currentUrl.isNotEmpty) {
       buffer.writeln();
@@ -7262,6 +7710,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<void> _applyPendingScanResults() async {
     if (_pendingScanResults == null || _pendingScanResults!.isEmpty) return;
     if (!mounted) return;
+    final scanSessionId = _startAnalysisSession();
 
     final results = _pendingScanResults!;
 
@@ -7284,6 +7733,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         provider,
         scannedText: _extractedCaption,
       );
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
 
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
@@ -7292,7 +7742,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCAN RESUME ERROR: $e');
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         Fluttertoast.showToast(
           msg: '❌ Scan failed. Please try scanning again.',
           toastLength: Toast.LENGTH_LONG,
@@ -7300,7 +7750,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     } finally {
-      if (mounted) {
+      if (_isAnalysisSessionActive(scanSessionId)) {
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
@@ -7313,7 +7763,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // Run deep scan if requested (after cleanup is complete)
-    if (_pendingDeepScanProvider != null && mounted) {
+    if (_isAnalysisSessionActive(scanSessionId) &&
+        _pendingDeepScanProvider != null &&
+        mounted) {
       final provider = _pendingDeepScanProvider!;
       final eventInfo = _pendingDeepScanEventInfo;
       _pendingDeepScanProvider = null;
@@ -7451,6 +7903,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // it's now part of _sharingService.resetSharedItems()
     _userCategoriesNotifier.dispose();
     _userColorCategoriesNotifier.dispose();
+    _spotlightController.dispose();
     _sharedUrlController.dispose();
     _sharedUrlFocusNode.dispose();
     super.dispose();
@@ -7514,7 +7967,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _currentSharedFiles = files;
     });
-    
+
     // Only clear auto-scanned URLs and processed URLs when content actually changes
     // This prevents duplicate auto-scans when provider reinitializes with same content
     if (contentChanged) {
@@ -7531,12 +7984,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _processSharedContent(files);
     _syncSharedUrlControllerFromContent();
   }
-  
+
   /// Check if the new files are different from the current files
   bool _hasContentChanged(List<SharedMediaFile> newFiles) {
     if (_currentSharedFiles.isEmpty) return true;
     if (_currentSharedFiles.length != newFiles.length) return true;
-    
+
     // Compare URLs from both lists
     final currentUrls = _currentSharedFiles
         .map((f) => _extractFirstUrl(f.path))
@@ -7546,8 +7999,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         .map((f) => _extractFirstUrl(f.path))
         .where((url) => url != null)
         .toSet();
-    
-    return !currentUrls.containsAll(newUrls) || !newUrls.containsAll(currentUrls);
+
+    return !currentUrls.containsAll(newUrls) ||
+        !newUrls.containsAll(currentUrls);
   }
 
   void _processSharedContent(List<SharedMediaFile> files) {
@@ -7707,6 +8161,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         normalizedUrl.contains('maps.app.goo.gl') ||
         normalizedUrl.contains('goo.gl/maps')) {
       firstCard.originalShareType = ShareType.maps;
+      final scanSessionId = _startAnalysisSession();
 
       // Set loading state to show spinner in location field AND AI analyzing chip
       firstCard.isSelectingLocation = true;
@@ -7717,8 +8172,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // Start the extraction and handle completion
-      _yelpPreviewFutures[normalizedUrl] =
-          _getLocationFromMapsUrl(normalizedUrl).then((result) {
+      _yelpPreviewFutures[normalizedUrl] = _getLocationFromMapsUrl(
+        normalizedUrl,
+        analysisSessionId: scanSessionId,
+      ).then((result) {
+        if (!_isAnalysisSessionActive(scanSessionId)) return null;
         // Loading state will be cleared in _fillFormWithGoogleMapsData
         // after the location is actually set on the card
         // Only clear here if no location was found (result is null)
@@ -7733,6 +8191,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
         return result;
       }).catchError((error) {
+        if (!_isAnalysisSessionActive(scanSessionId)) return null;
         // Clear loading state on error
         firstCard.isSelectingLocation = false;
         _isExtractingLocation = false;
@@ -8687,7 +9146,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   void _fillFormWithGoogleMapsData(Location location, String placeName,
-      String websiteUrl, String originalMapsUrl) async {
+      String websiteUrl, String originalMapsUrl,
+      {int? analysisSessionId}) async {
+    if (analysisSessionId != null &&
+        !_isAnalysisSessionActive(analysisSessionId)) {
+      return;
+    }
+
     // Ensured async
     // Check mounted HERE
     if (!mounted) return;
@@ -8704,6 +9169,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // --- ADDED: Duplicate Check ---
     FocusManager.instance.primaryFocus?.unfocus(); // ADDED
     await Future.microtask(() {}); // ADDED
+    if (analysisSessionId != null &&
+        !_isAnalysisSessionActive(analysisSessionId)) {
+      return;
+    }
     Experience? existingExperience = await _checkForDuplicateExperienceDialog(
       context: context,
       card: firstCard,
@@ -8726,6 +9195,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // If no match by placeId, or user chose "Create New", check by title
     FocusManager.instance.primaryFocus?.unfocus(); // ADDED
     await Future.microtask(() {}); // ADDED
+    if (analysisSessionId != null &&
+        !_isAnalysisSessionActive(analysisSessionId)) {
+      return;
+    }
     existingExperience = await _checkForDuplicateExperienceDialog(
       context: context,
       card: firstCard,
@@ -8755,6 +9228,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _locationUpdateDebounce?.cancel();
     _locationUpdateDebounce =
         Timer(const Duration(milliseconds: 100), () async {
+      if (analysisSessionId != null &&
+          !_isAnalysisSessionActive(analysisSessionId)) {
+        return;
+      }
       if (!mounted) return;
       provider.updateCardFromShareDetails(
         cardId: cardId,
@@ -8771,6 +9248,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final shouldAutoSetCategories = location.placeId != null
             ? await _aiSettingsService.shouldAutoSetCategories()
             : false;
+        if (analysisSessionId != null &&
+            !_isAnalysisSessionActive(analysisSessionId)) {
+          return;
+        }
 
         setState(() {
           // Clear location field loading state
@@ -8810,6 +9291,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // for the newly extracted location from Google Maps URL
         if (shouldAutoSetCategories) {
           await _autoCategorizeCardForNewLocation(cardId, location, provider);
+          if (analysisSessionId != null &&
+              !_isAnalysisSessionActive(analysisSessionId)) {
+            return;
+          }
 
           // Hide chip after categorization completes
           if (mounted) {
@@ -9889,6 +10374,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _quickAddSelectedExperience = null;
     _isQuickAddSavedExperience = false;
 
+    _pauseHelpForDialog();
     await showGeneralDialog(
       context: context,
       barrierDismissible: true,
@@ -9922,6 +10408,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       },
     );
+    _resumeHelpAfterDialog();
 
     // After dialog closes, handle the selected location/experience
     if (!mounted) return;
@@ -10156,440 +10643,571 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     debugPrint(
         '[DEBUG H1] ReceiveShareScreen.build: Platform check passed, useIOSBackIcon=$useIOSBackIcon');
     // #endregion
-    return _wrapWithWillPopScope(Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: AppColors.backgroundColor,
-        foregroundColor: Colors.black,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: AppColors.backgroundColor,
-        title: const Text('Save Content'),
-        leading: IconButton(
-          icon: Icon(useIOSBackIcon ? Icons.arrow_back_ios : Icons.arrow_back),
-          onPressed: () {
-            _navigateToCollections();
-          },
-        ),
-        automaticallyImplyLeading: false,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                PrivacyToggleButton(
-                  isPrivate: _sharedMediaIsPrivate,
-                  onPressed: () {
-                    setState(() {
-                      _sharedMediaIsPrivate = !_sharedMediaIsPrivate;
-                    });
-                  },
-                ),
-                const SizedBox(width: 6),
-                PrivacyTooltipIcon(
-                  message:
-                      'If public, the content you are saving will show up in Discovery and your public profile page (not yet implemented) to be viewed by others. If private, it will only be visible to you.',
-                ),
-              ],
+    return _wrapWithWillPopScope(Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.backgroundColor,
+          appBar: AppBar(
+            backgroundColor: AppColors.backgroundColor,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: AppColors.backgroundColor,
+            title: const FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Save Content',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.visible,
+              ),
             ),
+            leading: IconButton(
+              icon: Icon(
+                  useIOSBackIcon ? Icons.arrow_back_ios : Icons.arrow_back),
+              onPressed: () {
+                _navigateToCollections();
+              },
+            ),
+            automaticallyImplyLeading: false,
+            actions: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Builder(builder: (privacyCtx) {
+                      return PrivacyToggleButton(
+                        isPrivate: _sharedMediaIsPrivate,
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              ReceiveShareHelpTargetId.privacyToggle,
+                              privacyCtx)) return;
+                          setState(() {
+                            _sharedMediaIsPrivate = !_sharedMediaIsPrivate;
+                          });
+                        },
+                      );
+                    }),
+                    const SizedBox(width: 4),
+                    _helpFlow.isActive
+                        ? AnimatedBuilder(
+                            animation: _spotlightController,
+                            builder: (context, _) {
+                              final scale =
+                                  1.0 + 0.15 * _spotlightController.value;
+                              return Transform.scale(
+                                scale: scale,
+                                child: Semantics(
+                                  label: 'Exit help mode',
+                                  child: IconButton(
+                                    key: _helpButtonKey,
+                                    icon:
+                                        Icon(Icons.help, color: AppColors.teal),
+                                    tooltip: 'Exit Help Mode',
+                                    onPressed: _toggleHelpMode,
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : Semantics(
+                            label: 'Enter help mode',
+                            child: IconButton(
+                              key: _helpButtonKey,
+                              icon: const Icon(Icons.help_outline),
+                              tooltip: 'Help',
+                              onPressed: _toggleHelpMode,
+                            ),
+                          ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: ExcludeSemantics(
-        child: Container(
-          color: Colors.white,
-          child: SafeArea(
-            child: _isSaving
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text("Saving Experiences..."),
-                      ],
-                    ),
-                  )
-                : FutureBuilder<List<dynamic>>(
-                    future:
-                        _combinedCategoriesFuture, // MODIFIED: Use stable combined future
-                    builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
-                      // #region agent log
-                      debugPrint(
-                          '[DEBUG H2] FutureBuilder: _combinedCategoriesFuture=${_combinedCategoriesFuture != null}, connectionState=${snapshot.connectionState}, requireUrlFirst=${widget.requireUrlFirst}');
-                      // #endregion
-                      // Primary Loading State: Show spinner if the future is null (early init) or still running.
-                      if (_combinedCategoriesFuture == null ||
-                          snapshot.connectionState == ConnectionState.waiting) {
-                        // print("FutureBuilder: STATE_WAITING (Future is null or connection is waiting)");
-                        // In URL-first mode, show the UI with URL bar so user can proceed
-                        if (widget.requireUrlFirst) {
+          body: ExcludeSemantics(
+            child: Container(
+              color: Colors.white,
+              child: SafeArea(
+                child: _isSaving
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text("Saving Experiences..."),
+                          ],
+                        ),
+                      )
+                    : FutureBuilder<List<dynamic>>(
+                        future:
+                            _combinedCategoriesFuture, // MODIFIED: Use stable combined future
+                        builder:
+                            (context, AsyncSnapshot<List<dynamic>> snapshot) {
                           // #region agent log
                           debugPrint(
-                              '[DEBUG H2] FutureBuilder: Returning URL bar for requireUrlFirst mode');
+                              '[DEBUG H2] FutureBuilder: _combinedCategoriesFuture=${_combinedCategoriesFuture != null}, connectionState=${snapshot.connectionState}, requireUrlFirst=${widget.requireUrlFirst}');
                           // #endregion
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildSharedUrlBar(showInstructions: true),
-                            ],
-                          );
-                        }
-                        return const Center(child: CircularProgressIndicator());
-                      }
+                          // Primary Loading State: Show spinner if the future is null (early init) or still running.
+                          if (_combinedCategoriesFuture == null ||
+                              snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                            // print("FutureBuilder: STATE_WAITING (Future is null or connection is waiting)");
+                            // In URL-first mode, show the UI with URL bar so user can proceed
+                            if (widget.requireUrlFirst) {
+                              // #region agent log
+                              debugPrint(
+                                  '[DEBUG H2] FutureBuilder: Returning URL bar for requireUrlFirst mode');
+                              // #endregion
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _buildSharedUrlBar(showInstructions: true),
+                                ],
+                              );
+                            }
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          }
 
-                      // Error State: If the future completed with an error.
-                      if (snapshot.hasError) {
-                        // print("FutureBuilder: STATE_ERROR (${snapshot.error})");
-                        return Center(
-                            child: Text(
-                                "Error loading categories: ${snapshot.error}"));
-                      }
+                          // Error State: If the future completed with an error.
+                          if (snapshot.hasError) {
+                            // print("FutureBuilder: STATE_ERROR (${snapshot.error})");
+                            return Center(
+                                child: Text(
+                                    "Error loading categories: ${snapshot.error}"));
+                          }
 
-                      // Data State (Success or Failure to get sufficient data):
-                      // Future is done, no error, now check the data itself.
-                      if (snapshot.hasData &&
-                          snapshot.data != null &&
-                          snapshot.data!.length >= 2) {
-                        // Data is present and seems structurally correct.
-                        // The lists _userCategories and _userColorCategories should be populated by now.
-                        // print("FutureBuilder: STATE_HAS_DATA. Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
+                          // Data State (Success or Failure to get sufficient data):
+                          // Future is done, no error, now check the data itself.
+                          if (snapshot.hasData &&
+                              snapshot.data != null &&
+                              snapshot.data!.length >= 2) {
+                            // Data is present and seems structurally correct.
+                            // The lists _userCategories and _userColorCategories should be populated by now.
+                            // print("FutureBuilder: STATE_HAS_DATA. Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
 
-                        // Proceed with the main UI build
-                        return Column(
-                          children: [
-                            _buildSharedUrlBar(
-                                showInstructions: _currentSharedFiles.isEmpty),
-                            Container(
-                              height: 8,
-                              color: AppColors.backgroundColor,
-                            ),
-                            // Gate the rest of content when required
-                            Expanded(
-                              child: AbsorbPointer(
-                                absorbing: !_urlGateOpen,
-                                child: AnimatedOpacity(
-                                  duration: const Duration(milliseconds: 200),
-                                  opacity: _urlGateOpen ? 1.0 : 0.4,
-                                  child: Stack(
-                                    // WRAPPED IN STACK FOR FAB
-                                    children: [
-                                      SingleChildScrollView(
-                                        controller:
-                                            _scrollController, // ATTACHED SCROLL CONTROLLER
-                                        padding: EdgeInsets.zero,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            // Re-enable the shared files preview list
-                                            Container(
-                                              color: AppColors.backgroundColor,
-                                              child: _currentSharedFiles.isEmpty
-                                                  ? const Padding(
-                                                      padding:
-                                                          EdgeInsets.all(16.0),
-                                                      child: Center(
-                                                          child: Text(
-                                                              'No shared content received')),
-                                                    )
-                                                  : Consumer<
-                                                      ReceiveShareProvider>(
-                                                      key:
-                                                          _mediaPreviewListKey, // MOVED KEY HERE
-                                                      builder: (context,
-                                                          provider, child) {
-                                                        final experienceCards =
-                                                            provider
-                                                                .experienceCards;
-                                                        final firstCard =
-                                                            experienceCards
-                                                                    .isNotEmpty
-                                                                ? experienceCards
-                                                                    .first
-                                                                : null;
-
-                                                        return ListView.builder(
-                                                          padding:
-                                                              EdgeInsets.zero,
-                                                          shrinkWrap: true,
-                                                          physics:
-                                                              const NeverScrollableScrollPhysics(),
-                                                          itemCount:
-                                                              _currentSharedFiles
-                                                                  .length,
-                                                          itemBuilder:
-                                                              (context, index) {
-                                                            final file =
-                                                                _currentSharedFiles[
-                                                                    index];
-
-                                                            bool isInstagram =
-                                                                false;
-                                                            bool isTikTok =
-                                                                false;
-                                                            if (file.type ==
-                                                                    SharedMediaType
-                                                                        .text ||
-                                                                file.type ==
-                                                                    SharedMediaType
-                                                                        .url) {
-                                                              String? url =
-                                                                  _extractFirstUrl(
-                                                                      file.path);
-                                                              if (url != null) {
-                                                                if (url.contains(
-                                                                    'instagram.com')) {
-                                                                  isInstagram =
-                                                                      true;
-                                                                } else if (url
-                                                                        .contains(
-                                                                            'tiktok.com') ||
-                                                                    url.contains(
-                                                                        'vm.tiktok.com')) {
-                                                                  isTikTok =
-                                                                      true;
-                                                                }
-                                                              }
-                                                            }
-                                                            final double
-                                                                horizontalPadding =
-                                                                (isInstagram ||
-                                                                        isTikTok)
-                                                                    ? 0.0
-                                                                    : 16.0;
-                                                            final double
-                                                                verticalPadding =
-                                                                8.0;
-                                                            final bool
-                                                                isLastItem =
-                                                                index ==
-                                                                    _currentSharedFiles
-                                                                            .length -
-                                                                        1;
-
-                                                            return Padding(
-                                                              key: ValueKey(
-                                                                  file.path),
+                            // Proceed with the main UI build
+                            return Column(
+                              children: [
+                                _buildHelpBanner(),
+                                _buildSharedUrlBar(
+                                    showInstructions:
+                                        _currentSharedFiles.isEmpty),
+                                Container(
+                                  height: 8,
+                                  color: AppColors.backgroundColor,
+                                ),
+                                // Gate the rest of content when required
+                                Expanded(
+                                  child: AbsorbPointer(
+                                    absorbing: !_urlGateOpen,
+                                    child: AnimatedOpacity(
+                                      duration:
+                                          const Duration(milliseconds: 200),
+                                      opacity: _urlGateOpen ? 1.0 : 0.4,
+                                      child: Stack(
+                                        // WRAPPED IN STACK FOR FAB
+                                        children: [
+                                          SingleChildScrollView(
+                                            controller:
+                                                _scrollController, // ATTACHED SCROLL CONTROLLER
+                                            padding: EdgeInsets.zero,
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                // Re-enable the shared files preview list
+                                                Builder(
+                                                    builder: (mediaSectionCtx) {
+                                                  return GestureDetector(
+                                                    behavior: HitTestBehavior
+                                                        .translucent,
+                                                    onTap: _helpFlow.isActive
+                                                        ? () {
+                                                            _tryHelpTap(
+                                                                ReceiveShareHelpTargetId
+                                                                    .mediaPreviewSection,
+                                                                mediaSectionCtx);
+                                                          }
+                                                        : null,
+                                                    child: Container(
+                                                      color: AppColors
+                                                          .backgroundColor,
+                                                      child: _currentSharedFiles
+                                                              .isEmpty
+                                                          ? const Padding(
                                                               padding:
                                                                   EdgeInsets
-                                                                      .fromLTRB(
-                                                                horizontalPadding,
-                                                                verticalPadding,
-                                                                horizontalPadding,
-                                                                isLastItem
-                                                                    ? 0.0
-                                                                    : verticalPadding,
-                                                              ),
-                                                              child: Card(
-                                                                color: Colors
-                                                                    .white,
-                                                                elevation: 2.0,
-                                                                margin: (isInstagram ||
-                                                                        isTikTok)
-                                                                    ? EdgeInsets
-                                                                        .zero
-                                                                    : const EdgeInsets
-                                                                        .only(
-                                                                        bottom:
-                                                                            0),
-                                                                shape:
-                                                                    RoundedRectangleBorder(
-                                                                  borderRadius: BorderRadius.circular(
-                                                                      (isInstagram ||
-                                                                              isTikTok)
-                                                                          ? 0
-                                                                          : 8),
-                                                                ),
-                                                                clipBehavior: (isInstagram ||
-                                                                        isTikTok)
-                                                                    ? Clip
-                                                                        .antiAlias
-                                                                    : Clip.none,
-                                                                child: Column(
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .start,
-                                                                  children: [
-                                                                    _buildMediaPreview(
-                                                                        file,
-                                                                        firstCard,
-                                                                        index),
-                                                                  ],
-                                                                ),
-                                                              ),
-                                                            );
-                                                          },
+                                                                      .all(
+                                                                          16.0),
+                                                              child: Center(
+                                                                  child: Text(
+                                                                      'No shared content received')),
+                                                            )
+                                                          : Consumer<
+                                                              ReceiveShareProvider>(
+                                                              key:
+                                                                  _mediaPreviewListKey, // MOVED KEY HERE
+                                                              builder: (context,
+                                                                  provider,
+                                                                  child) {
+                                                                final experienceCards =
+                                                                    provider
+                                                                        .experienceCards;
+                                                                final firstCard =
+                                                                    experienceCards
+                                                                            .isNotEmpty
+                                                                        ? experienceCards
+                                                                            .first
+                                                                        : null;
+
+                                                                return ListView
+                                                                    .builder(
+                                                                  padding:
+                                                                      EdgeInsets
+                                                                          .zero,
+                                                                  shrinkWrap:
+                                                                      true,
+                                                                  physics:
+                                                                      const NeverScrollableScrollPhysics(),
+                                                                  itemCount:
+                                                                      _currentSharedFiles
+                                                                          .length,
+                                                                  itemBuilder:
+                                                                      (context,
+                                                                          index) {
+                                                                    final file =
+                                                                        _currentSharedFiles[
+                                                                            index];
+
+                                                                    bool
+                                                                        isInstagram =
+                                                                        false;
+                                                                    bool
+                                                                        isTikTok =
+                                                                        false;
+                                                                    if (file.type ==
+                                                                            SharedMediaType
+                                                                                .text ||
+                                                                        file.type ==
+                                                                            SharedMediaType.url) {
+                                                                      String?
+                                                                          url =
+                                                                          _extractFirstUrl(
+                                                                              file.path);
+                                                                      if (url !=
+                                                                          null) {
+                                                                        if (url.contains(
+                                                                            'instagram.com')) {
+                                                                          isInstagram =
+                                                                              true;
+                                                                        } else if (url.contains('tiktok.com') ||
+                                                                            url.contains('vm.tiktok.com')) {
+                                                                          isTikTok =
+                                                                              true;
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                    final double
+                                                                        horizontalPadding =
+                                                                        (isInstagram ||
+                                                                                isTikTok)
+                                                                            ? 0.0
+                                                                            : 16.0;
+                                                                    final double
+                                                                        verticalPadding =
+                                                                        8.0;
+                                                                    final bool
+                                                                        isLastItem =
+                                                                        index ==
+                                                                            _currentSharedFiles.length -
+                                                                                1;
+
+                                                                    return Padding(
+                                                                      key: ValueKey(
+                                                                          file.path),
+                                                                      padding:
+                                                                          EdgeInsets
+                                                                              .fromLTRB(
+                                                                        horizontalPadding,
+                                                                        verticalPadding,
+                                                                        horizontalPadding,
+                                                                        isLastItem
+                                                                            ? 0.0
+                                                                            : verticalPadding,
+                                                                      ),
+                                                                      child:
+                                                                          Card(
+                                                                        color: Colors
+                                                                            .white,
+                                                                        elevation:
+                                                                            2.0,
+                                                                        margin: (isInstagram ||
+                                                                                isTikTok)
+                                                                            ? EdgeInsets.zero
+                                                                            : const EdgeInsets.only(bottom: 0),
+                                                                        shape:
+                                                                            RoundedRectangleBorder(
+                                                                          borderRadius: BorderRadius.circular((isInstagram || isTikTok)
+                                                                              ? 0
+                                                                              : 8),
+                                                                        ),
+                                                                        clipBehavior: (isInstagram ||
+                                                                                isTikTok)
+                                                                            ? Clip.antiAlias
+                                                                            : Clip.none,
+                                                                        child:
+                                                                            Column(
+                                                                          crossAxisAlignment:
+                                                                              CrossAxisAlignment.start,
+                                                                          children: [
+                                                                            _buildMediaPreview(
+                                                                                file,
+                                                                                firstCard,
+                                                                                index),
+                                                                          ],
+                                                                        ),
+                                                                      ),
+                                                                    );
+                                                                  },
+                                                                );
+                                                              },
+                                                            ),
+                                                    ),
+                                                  );
+                                                }),
+                                                Container(
+                                                  height: 8,
+                                                  color: AppColors
+                                                      .backgroundColorDark,
+                                                ),
+                                                Builder(
+                                                    builder: (cardsSectionCtx) {
+                                                  return GestureDetector(
+                                                    behavior: HitTestBehavior
+                                                        .translucent,
+                                                    onTap: _helpFlow.isActive
+                                                        ? () {
+                                                            _tryHelpTap(
+                                                                ReceiveShareHelpTargetId
+                                                                    .experienceCardsSection,
+                                                                cardsSectionCtx);
+                                                          }
+                                                        : null,
+                                                    child: Selector<
+                                                        ReceiveShareProvider,
+                                                        int>(
+                                                      key: const ValueKey(
+                                                          'experience_cards_selector'),
+                                                      selector: (_, provider) =>
+                                                          provider
+                                                              .experienceCards
+                                                              .length,
+                                                      builder: (context,
+                                                          cardCount, _) {
+                                                        final selectedExperienceCards =
+                                                            context
+                                                                .read<
+                                                                    ReceiveShareProvider>()
+                                                                .experienceCards;
+                                                        return _ExperienceCardsSection(
+                                                          key: const ValueKey(
+                                                              'cards_section_stable'),
+                                                          userCategories:
+                                                              _userCategories,
+                                                          userColorCategories:
+                                                              _userColorCategories,
+                                                          userCategoriesNotifier:
+                                                              _userCategoriesNotifier,
+                                                          userColorCategoriesNotifier:
+                                                              _userColorCategoriesNotifier,
+                                                          removeExperienceCard:
+                                                              _removeExperienceCard,
+                                                          showLocationPicker:
+                                                              _showLocationPicker,
+                                                          selectSavedExperienceForCard:
+                                                              _selectSavedExperienceForCard,
+                                                          handleCardFormUpdate:
+                                                              _handleExperienceCardFormUpdate,
+                                                          addExperienceCard:
+                                                              _addExperienceCard,
+                                                          isSpecialUrl:
+                                                              _isSpecialUrl,
+                                                          extractFirstUrl:
+                                                              _extractFirstUrl,
+                                                          currentSharedFiles:
+                                                              _currentSharedFiles,
+                                                          experienceCards:
+                                                              selectedExperienceCards,
+                                                          sectionKey:
+                                                              _experienceCardsSectionKey,
+                                                          onYelpButtonTapped:
+                                                              _trackYelpButtonTapped,
+                                                          showSelectEventDialog:
+                                                              _showSelectEventDialogForCard,
+                                                          getDetectedEventName: () =>
+                                                              _detectedEventInfo
+                                                                  ?.eventName,
+                                                          isHelpMode: _helpFlow
+                                                              .isActive,
+                                                          onHelpTap:
+                                                              _tryHelpTap,
                                                         );
                                                       },
                                                     ),
+                                                  );
+                                                }),
+                                                Container(
+                                                  height: 80,
+                                                  color: AppColors
+                                                      .backgroundColorDark,
+                                                ),
+                                              ],
                                             ),
-                                            Container(
-                                              height: 8,
-                                              color:
-                                                  AppColors.backgroundColorDark,
-                                            ),
-                                            Selector<ReceiveShareProvider, int>(
-                                              key: const ValueKey(
-                                                  'experience_cards_selector'),
-                                              selector: (_, provider) =>
-                                                  provider
-                                                      .experienceCards.length,
-                                              builder: (context, cardCount, _) {
-                                                final selectedExperienceCards =
-                                                    context
-                                                        .read<
-                                                            ReceiveShareProvider>()
-                                                        .experienceCards;
-                                                return _ExperienceCardsSection(
-                                                  key: const ValueKey(
-                                                      'cards_section_stable'),
-                                                  userCategories:
-                                                      _userCategories,
-                                                  userColorCategories:
-                                                      _userColorCategories,
-                                                  userCategoriesNotifier:
-                                                      _userCategoriesNotifier,
-                                                  userColorCategoriesNotifier:
-                                                      _userColorCategoriesNotifier,
-                                                  removeExperienceCard:
-                                                      _removeExperienceCard,
-                                                  showLocationPicker:
-                                                      _showLocationPicker,
-                                                  selectSavedExperienceForCard:
-                                                      _selectSavedExperienceForCard,
-                                                  handleCardFormUpdate:
-                                                      _handleExperienceCardFormUpdate,
-                                                  addExperienceCard:
-                                                      _addExperienceCard,
-                                                  isSpecialUrl: _isSpecialUrl,
-                                                  extractFirstUrl:
-                                                      _extractFirstUrl,
-                                                  currentSharedFiles:
-                                                      _currentSharedFiles,
-                                                  experienceCards:
-                                                      selectedExperienceCards,
-                                                  sectionKey:
-                                                      _experienceCardsSectionKey,
-                                                  onYelpButtonTapped:
-                                                      _trackYelpButtonTapped,
-                                                  showSelectEventDialog:
-                                                      _showSelectEventDialogForCard,
-                                                  getDetectedEventName:
-                                                      () => _detectedEventInfo?.eventName,
-                                                );
-                                              },
-                                            ),
-                                            Container(
-                                              height: 80,
-                                              color:
-                                                  AppColors.backgroundColorDark,
-                                            ),
-                                          ],
-                                        ),
+                                          ),
+                                          // --- ADDED FAB ---
+                                          Positioned(
+                                            bottom: 16,
+                                            right: 16,
+                                            child: Builder(builder: (fabCtx) {
+                                              return FloatingActionButton(
+                                                backgroundColor:
+                                                    Theme.of(context)
+                                                        .primaryColor,
+                                                foregroundColor: Colors.white,
+                                                shape: const CircleBorder(),
+                                                onPressed: () {
+                                                  if (_tryHelpTap(
+                                                      ReceiveShareHelpTargetId
+                                                          .scrollFab,
+                                                      fabCtx)) return;
+                                                  _handleFabPress();
+                                                },
+                                                child: Icon(_showUpArrowForFab
+                                                    ? Icons.arrow_upward
+                                                    : Icons.arrow_downward),
+                                              );
+                                            }),
+                                          ),
+                                          // --- END ADDED FAB ---
+                                        ],
                                       ),
-                                      // --- ADDED FAB ---
-                                      Positioned(
-                                        bottom: 16, // Adjust as needed
-                                        right: 16, // Adjust as needed
-                                        child: FloatingActionButton(
-                                          backgroundColor:
-                                              Theme.of(context).primaryColor,
-                                          foregroundColor: Colors.white,
-                                          shape:
-                                              const CircleBorder(), // ENSURE CIRCULAR
-                                          onPressed: _handleFabPress,
-                                          child: Icon(_showUpArrowForFab
-                                              ? Icons.arrow_upward
-                                              : Icons.arrow_downward),
-                                        ),
-                                      ),
-                                      // --- END ADDED FAB ---
-                                    ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16.0, vertical: 12.0),
-                              decoration: BoxDecoration(
-                                color: AppColors.backgroundColor,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
-                                    spreadRadius: 0,
-                                    blurRadius: 4,
-                                    offset: const Offset(0, -2),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16.0, vertical: 12.0),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.backgroundColor,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.1),
+                                        spreadRadius: 0,
+                                        blurRadius: 4,
+                                        offset: const Offset(0, -2),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  OutlinedButton(
-                                    onPressed: widget.onCancel,
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: Colors.grey[700],
-                                    ),
-                                    child: const Text('Cancel'),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Builder(builder: (cancelCtx) {
+                                        return OutlinedButton(
+                                          onPressed: () {
+                                            if (_tryHelpTap(
+                                                ReceiveShareHelpTargetId
+                                                    .cancelButton,
+                                                cancelCtx)) return;
+                                            widget.onCancel();
+                                          },
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: Colors.grey[700],
+                                          ),
+                                          child: const Text('Cancel'),
+                                        );
+                                      }),
+                                      Builder(builder: (quickAddCtx) {
+                                        return ElevatedButton.icon(
+                                          onPressed: () {
+                                            if (_tryHelpTap(
+                                                ReceiveShareHelpTargetId
+                                                    .quickAddButton,
+                                                quickAddCtx)) return;
+                                            _showQuickAddDialog();
+                                          },
+                                          icon: const Icon(Icons.add,
+                                              color: Colors.white),
+                                          label: const Text('Quick Add',
+                                              style: TextStyle(
+                                                  color: Colors.white)),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                Theme.of(context).primaryColor,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16, vertical: 12),
+                                          ),
+                                        );
+                                      }),
+                                      Builder(builder: (saveCtx) {
+                                        return ElevatedButton.icon(
+                                          onPressed: _isSaving
+                                              ? null
+                                              : () {
+                                                  if (_tryHelpTap(
+                                                      ReceiveShareHelpTargetId
+                                                          .saveButton,
+                                                      saveCtx)) return;
+                                                  _saveExperience();
+                                                },
+                                          icon: _isSaving
+                                              ? Container(
+                                                  width: 20,
+                                                  height: 20,
+                                                  padding:
+                                                      const EdgeInsets.all(2.0),
+                                                  child:
+                                                      const CircularProgressIndicator(
+                                                          strokeWidth: 3,
+                                                          color: Colors.white),
+                                                )
+                                              : const Icon(Icons.save),
+                                          label: Text(
+                                              _isSaving ? 'Saving...' : 'Save'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                Theme.of(context).primaryColor,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 24, vertical: 12),
+                                          ),
+                                        );
+                                      }),
+                                    ],
                                   ),
-                                  ElevatedButton.icon(
-                                    onPressed: _showQuickAddDialog,
-                                    icon: const Icon(Icons.add,
-                                        color: Colors.white),
-                                    label: const Text('Quick Add',
-                                        style: TextStyle(color: Colors.white)),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor:
-                                          Theme.of(context).primaryColor,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 16, vertical: 12),
-                                    ),
-                                  ),
-                                  ElevatedButton.icon(
-                                    onPressed:
-                                        _isSaving ? null : _saveExperience,
-                                    icon: _isSaving
-                                        ? Container(
-                                            width: 20,
-                                            height: 20,
-                                            padding: const EdgeInsets.all(2.0),
-                                            child:
-                                                const CircularProgressIndicator(
-                                                    strokeWidth: 3,
-                                                    color: Colors.white),
-                                          )
-                                        : const Icon(Icons.save),
-                                    label:
-                                        Text(_isSaving ? 'Saving...' : 'Save'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor:
-                                          Theme.of(context).primaryColor,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 24, vertical: 12),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          ],
-                        );
-                      } else {
-                        // Future is done, no error, but data is missing or insufficient.
-                        // print("FutureBuilder: STATE_NO_SUFFICIENT_DATA (Done, no error, but data invalid or missing)");
-                        return const Center(
-                            child:
-                                Text("Error: Could not load category data."));
-                      }
-                    },
-                  ),
+                                )
+                              ],
+                            );
+                          } else {
+                            // Future is done, no error, but data is missing or insufficient.
+                            // print("FutureBuilder: STATE_NO_SUFFICIENT_DATA (Done, no error, but data invalid or missing)");
+                            return const Center(
+                                child: Text(
+                                    "Error: Could not load category data."));
+                          }
+                        },
+                      ),
+              ),
+            ),
           ),
         ),
-      ),
+        if (_helpFlow.isActive && _helpFlow.hasActiveTarget)
+          _buildHelpOverlay(),
+      ],
     ));
   }
 
@@ -10694,6 +11312,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return YelpPreviewWidget(
         yelpUrl: url,
         launchUrlCallback: _launchUrl,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
       );
     }
 
@@ -10721,6 +11341,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         venueName: details?.venue?.name,
         eventDate: details?.startDateTime,
         imageUrl: details?.imageUrl,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
       );
     }
 
@@ -10734,6 +11356,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         getLocationFromMapsUrl: _getLocationFromMapsUrl,
         launchUrlCallback: _launchUrl,
         mapsService: _mapsService,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
       );
     }
 
@@ -10767,10 +11391,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             url], // Use the specific key for this Instagram preview
         url: url,
         launchUrlCallback: _launchUrl,
+        isHelpMode: _helpFlow.isActive,
         onExpansionChanged: (isExpanded, instaUrl) =>
             _onInstagramExpansionChanged(
                 isExpanded, instaUrl), // CORRECTED: Match signature
         onPageFinished: (loadedUrl) => _onInstagramPageLoaded(url),
+        onHelpTap: _tryHelpTap,
       );
     }
 
@@ -10799,6 +11425,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         key: _tiktokPreviewKeys[url],
         url: url,
         launchUrlCallback: _launchUrl,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
         onPhotoDetected: (detectedUrl, isPhoto) {
           // Track whether this TikTok URL is a photo carousel
           _tiktokPhotoStatus[detectedUrl] = isPhoto;
@@ -10825,13 +11453,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         key: _facebookPreviewKeys[url],
         url: url,
         height: facebookHeight,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
         onWebViewCreated: (controller) {
           // Handle controller if needed
         },
         onPageFinished: (loadedUrl) {
           // NOTE: Reel restriction temporarily disabled to test auto-scanning on Reels.
           // Uncomment below to restore the restriction if Reel auto-extraction is unreliable.
-          // 
+          //
           // // Skip auto-extraction for Facebook Reels - their DOM structure is too
           // // obfuscated for reliable scraping. Users can use "Scan Preview" instead.
           // final isReel = url.contains('/reel/') || url.contains('/reels/');
@@ -10863,6 +11493,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         key: _youtubePreviewKeys[url],
         url: url,
         launchUrlCallback: _launchUrl,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
       );
     }
 
@@ -10877,6 +11509,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         key: _googleKgPreviewKeys[url],
         url: url,
         launchUrlCallback: _launchUrl,
+        isHelpMode: _helpFlow.isActive,
+        onHelpTap: _tryHelpTap,
       );
     }
 
@@ -10890,6 +11524,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       url: url,
       launchUrlCallback: _launchUrl,
       onPageFinished: (loadedUrl) => _onGenericWebPageLoaded(url),
+      isHelpMode: _helpFlow.isActive,
+      onHelpTap: _tryHelpTap,
     );
   }
 
@@ -10956,7 +11592,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
       if (_locationExtractionCompletedUrls.contains(url)) {
-        print('🔄 AUTO-SCAN: Location extraction already completed for $url, skipping');
+        print(
+            '🔄 AUTO-SCAN: Location extraction already completed for $url, skipping');
         return;
       }
       if (!await _shouldAutoExtractLocations()) return;
@@ -10964,7 +11601,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // If the caption was already extracted by _scheduleInstagramWebViewExtraction
       // but Maps grounding hasn't run yet, trigger the lighter path here.
       if (_extractedCaption != null && _extractedFromUrl == url) {
-        print('🚀 AUTO-SCAN: Caption already available, running Maps grounding...');
+        print(
+            '🚀 AUTO-SCAN: Caption already available, running Maps grounding...');
         await _autoExtractWithMapsGrounding(url);
         return;
       }
@@ -10972,7 +11610,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Caption not yet available -- _scheduleInstagramWebViewExtraction is
       // likely still running. Let it finish; failures show a hint toast for
       // manual scanning.
-      print('🔄 AUTO-SCAN: Instagram caption extraction still pending, deferring to WebView extraction path');
+      print(
+          '🔄 AUTO-SCAN: Instagram caption extraction still pending, deferring to WebView extraction path');
     });
   }
 
@@ -11585,7 +12224,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return null;
   }
 
-  Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String mapsUrl) async {
+  Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String mapsUrl,
+      {int? analysisSessionId}) async {
+    bool wasCanceled() {
+      if (analysisSessionId == null) return false;
+      return !_isAnalysisSessionActive(analysisSessionId);
+    }
+
+    if (wasCanceled()) return null;
+
     final String originalUrlKey = mapsUrl.trim();
 
     if (_businessDataCache.containsKey(originalUrlKey)) {
@@ -11596,6 +12243,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (!resolvedUrl.contains('google.com/maps')) {
       try {
         final String? expandedUrl = await _resolveShortUrl(resolvedUrl);
+        if (wasCanceled()) return null;
         if (expandedUrl != null && expandedUrl.contains('google.com/maps')) {
           resolvedUrl = expandedUrl;
         } else {
@@ -11634,11 +12282,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       try {
         List<Map<String, dynamic>> searchResults =
             await _mapsService.searchPlaces(searchQuery);
+        if (wasCanceled()) return null;
 
         if (searchResults.isNotEmpty) {
           placeIdToLookup = searchResults.first['placeId'] as String?;
           if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
             foundLocation = await _mapsService.getPlaceDetails(placeIdToLookup);
+            if (wasCanceled()) return null;
           } else {}
         } else {}
       } catch (e) {}
@@ -11649,6 +12299,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
           try {
             foundLocation = await _mapsService.getPlaceDetails(placeIdToLookup);
+            if (wasCanceled()) return null;
           } catch (e) {
             foundLocation = null;
           }
@@ -11660,9 +12311,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final String? finalWebsite = foundLocation.website;
 
         final provider = context.read<ReceiveShareProvider>();
-        if (provider.experienceCards.isNotEmpty) {
+        if (!wasCanceled() && provider.experienceCards.isNotEmpty) {
           _fillFormWithGoogleMapsData(
-              foundLocation, finalName, finalWebsite ?? '', mapsUrl);
+            foundLocation,
+            finalName,
+            finalWebsite ?? '',
+            mapsUrl,
+            analysisSessionId: analysisSessionId,
+          );
         }
 
         final Map<String, dynamic> result = {
@@ -12435,6 +13091,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   Future<void> _showSelectEventDialogForCard(ExperienceCardData card) async {
     if (!mounted) return;
+    _pauseHelpForDialog();
 
     final currentUserId = _authService.currentUser?.uid;
     if (currentUserId == null) {
@@ -12704,6 +13361,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         toastLength: Toast.LENGTH_LONG,
         gravity: ToastGravity.BOTTOM,
       );
+    } finally {
+      _resumeHelpAfterDialog();
     }
   }
   // --- End Select Event Dialog ---
@@ -12726,16 +13385,21 @@ class _EventListItem {
 class InstagramPreviewWrapper extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
+  final bool isHelpMode;
   final void Function(bool, String)?
       onExpansionChanged; // MODIFIED to include URL
-  final void Function(String)? onPageFinished; // Callback when preview finishes loading
+  final void Function(String)?
+      onPageFinished; // Callback when preview finishes loading
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const InstagramPreviewWrapper({
     super.key, // Ensure super.key is passed
     required this.url,
     required this.launchUrlCallback,
+    this.isHelpMode = false,
     this.onExpansionChanged,
     this.onPageFinished,
+    this.onHelpTap,
   });
 
   @override
@@ -12768,7 +13432,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
       _isWebViewMode = !_isWebViewMode;
     });
   }
-  
+
   /// Called when user taps "Switch to Web View" in error state
   /// This is temporary and does not persist to settings
   void _handleRequestWebViewMode() {
@@ -12786,6 +13450,11 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
     }
   }
 
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
+  }
+
   // Safe callback for webview
   void _handleWebViewCreated(inapp.InAppWebViewController controller) {
     if (!mounted || _isDisposed) return;
@@ -12795,13 +13464,14 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   /// Handle content height changes from the WebView
   void _handleContentHeightChanged(double height) {
     if (!mounted || _isDisposed) return;
-    
+
     // Only update if height is significantly different to avoid jitter
     // and ensure we have a reasonable minimum height
-    if (_dynamicContentHeight == null || (height - _dynamicContentHeight!).abs() > 20) {
+    if (_dynamicContentHeight == null ||
+        (height - _dynamicContentHeight!).abs() > 20) {
       // Ensure minimum height of 400 to avoid tiny previews
       final newHeight = height < 400.0 ? 400.0 : height;
-      
+
       _safeSetState(() {
         _dynamicContentHeight = newHeight;
       });
@@ -12910,9 +13580,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   Widget build(BuildContext context) {
     // Use dynamic height if available for default view, otherwise fallback to 910.0
     // For expanded view, use fixed large height
-    final double height = _isExpanded 
-        ? 2800.0 
-        : (_dynamicContentHeight ?? 910.0);
+    final double height =
+        _isExpanded ? 2800.0 : (_dynamicContentHeight ?? 910.0);
 
     // Use a consistent key to prevent widget recreation across rebuilds
     final widgetKey = ValueKey('instagram_preview_${widget.url}');
@@ -12932,6 +13601,8 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           onContentHeightChanged: _handleContentHeightChanged,
           overrideWebViewMode: _isWebViewMode,
           onRequestWebViewMode: _handleRequestWebViewMode,
+          isHelpMode: widget.isHelpMode,
+          onHelpTap: widget.onHelpTap,
         ),
         Container(height: 8, color: AppColors.backgroundColor),
         _buildBottomControls(),
@@ -12950,75 +13621,101 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           Expanded(
             child: Align(
               alignment: Alignment.centerLeft,
-              child: GestureDetector(
-                onTap: _toggleDisplayMode,
-                child: Container(
-                  margin: const EdgeInsets.only(left: 8),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _isWebViewMode
-                        ? AppColors.teal.withOpacity(0.15)
-                        : AppColors.sage.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
+              child: Builder(builder: (toggleCtx) {
+                return GestureDetector(
+                  onTap: () {
+                    if (_helpTap(
+                        ReceiveShareHelpTargetId.previewDisplayModeToggle,
+                        toggleCtx)) {
+                      return;
+                    }
+                    _toggleDisplayMode();
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
                       color: _isWebViewMode
-                          ? AppColors.teal.withOpacity(0.5)
-                          : AppColors.sage.withOpacity(0.5),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _isWebViewMode ? Icons.language : Icons.code,
-                        size: 14,
-                        color: _isWebViewMode ? AppColors.teal : AppColors.sage,
+                          ? AppColors.teal.withOpacity(0.15)
+                          : AppColors.sage.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _isWebViewMode
+                            ? AppColors.teal.withOpacity(0.5)
+                            : AppColors.sage.withOpacity(0.5),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _isWebViewMode ? 'Web view' : 'Default view',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _isWebViewMode ? Icons.language : Icons.code,
+                          size: 14,
                           color:
                               _isWebViewMode ? AppColors.teal : AppColors.sage,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(
+                          _isWebViewMode ? 'Web view' : 'Default view',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: _isWebViewMode
+                                ? AppColors.teal
+                                : AppColors.sage,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              }),
             ),
           ),
-          IconButton(
-            icon: const Icon(FontAwesomeIcons.instagram),
-            color: const Color(0xFFE1306C),
-            iconSize: 32,
-            tooltip: 'Open in Instagram',
-            constraints: const BoxConstraints(),
-            padding: EdgeInsets.zero,
-            onPressed: () => _handleUrlLaunch(widget.url),
-          ),
+          Builder(builder: (openExternalCtx) {
+            return IconButton(
+              icon: const Icon(FontAwesomeIcons.instagram),
+              color: const Color(0xFFE1306C),
+              iconSize: 32,
+              tooltip: 'Open in Instagram',
+              constraints: const BoxConstraints(),
+              padding: EdgeInsets.zero,
+              onPressed: () {
+                if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton,
+                    openExternalCtx)) {
+                  return;
+                }
+                _handleUrlLaunch(widget.url);
+              },
+            );
+          }),
           if (_isWebViewMode)
             Expanded(
               child: Align(
                 alignment: Alignment.centerRight,
-                child: IconButton(
-                  icon: Icon(
-                      _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-                  iconSize: 24,
-                  color: AppColors.teal,
-                  tooltip: _isExpanded ? 'Collapse' : 'Expand',
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  onPressed: () {
-                    _safeSetState(() {
-                      _isExpanded = !_isExpanded;
-                      widget.onExpansionChanged?.call(_isExpanded, widget.url);
-                    });
-                  },
-                ),
+                child: Builder(builder: (expandCtx) {
+                  return IconButton(
+                    icon: Icon(
+                        _isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                    iconSize: 24,
+                    color: AppColors.teal,
+                    tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    onPressed: () {
+                      if (_helpTap(ReceiveShareHelpTargetId.previewExpandButton,
+                          expandCtx)) {
+                        return;
+                      }
+                      _safeSetState(() {
+                        _isExpanded = !_isExpanded;
+                        widget.onExpansionChanged
+                            ?.call(_isExpanded, widget.url);
+                      });
+                    },
+                  );
+                }),
               ),
             )
           else
@@ -13094,7 +13791,7 @@ class _MultiLocationSelectionDialog extends StatefulWidget {
 }
 
 class _MultiLocationSelectionDialogState
-    extends State<_MultiLocationSelectionDialog> {
+    extends State<_MultiLocationSelectionDialog> with TickerProviderStateMixin {
   late Set<int> _selectedIndices;
 
   /// Maps location index to business status from Places API
@@ -13107,21 +13804,179 @@ class _MultiLocationSelectionDialogState
   bool _isScannedTextExpanded = false;
 
   /// Confidence threshold - locations below this should be verified by user
-  /// Note: Good matches from extraction service get 0.85 confidence, so threshold
-  /// must be lower to only flag truly uncertain matches (AI reranked at ~60%)
   static const double _lowConfidenceThreshold = 0.80;
+
+  // Dialog-local help mode
+  late final HelpFlowState<ReceiveShareHelpTargetId> _dialogHelp;
+  late final AnimationController _dialogSpotlight;
+  final GlobalKey _dialogHelpBtnKey = GlobalKey();
+  final GlobalKey<HelpBubbleState> _dialogBubbleKey = GlobalKey();
+  bool _dialogIsTyping = false;
+
+  void _toggleDialogHelp() {
+    triggerHeavyHaptic();
+    setState(() {
+      final nowActive = _dialogHelp.toggle();
+      if (nowActive) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final helpCtx = _dialogHelpBtnKey.currentContext;
+          if (helpCtx != null) {
+            _showDialogHelpFor(ReceiveShareHelpTargetId.helpButton, helpCtx);
+          } else {
+            setState(() {
+              _dialogHelp.showTarget(
+                ReceiveShareHelpTargetId.helpButton,
+                _dialogFallbackTargetRect(),
+              );
+              _dialogIsTyping = true;
+            });
+          }
+        });
+      }
+    });
+  }
+
+  void _showDialogHelpFor(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    final rect = _resolveTargetRect(ctx);
+    if (rect == null) return;
+    setState(() {
+      _dialogHelp.showTarget(id, rect);
+      _dialogIsTyping = true;
+    });
+  }
+
+  Rect _dialogFallbackTargetRect() {
+    final size = MediaQuery.of(context).size;
+    final width = (size.width * 0.4).clamp(96.0, 220.0);
+    const height = 44.0;
+    return Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: width,
+      height: height,
+    );
+  }
+
+  bool _tryDialogHelpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (!_dialogHelp.isActive) return false;
+    triggerHeavyHaptic();
+    _showDialogHelpFor(id, ctx);
+    return true;
+  }
+
+  void _advanceDialogHelp() {
+    setState(() {
+      _dialogHelp.advance();
+      if (_dialogHelp.hasActiveTarget) _dialogIsTyping = true;
+    });
+  }
+
+  void _dismissDialogHelp() {
+    setState(() {
+      _dialogHelp.dismiss();
+      _dialogIsTyping = false;
+    });
+  }
+
+  void _onDialogHelpBarrierTap() {
+    if (_dialogIsTyping) {
+      _dialogBubbleKey.currentState?.skipTypewriter();
+    } else {
+      _advanceDialogHelp();
+    }
+  }
+
+  Widget _buildDialogHelpOverlay() {
+    final flow = _dialogHelp;
+    final spec = flow.activeSpec;
+    final step = flow.activeHelpStep;
+    return Positioned.fill(
+      child: Builder(
+        builder: (overlayCtx) {
+          final localTargetRect =
+              _dialogTargetRectInOverlay(overlayCtx, flow.activeTargetRect);
+          return AnimatedOpacity(
+            duration: const Duration(milliseconds: 200),
+            opacity: flow.hasActiveTarget ? 1.0 : 0.0,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _onDialogHelpBarrierTap,
+              child: Stack(children: [
+                if (localTargetRect != null)
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: _dialogSpotlight,
+                      builder: (context, _) => CustomPaint(
+                        painter: HelpSpotlightPainter(
+                          targetRect: localTargetRect,
+                          glowProgress: _dialogSpotlight.value,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (spec != null && step != null && localTargetRect != null)
+                  HelpBubble(
+                    key: _dialogBubbleKey,
+                    text: step.text,
+                    instruction: step.instruction,
+                    isLastStep: flow.isLastStep,
+                    targetRect: localTargetRect,
+                    onAdvance: _advanceDialogHelp,
+                    onDismiss: _dismissDialogHelp,
+                    onTypingStarted: () {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) setState(() => _dialogIsTyping = true);
+                      });
+                    },
+                    onTypingFinished: () {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) setState(() => _dialogIsTyping = false);
+                      });
+                    },
+                  ),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Rect? _dialogTargetRectInOverlay(
+      BuildContext overlayContext, Rect? globalRect) {
+    if (globalRect == null) return null;
+    final renderObject = overlayContext.findRenderObject();
+    final overlayBox = renderObject is RenderBox && renderObject.hasSize
+        ? renderObject
+        : overlayContext.findAncestorRenderObjectOfType<RenderBox>();
+    if (overlayBox == null || !overlayBox.hasSize) return null;
+    final topLeft = overlayBox.globalToLocal(globalRect.topLeft);
+    final bottomRight = overlayBox.globalToLocal(globalRect.bottomRight);
+    return Rect.fromPoints(topLeft, bottomRight);
+  }
 
   @override
   void initState() {
     super.initState();
+    _dialogHelp = HelpFlowState<ReceiveShareHelpTargetId>(
+        content: receiveShareHelpContent);
+    _dialogSpotlight = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
     // Start with all valid locations selected (those with coordinates)
     _selectedIndices = Set<int>.from(widget.locations
         .asMap()
         .entries
         .where((e) => e.value.coordinates != null)
         .map((e) => e.key));
-    // Fetch business status for all locations with place IDs
     _fetchBusinessStatuses();
+  }
+
+  @override
+  void dispose() {
+    _dialogSpotlight.dispose();
+    super.dispose();
   }
 
   /// Fetch business status for all locations that have a placeId
@@ -13305,6 +14160,33 @@ class _MultiLocationSelectionDialogState
     );
   }
 
+  void _handleDialogCancelTap(BuildContext ctx) {
+    if (_tryDialogHelpTap(
+        ReceiveShareHelpTargetId.multiLocationCancelButton, ctx)) {
+      return;
+    }
+    Navigator.pop(context, null);
+  }
+
+  void _handleDialogDeepScanTap(BuildContext ctx) {
+    if (_tryDialogHelpTap(
+        ReceiveShareHelpTargetId.multiLocationDeepScanButton, ctx)) {
+      return;
+    }
+    _requestDeepScanWithConfirmed();
+  }
+
+  VoidCallback? _buildDialogConfirmAction(BuildContext ctx) {
+    if (_dialogHelp.isActive) {
+      return () {
+        _tryDialogHelpTap(
+            ReceiveShareHelpTargetId.multiLocationConfirmButton, ctx);
+      };
+    }
+    if (_noneSelected) return null;
+    return _finishSelection;
+  }
+
   @override
   Widget build(BuildContext context) {
     // Using Dialog with custom structure instead of AlertDialog
@@ -13319,26 +14201,26 @@ class _MultiLocationSelectionDialogState
           maxWidth: MediaQuery.of(context).size.width - 32,
           maxHeight: MediaQuery.of(context).size.height * 0.8,
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-          child: Column(
-            // Note: Do NOT use mainAxisSize: MainAxisSize.min here
-            // because it conflicts with the Flexible child, causing
-            // layout issues in iOS release builds with Impeller.
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Title
-              _buildLocationTitle(),
-              const SizedBox(height: 16),
-              // Content - use Flexible to allow scrolling without overflow
-              Flexible(
-                child: _buildLocationSelectionPage(),
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildLocationTitle(),
+                  const SizedBox(height: 16),
+                  Flexible(
+                    child: _buildLocationSelectionPage(),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildLocationActionsRow(),
+                ],
               ),
-              const SizedBox(height: 16),
-              // Actions
-              _buildLocationActionsRow(),
-            ],
-          ),
+            ),
+            if (_dialogHelp.isActive && _dialogHelp.hasActiveTarget)
+              _buildDialogHelpOverlay(),
+          ],
         ),
       ),
     );
@@ -13353,18 +14235,22 @@ class _MultiLocationSelectionDialogState
       return Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: const Text('Close'),
+          Builder(
+            builder: (closeCtx) => TextButton(
+              onPressed: () => _handleDialogCancelTap(closeCtx),
+              child: const Text('Close'),
+            ),
           ),
           const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: _requestDeepScanWithConfirmed,
-            icon: const Icon(Icons.search, size: 18),
-            label: const Text('Run Deep Scan'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.sage,
-              foregroundColor: Colors.white,
+          Builder(
+            builder: (deepScanCtx) => ElevatedButton.icon(
+              onPressed: () => _handleDialogDeepScanTap(deepScanCtx),
+              icon: const Icon(Icons.search, size: 18),
+              label: const Text('Run Deep Scan'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.sage,
+                foregroundColor: Colors.white,
+              ),
             ),
           ),
         ],
@@ -13376,9 +14262,11 @@ class _MultiLocationSelectionDialogState
       return Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: const Text('Close'),
+          Builder(
+            builder: (closeCtx) => TextButton(
+              onPressed: () => _handleDialogCancelTap(closeCtx),
+              child: const Text('Close'),
+            ),
           ),
         ],
       );
@@ -13406,15 +14294,17 @@ class _MultiLocationSelectionDialogState
                   ),
                 ),
                 const SizedBox(height: 4),
-                OutlinedButton.icon(
-                  onPressed: _requestDeepScanWithConfirmed,
-                  icon: const Icon(Icons.search, size: 16),
-                  label: const Text('Try Deep Scan'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.sage,
-                    side: BorderSide(color: AppColors.sage),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 8),
+                Builder(
+                  builder: (deepScanCtx) => OutlinedButton.icon(
+                    onPressed: () => _handleDialogDeepScanTap(deepScanCtx),
+                    icon: const Icon(Icons.search, size: 16),
+                    label: const Text('Try Deep Scan'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.sage,
+                      side: BorderSide(color: AppColors.sage),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                    ),
                   ),
                 ),
               ],
@@ -13424,14 +14314,18 @@ class _MultiLocationSelectionDialogState
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, null),
-                child: const Text('Cancel'),
+              Builder(
+                builder: (cancelCtx) => TextButton(
+                  onPressed: () => _handleDialogCancelTap(cancelCtx),
+                  child: const Text('Cancel'),
+                ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _noneSelected ? null : _finishSelection,
-                child: Text(_buildButtonText()),
+              Builder(
+                builder: (confirmCtx) => ElevatedButton(
+                  onPressed: _buildDialogConfirmAction(confirmCtx),
+                  child: Text(_buildButtonText()),
+                ),
               ),
             ],
           ),
@@ -13443,14 +14337,18 @@ class _MultiLocationSelectionDialogState
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, null),
-          child: const Text('Cancel'),
+        Builder(
+          builder: (cancelCtx) => TextButton(
+            onPressed: () => _handleDialogCancelTap(cancelCtx),
+            child: const Text('Cancel'),
+          ),
         ),
         const SizedBox(width: 8),
-        ElevatedButton(
-          onPressed: _noneSelected ? null : _finishSelection,
-          child: Text(_buildButtonText()),
+        Builder(
+          builder: (confirmCtx) => ElevatedButton(
+            onPressed: _buildDialogConfirmAction(confirmCtx),
+            child: Text(_buildButtonText()),
+          ),
         ),
       ],
     );
@@ -13480,6 +14378,21 @@ class _MultiLocationSelectionDialogState
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            _dialogHelp.isActive
+                ? IconButton(
+                    key: _dialogHelpBtnKey,
+                    icon: Icon(Icons.help, color: AppColors.teal),
+                    tooltip: 'Exit Help Mode',
+                    onPressed: _toggleDialogHelp,
+                    visualDensity: VisualDensity.compact,
+                  )
+                : IconButton(
+                    key: _dialogHelpBtnKey,
+                    icon: Icon(Icons.help_outline, color: Colors.grey[400]),
+                    tooltip: 'Help',
+                    onPressed: _toggleDialogHelp,
+                    visualDensity: VisualDensity.compact,
+                  ),
           ],
         ),
         if (_lowConfidenceCount > 0) ...[
@@ -13643,44 +14556,60 @@ class _MultiLocationSelectionDialogState
         ],
         const SizedBox(height: 8),
         // Select All / Deselect All row
-        InkWell(
-          onTap: withHeavyTap(_toggleAll),
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Checkbox(
-                  value: _allSelected,
-                  tristate: true,
-                  onChanged: (_) => _toggleAll(),
-                  activeColor: AppColors.sage,
-                ),
-                Text(
-                  _allSelected ? 'Deselect All' : 'Select All',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.sage,
+        Builder(
+          builder: (selectAllCtx) => InkWell(
+            onTap: _dialogHelp.isActive
+                ? () => _tryDialogHelpTap(
+                      ReceiveShareHelpTargetId.multiLocationCheckbox,
+                      selectAllCtx,
+                    )
+                : withHeavyTap(_toggleAll),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Builder(
+                    builder: (selectAllCheckboxCtx) => Checkbox(
+                      value: _allSelected,
+                      tristate: true,
+                      onChanged: (_) {
+                        if (_tryDialogHelpTap(
+                            ReceiveShareHelpTargetId.multiLocationCheckbox,
+                            selectAllCheckboxCtx)) {
+                          return;
+                        }
+                        _toggleAll();
+                      },
+                      activeColor: AppColors.sage,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.sage.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${_selectedIndices.length}/$_validLocationCount',
+                  Text(
+                    _allSelected ? 'Deselect All' : 'Select All',
                     style: TextStyle(
-                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                       color: AppColors.sage,
                     ),
                   ),
-                ),
-              ],
+                  const Spacer(),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.sage.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_selectedIndices.length}/$_validLocationCount',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.sage,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -13690,22 +14619,28 @@ class _MultiLocationSelectionDialogState
         // within the parent Flexible wrapper
         Flexible(
           child: ListView.builder(
-              itemCount: widget.locations.length,
-              itemBuilder: (context, index) {
-                final location = widget.locations[index];
-                final isSelected = _selectedIndices.contains(index);
-                final isDuplicate = widget.duplicates.containsKey(index);
-                final existingExp = widget.duplicates[index];
-                final isLowConfidence = _isLowConfidence(location);
-                final hasNoCoordinates = location.coordinates == null;
-                final isDisabled =
-                    hasNoCoordinates; // Can't select locations without coordinates
-                final isPermanentlyClosed = _isPermanentlyClosed(index);
+            itemCount: widget.locations.length,
+            itemBuilder: (context, index) {
+              final location = widget.locations[index];
+              final isSelected = _selectedIndices.contains(index);
+              final isDuplicate = widget.duplicates.containsKey(index);
+              final existingExp = widget.duplicates[index];
+              final isLowConfidence = _isLowConfidence(location);
+              final hasNoCoordinates = location.coordinates == null;
+              final isDisabled =
+                  hasNoCoordinates; // Can't select locations without coordinates
+              final isPermanentlyClosed = _isPermanentlyClosed(index);
 
-                return InkWell(
-                  onTap: isDisabled
-                      ? null
-                      : withHeavyTap(() => _toggleLocation(index)),
+              return Builder(
+                builder: (rowCtx) => InkWell(
+                  onTap: _dialogHelp.isActive
+                      ? () => _tryDialogHelpTap(
+                            ReceiveShareHelpTargetId.multiLocationCheckbox,
+                            rowCtx,
+                          )
+                      : (isDisabled
+                          ? null
+                          : withHeavyTap(() => _toggleLocation(index))),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 4),
@@ -13738,15 +14673,26 @@ class _MultiLocationSelectionDialogState
                       children: [
                         // Show checkbox only if location is not disabled
                         if (!isDisabled) ...[
-                          Checkbox(
-                            value: isSelected,
-                            onChanged: (_) => _toggleLocation(index),
-                            // Permanently closed and low confidence use primaryColor
-                            activeColor: isPermanentlyClosed || isLowConfidence
-                                ? primaryColor
-                                : isDuplicate
-                                    ? AppColors.teal
-                                    : AppColors.sage,
+                          Builder(
+                            builder: (locationCheckboxCtx) => Checkbox(
+                              value: isSelected,
+                              onChanged: (_) {
+                                if (_tryDialogHelpTap(
+                                    ReceiveShareHelpTargetId
+                                        .multiLocationCheckbox,
+                                    locationCheckboxCtx)) {
+                                  return;
+                                }
+                                _toggleLocation(index);
+                              },
+                              // Permanently closed and low confidence use primaryColor
+                              activeColor:
+                                  isPermanentlyClosed || isLowConfidence
+                                      ? primaryColor
+                                      : isDuplicate
+                                          ? AppColors.teal
+                                          : AppColors.sage,
+                            ),
                           ),
                         ] else ...[
                           // Show empty space to align with other items
@@ -14000,10 +14946,11 @@ class _MultiLocationSelectionDialogState
                       ],
                     ),
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
+        ),
         // Expandable scanned text section
         if (widget.scannedText != null && widget.scannedText!.isNotEmpty) ...[
           const SizedBox(height: 12),
@@ -14026,43 +14973,51 @@ class _MultiLocationSelectionDialogState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header with expand/collapse tap area
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isScannedTextExpanded = !_isScannedTextExpanded;
-              });
-            },
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              child: Row(
-                children: [
-                  Icon(
-                    _isScannedTextExpanded
-                        ? Icons.expand_less
-                        : Icons.expand_more,
-                    size: 20,
-                    color: Colors.grey[600],
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
+          Builder(
+            builder: (scannedTextCtx) => InkWell(
+              onTap: () {
+                if (_tryDialogHelpTap(
+                    ReceiveShareHelpTargetId.multiLocationScannedTextToggle,
+                    scannedTextCtx)) {
+                  return;
+                }
+                setState(() {
+                  _isScannedTextExpanded = !_isScannedTextExpanded;
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(
                       _isScannedTextExpanded
-                          ? 'Hide scanned text'
-                          : 'Show scanned text to double check',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey[700],
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                      size: 20,
+                      color: Colors.grey[600],
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _isScannedTextExpanded
+                            ? 'Hide scanned text'
+                            : 'Show scanned text to double check',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey[700],
+                        ),
                       ),
                     ),
-                  ),
-                  Icon(
-                    Icons.text_snippet_outlined,
-                    size: 16,
-                    color: Colors.grey[500],
-                  ),
-                ],
+                    Icon(
+                      Icons.text_snippet_outlined,
+                      size: 16,
+                      color: Colors.grey[500],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -14092,7 +15047,7 @@ class _MultiLocationSelectionDialogState
   String _buildButtonText() {
     if (_selectedIndices.length == 1) {
       final isDuplicate = widget.duplicates.containsKey(_selectedIndices.first);
-      return isDuplicate ? 'Use Existing' : 'Create 1 Card';
+      return isDuplicate ? 'Use Existing' : 'Create 1 Experience';
     }
 
     if (_selectedDuplicateCount > 0 && _selectedNewCount > 0) {
@@ -14100,7 +15055,7 @@ class _MultiLocationSelectionDialogState
     } else if (_selectedDuplicateCount > 0) {
       return 'Use $_selectedDuplicateCount Existing';
     } else {
-      return 'Create $_selectedNewCount Cards';
+      return 'Create $_selectedNewCount Experiences';
     }
   }
 }
@@ -14122,7 +15077,8 @@ class _QuickAddDialog extends StatefulWidget {
   State<_QuickAddDialog> createState() => _QuickAddDialogState();
 }
 
-class _QuickAddDialogState extends State<_QuickAddDialog> {
+class _QuickAddDialogState extends State<_QuickAddDialog>
+    with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   List<Map<String, dynamic>> _searchResults = [];
@@ -14133,9 +15089,164 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
   Experience? _selectedExperience;
   bool _isLoadingDetails = false;
 
+  // Dialog-local help mode
+  late final HelpFlowState<ReceiveShareHelpTargetId> _dialogHelp;
+  late final AnimationController _dialogSpotlight;
+  final GlobalKey _dialogHelpBtnKey = GlobalKey();
+  final GlobalKey<HelpBubbleState> _dialogBubbleKey = GlobalKey();
+  bool _dialogIsTyping = false;
+
+  void _toggleDialogHelp() {
+    triggerHeavyHaptic();
+    setState(() {
+      final nowActive = _dialogHelp.toggle();
+      if (nowActive) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final helpCtx = _dialogHelpBtnKey.currentContext;
+          if (helpCtx != null) {
+            _showDialogHelpFor(ReceiveShareHelpTargetId.helpButton, helpCtx);
+          } else {
+            setState(() {
+              _dialogHelp.showTarget(
+                ReceiveShareHelpTargetId.helpButton,
+                _dialogFallbackTargetRect(),
+              );
+              _dialogIsTyping = true;
+            });
+          }
+        });
+      }
+    });
+  }
+
+  void _showDialogHelpFor(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    final rect = _resolveTargetRect(ctx) ?? _dialogFallbackTargetRect();
+    setState(() {
+      _dialogHelp.showTarget(id, rect);
+      _dialogIsTyping = true;
+    });
+  }
+
+  Rect _dialogFallbackTargetRect() {
+    final size = MediaQuery.of(context).size;
+    final width = (size.width * 0.4).clamp(96.0, 220.0);
+    const height = 44.0;
+    return Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: width,
+      height: height,
+    );
+  }
+
+  // ignore: unused_element
+  bool _tryDialogHelpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (!_dialogHelp.isActive) return false;
+    triggerHeavyHaptic();
+    _showDialogHelpFor(id, ctx);
+    return true;
+  }
+
+  void _advanceDialogHelp() {
+    setState(() {
+      _dialogHelp.advance();
+      if (_dialogHelp.hasActiveTarget) _dialogIsTyping = true;
+    });
+  }
+
+  void _dismissDialogHelp() {
+    setState(() {
+      _dialogHelp.dismiss();
+      _dialogIsTyping = false;
+    });
+  }
+
+  void _onDialogHelpBarrierTap() {
+    if (_dialogIsTyping) {
+      _dialogBubbleKey.currentState?.skipTypewriter();
+    } else {
+      _advanceDialogHelp();
+    }
+  }
+
+  Widget _buildDialogHelpOverlay() {
+    final flow = _dialogHelp;
+    final spec = flow.activeSpec;
+    final step = flow.activeHelpStep;
+    return Positioned.fill(
+      child: Builder(
+        builder: (overlayCtx) {
+          final localTargetRect =
+              _dialogTargetRectInOverlay(overlayCtx, flow.activeTargetRect);
+          return AnimatedOpacity(
+            duration: const Duration(milliseconds: 200),
+            opacity: flow.hasActiveTarget ? 1.0 : 0.0,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _onDialogHelpBarrierTap,
+              child: Stack(children: [
+                if (localTargetRect != null)
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: _dialogSpotlight,
+                      builder: (context, _) => CustomPaint(
+                        painter: HelpSpotlightPainter(
+                          targetRect: localTargetRect,
+                          glowProgress: _dialogSpotlight.value,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (spec != null && step != null && localTargetRect != null)
+                  HelpBubble(
+                    key: _dialogBubbleKey,
+                    text: step.text,
+                    instruction: step.instruction,
+                    isLastStep: flow.isLastStep,
+                    targetRect: localTargetRect,
+                    onAdvance: _advanceDialogHelp,
+                    onDismiss: _dismissDialogHelp,
+                    onTypingStarted: () {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) setState(() => _dialogIsTyping = true);
+                      });
+                    },
+                    onTypingFinished: () {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) setState(() => _dialogIsTyping = false);
+                      });
+                    },
+                  ),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Rect? _dialogTargetRectInOverlay(
+      BuildContext overlayContext, Rect? globalRect) {
+    if (globalRect == null) return null;
+    final renderObject = overlayContext.findRenderObject();
+    final overlayBox = renderObject is RenderBox && renderObject.hasSize
+        ? renderObject
+        : overlayContext.findAncestorRenderObjectOfType<RenderBox>();
+    if (overlayBox == null || !overlayBox.hasSize) return null;
+    final topLeft = overlayBox.globalToLocal(globalRect.topLeft);
+    final bottomRight = overlayBox.globalToLocal(globalRect.bottomRight);
+    return Rect.fromPoints(topLeft, bottomRight);
+  }
+
   @override
   void initState() {
     super.initState();
+    _dialogHelp = HelpFlowState<ReceiveShareHelpTargetId>(
+        content: receiveShareHelpContent);
+    _dialogSpotlight = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _searchFocusNode.requestFocus();
     });
@@ -14143,6 +15254,7 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
 
   @override
   void dispose() {
+    _dialogSpotlight.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _debounce?.cancel();
@@ -14338,418 +15450,447 @@ class _QuickAddDialogState extends State<_QuickAddDialog> {
               ),
             ],
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
             children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).primaryColor,
-                  borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(0),
-                    bottomRight: Radius.circular(0),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.add_location_alt, color: Colors.white),
-                    const SizedBox(width: 12),
-                    const Text(
-                      'Quick Add',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor,
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(0),
+                        bottomRight: Radius.circular(0),
                       ),
                     ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Search field
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  decoration: InputDecoration(
-                    hintText: 'Search locations or saved experiences...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _isSearching
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : _searchController.text.isNotEmpty
+                    child: Row(
+                      children: [
+                        const Icon(Icons.add_location_alt, color: Colors.white),
+                        const SizedBox(width: 12),
+                        const Text(
+                          'Quick Add',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        _dialogHelp.isActive
                             ? IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() {
-                                    _searchResults = [];
-                                    _showSearchResults = false;
-                                    _selectedLocation = null;
-                                    _selectedExperience = null;
-                                  });
-                                },
+                                key: _dialogHelpBtnKey,
+                                icon:
+                                    const Icon(Icons.help, color: Colors.white),
+                                tooltip: 'Exit Help Mode',
+                                onPressed: _toggleDialogHelp,
                               )
-                            : null,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                            : IconButton(
+                                key: _dialogHelpBtnKey,
+                                icon: const Icon(Icons.help_outline,
+                                    color: Colors.white70),
+                                tooltip: 'Help',
+                                onPressed: _toggleDialogHelp,
+                              ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
                     ),
                   ),
-                  onChanged: _searchPlaces,
-                ),
-              ),
 
-              // Search results
-              if (_showSearchResults)
-                Flexible(
-                  child: Container(
-                    constraints: BoxConstraints(
-                      maxHeight: mediaQuery.size.height * 0.35,
-                    ),
-                    margin: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: _searchResults.length,
-                      separatorBuilder: (context, index) =>
-                          Divider(height: 1, indent: 56, endIndent: 16),
-                      itemBuilder: (context, index) {
-                        final result = _searchResults[index];
-                        final bool isUserExperience =
-                            result['type'] == 'experience';
-                        final String? address = result['address'] ??
-                            (result['structured_formatting'] != null
-                                ? result['structured_formatting']
-                                    ['secondary_text']
-                                : null);
-                        final bool hasRating =
-                            result['rating'] != null && !isUserExperience;
-                        final double rating = hasRating
-                            ? (result['rating'] as num).toDouble()
-                            : 0.0;
-
-                        return Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap:
-                                withHeavyTap(() => _selectSearchResult(result)),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 4.0),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: isUserExperience
-                                      ? Colors.green.withOpacity(0.1)
-                                      : Theme.of(context)
-                                          .primaryColor
-                                          .withOpacity(0.1),
-                                  child: isUserExperience
-                                      ? const Icon(
-                                          Icons.bookmark,
-                                          color: Colors.green,
-                                          size: 18,
-                                        )
-                                      : Icon(
-                                          Icons.location_on,
-                                          color: Theme.of(context).primaryColor,
-                                          size: 18,
-                                        ),
+                  // Search field
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: TextField(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      decoration: InputDecoration(
+                        hintText: 'Search locations or saved experiences...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _isSearching
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
                                 ),
-                                title: Row(
-                                  children: [
-                                    if (isUserExperience) ...[
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green.withOpacity(0.1),
-                                          borderRadius:
-                                              BorderRadius.circular(4),
-                                          border: Border.all(
-                                              color: Colors.green
-                                                  .withOpacity(0.3)),
-                                        ),
-                                        child: Text(
-                                          'Saved',
-                                          style: TextStyle(
-                                            color: Colors.green[700],
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w500,
+                              )
+                            : _searchController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() {
+                                        _searchResults = [];
+                                        _showSearchResults = false;
+                                        _selectedLocation = null;
+                                        _selectedExperience = null;
+                                      });
+                                    },
+                                  )
+                                : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      onChanged: _searchPlaces,
+                    ),
+                  ),
+
+                  // Search results
+                  if (_showSearchResults)
+                    Flexible(
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxHeight: mediaQuery.size.height * 0.35,
+                        ),
+                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: _searchResults.length,
+                          separatorBuilder: (context, index) =>
+                              Divider(height: 1, indent: 56, endIndent: 16),
+                          itemBuilder: (context, index) {
+                            final result = _searchResults[index];
+                            final bool isUserExperience =
+                                result['type'] == 'experience';
+                            final String? address = result['address'] ??
+                                (result['structured_formatting'] != null
+                                    ? result['structured_formatting']
+                                        ['secondary_text']
+                                    : null);
+                            final bool hasRating =
+                                result['rating'] != null && !isUserExperience;
+                            final double rating = hasRating
+                                ? (result['rating'] as num).toDouble()
+                                : 0.0;
+
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: withHeavyTap(
+                                    () => _selectSearchResult(result)),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: ListTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: isUserExperience
+                                          ? Colors.green.withOpacity(0.1)
+                                          : Theme.of(context)
+                                              .primaryColor
+                                              .withOpacity(0.1),
+                                      child: isUserExperience
+                                          ? const Icon(
+                                              Icons.bookmark,
+                                              color: Colors.green,
+                                              size: 18,
+                                            )
+                                          : Icon(
+                                              Icons.location_on,
+                                              color: Theme.of(context)
+                                                  .primaryColor,
+                                              size: 18,
+                                            ),
+                                    ),
+                                    title: Row(
+                                      children: [
+                                        if (isUserExperience) ...[
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  Colors.green.withOpacity(0.1),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                  color: Colors.green
+                                                      .withOpacity(0.3)),
+                                            ),
+                                            child: Text(
+                                              'Saved',
+                                              style: TextStyle(
+                                                color: Colors.green[700],
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                        ],
+                                        Expanded(
+                                          child: Text(
+                                            result['description'] ??
+                                                'Unknown Place',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 15,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                    ],
-                                    Expanded(
-                                      child: Text(
-                                        result['description'] ??
-                                            'Unknown Place',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                          fontSize: 15,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
+                                      ],
+                                    ),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (address != null)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 4.0),
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.location_on,
+                                                    size: 14,
+                                                    color: Colors.grey[600]),
+                                                const SizedBox(width: 4),
+                                                Expanded(
+                                                  child: Text(
+                                                    address,
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 13,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        if (hasRating)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 4.0),
+                                            child: Row(
+                                              children: [
+                                                ...List.generate(
+                                                  5,
+                                                  (i) => Icon(
+                                                    i < rating.floor()
+                                                        ? Icons.star
+                                                        : (i < rating)
+                                                            ? Icons.star_half
+                                                            : Icons.star_border,
+                                                    size: 14,
+                                                    color: Colors.amber,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                if (result['userRatingCount'] !=
+                                                    null)
+                                                  Text(
+                                                    '(${result['userRatingCount']})',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+
+                  // Selected location display
+                  if (_selectedLocation != null && !_showSearchResults)
+                    Container(
+                      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: _selectedExperience != null
+                            ? Colors.green.withOpacity(0.05)
+                            : Colors.blue.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _selectedExperience != null
+                              ? Colors.green.withOpacity(0.3)
+                              : Colors.blue.withOpacity(0.3),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                _selectedExperience != null
+                                    ? Icons.bookmark
+                                    : Icons.location_on,
+                                color: _selectedExperience != null
+                                    ? Colors.green
+                                    : Theme.of(context).primaryColor,
+                              ),
+                              const SizedBox(width: 8),
+                              if (_selectedExperience != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                        color: Colors.green.withOpacity(0.3)),
+                                  ),
+                                  child: Text(
+                                    'Saved Experience',
+                                    style: TextStyle(
+                                      color: Colors.green[700],
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                )
+                              else
+                                Text(
+                                  'New Location',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              // Show rating on the right side for new locations
+                              if (_selectedExperience == null &&
+                                  _selectedLocation!.rating != null) ...[
+                                const Spacer(),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ...List.generate(
+                                      5,
+                                      (i) => Icon(
+                                        i < _selectedLocation!.rating!.floor()
+                                            ? Icons.star
+                                            : (i < _selectedLocation!.rating!)
+                                                ? Icons.star_half
+                                                : Icons.star_border,
+                                        size: 16,
+                                        color: Colors.amber,
                                       ),
                                     ),
-                                  ],
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (address != null)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(top: 4.0),
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.location_on,
-                                                size: 14,
-                                                color: Colors.grey[600]),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                address,
-                                                style: TextStyle(
-                                                  color: Colors.grey[600],
-                                                  fontSize: 13,
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    if (hasRating)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(top: 4.0),
-                                        child: Row(
-                                          children: [
-                                            ...List.generate(
-                                              5,
-                                              (i) => Icon(
-                                                i < rating.floor()
-                                                    ? Icons.star
-                                                    : (i < rating)
-                                                        ? Icons.star_half
-                                                        : Icons.star_border,
-                                                size: 14,
-                                                color: Colors.amber,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            if (result['userRatingCount'] !=
-                                                null)
-                                              Text(
-                                                '(${result['userRatingCount']})',
-                                                style: TextStyle(
-                                                  color: Colors.grey[600],
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                          ],
+                                    const SizedBox(width: 4),
+                                    if (_selectedLocation!.userRatingCount !=
+                                        null)
+                                      Text(
+                                        '(${_selectedLocation!.userRatingCount})',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 12,
                                         ),
                                       ),
                                   ],
                                 ),
-                              ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _selectedLocation!.displayName ??
+                                'Unnamed Location',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
                             ),
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-
-              // Selected location display
-              if (_selectedLocation != null && !_showSearchResults)
-                Container(
-                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _selectedExperience != null
-                        ? Colors.green.withOpacity(0.05)
-                        : Colors.blue.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _selectedExperience != null
-                          ? Colors.green.withOpacity(0.3)
-                          : Colors.blue.withOpacity(0.3),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            _selectedExperience != null
-                                ? Icons.bookmark
-                                : Icons.location_on,
-                            color: _selectedExperience != null
-                                ? Colors.green
-                                : Theme.of(context).primaryColor,
-                          ),
-                          const SizedBox(width: 8),
-                          if (_selectedExperience != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.green.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                    color: Colors.green.withOpacity(0.3)),
-                              ),
-                              child: Text(
-                                'Saved Experience',
-                                style: TextStyle(
-                                  color: Colors.green[700],
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            )
-                          else
+                          if (_selectedLocation!.address != null) ...[
+                            const SizedBox(height: 4),
                             Text(
-                              'New Location',
+                              _selectedLocation!.address!,
                               style: TextStyle(
                                 color: Colors.grey[600],
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
+                                fontSize: 14,
                               ),
-                            ),
-                          // Show rating on the right side for new locations
-                          if (_selectedExperience == null &&
-                              _selectedLocation!.rating != null) ...[
-                            const Spacer(),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ...List.generate(
-                                  5,
-                                  (i) => Icon(
-                                    i < _selectedLocation!.rating!.floor()
-                                        ? Icons.star
-                                        : (i < _selectedLocation!.rating!)
-                                            ? Icons.star_half
-                                            : Icons.star_border,
-                                    size: 16,
-                                    color: Colors.amber,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                if (_selectedLocation!.userRatingCount != null)
-                                  Text(
-                                    '(${_selectedLocation!.userRatingCount})',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                              ],
                             ),
                           ],
                         ],
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _selectedLocation!.displayName ?? 'Unnamed Location',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      if (_selectedLocation!.address != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          _selectedLocation!.address!,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
+                    ),
 
-              // Loading indicator for details
-              if (_isLoadingDetails)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(),
-                ),
+                  // Loading indicator for details
+                  if (_isLoadingDetails)
+                    const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: CircularProgressIndicator(),
+                    ),
 
-              // Action buttons
-              if (_selectedLocation != null &&
-                  !_showSearchResults &&
-                  !_isLoadingDetails)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            setState(() {
-                              _selectedLocation = null;
-                              _selectedExperience = null;
-                              _searchController.clear();
-                            });
-                          },
-                          child: const Text('Clear'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 2,
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            widget.onLocationSelected(
-                              _selectedLocation!,
-                              _selectedExperience,
-                            );
-                          },
-                          icon: const Icon(Icons.check, color: Colors.white),
-                          label: Text(
-                            _selectedExperience != null
-                                ? 'Add Saved Experience'
-                                : 'Add Location',
-                            style: const TextStyle(color: Colors.white),
+                  // Action buttons
+                  if (_selectedLocation != null &&
+                      !_showSearchResults &&
+                      !_isLoadingDetails)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _selectedLocation = null;
+                                  _selectedExperience = null;
+                                  _searchController.clear();
+                                });
+                              },
+                              child: const Text('Clear'),
+                            ),
                           ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).primaryColor,
-                            foregroundColor: Colors.white,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                widget.onLocationSelected(
+                                  _selectedLocation!,
+                                  _selectedExperience,
+                                );
+                              },
+                              icon:
+                                  const Icon(Icons.check, color: Colors.white),
+                              label: Text(
+                                _selectedExperience != null
+                                    ? 'Add Saved Experience'
+                                    : 'Add Location',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(context).primaryColor,
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
 
-              // Bottom padding
-              const SizedBox(height: 8),
+                  // Bottom padding
+                  const SizedBox(height: 8),
+                ],
+              ),
+              if (_dialogHelp.isActive && _dialogHelp.hasActiveTarget)
+                _buildDialogHelpOverlay(),
             ],
           ),
         ),

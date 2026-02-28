@@ -59,6 +59,11 @@ import '../services/event_service.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../models/collections_help_target.dart';
+import '../config/collections_help_content.dart';
+import '../widgets/collections_help_bubble.dart';
+import '../widgets/help_spotlight_painter.dart';
+import '../services/help_mode_service.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -164,7 +169,8 @@ class CollectionsScreen extends StatefulWidget {
   final ValueChanged<bool>? onLoadingChanged;
   final VoidCallback? onDataChanged;
 
-  const CollectionsScreen({super.key, this.onLoadingChanged, this.onDataChanged});
+  const CollectionsScreen(
+      {super.key, this.onLoadingChanged, this.onDataChanged});
 
   @override
   State<CollectionsScreen> createState() => CollectionsScreenState();
@@ -183,6 +189,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
   late TabController _tabController;
   int _currentTabIndex = 1;
   int _lastTabIndex = 1;
+
+  /// Exposes the current sub-tab index for external help-mode queries.
+  /// 0 = Categories, 1 = Experiences, 2 = Saves.
+  int get currentTabIndex => _currentTabIndex;
   // ADDED: Flag to clear TypeAhead controller on next build
   bool _clearSearchOnNextBuild = false;
 
@@ -251,8 +261,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
   void _enterExperienceSelectionMode({String? selectId}) {
     if (_isSelectingExperiences) {
-      if (selectId != null &&
-          !_selectedExperienceIds.contains(selectId)) {
+      if (selectId != null && !_selectedExperienceIds.contains(selectId)) {
         setState(() {
           _selectedExperienceIds.add(selectId);
         });
@@ -493,6 +502,20 @@ class CollectionsScreenState extends State<CollectionsScreen>
   bool _useManualCategoryOrder = false;
   bool _useManualColorCategoryOrder = false;
 
+  // --- Help mode state ---
+  bool _isHelpMode = false;
+  CollectionsHelpTargetId? _activeHelpTarget;
+  int _activeHelpStep = 0;
+  Rect? _activeTargetRect;
+  bool _isHelpTyping = false;
+  Experience? _helpContextExperience;
+  final GlobalKey _helpButtonKey = GlobalKey();
+  final GlobalKey _fabKey = GlobalKey();
+  final GlobalKey<CollectionsHelpBubbleState> _helpBubbleKey = GlobalKey();
+  final List<GlobalKey> _tabKeys =
+      List<GlobalKey>.generate(3, (_) => GlobalKey());
+  late final AnimationController _spotlightController;
+
   // --- Persistent sort preference keys ---
   static const String _prefsKeyCategorySort = 'collections_category_sort';
   static const String _prefsKeyColorCategorySort =
@@ -552,9 +575,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
           _experienceSortType = ExperienceSortType.values.firstWhere(
               (e) => e.name == exp,
               orElse: () => _experienceSortType);
-          print('[Collections] Loaded experience sort preference: $exp -> $_experienceSortType');
+          print(
+              '[Collections] Loaded experience sort preference: $exp -> $_experienceSortType');
         } else {
-          print('[Collections] No saved experience sort preference, using default: $_experienceSortType');
+          print(
+              '[Collections] No saved experience sort preference, using default: $_experienceSortType');
         }
         if (content != null) {
           _contentSortType = ContentSortType.values.firstWhere(
@@ -831,10 +856,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
   bool _isContentLoading = false;
   bool _isExperiencesLoading = false;
   bool _contentPreloadRequested = false;
-  
+
   // Event tracking for experience banners
   bool _isLoadingEvents = false;
-  Map<String, Event> _experienceIdToEvent = {}; // Maps experience ID to its event
+  Map<String, Event> _experienceIdToEvent =
+      {}; // Maps experience ID to its event
 
   String _buildSharedByLabel({
     required SharePermission permission,
@@ -913,6 +939,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         ? ShareAccessLevel.edit
         : ShareAccessLevel.view;
   }
+
   // ADDED: Background refresh helper for photo resource names
   Future<void> _refreshPhotoResourceNameForExperience(
       Experience experience) async {
@@ -997,6 +1024,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
         TabController(length: 3, vsync: this, initialIndex: initialTabIndex);
     _currentTabIndex = initialTabIndex;
     _lastTabIndex = initialTabIndex;
+    _spotlightController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
     _experienceSelectionController = AnimationController(
       vsync: this,
       duration: _experienceSelectionAnimationDuration,
@@ -1046,12 +1078,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
         startContentPreload();
       }
     });
-    
+
     // Set up infinite scroll for Experiences tab
     _experiencesScrollController.addListener(_onExperiencesScroll);
-    
+
     _loadSortPreferences().whenComplete(() {
       _loadData();
+    });
+    HelpModeService.listenable.addListener(_onGlobalHelpModeChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onGlobalHelpModeChanged();
+      }
     });
     // REMOVED: Don't preload content until user visits the tab
     // startContentPreload();
@@ -1349,10 +1387,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
   @override
   void dispose() {
+    HelpModeService.listenable.removeListener(_onGlobalHelpModeChanged);
     _categorySaveNotifier?.removeListener(_handleCategorySaveProgress);
     _categorySaveNotifier = null;
     _experiencesScrollController.removeListener(_onExperiencesScroll);
     _experiencesScrollController.dispose();
+    _spotlightController.dispose();
     _experienceSelectionController.dispose();
     _tabController.dispose();
     _searchController.dispose();
@@ -1589,6 +1629,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     }
     return flat;
   }
+
   // Build fully dynamic grouping for Content tab (Country -> L1..L7 -> LOC)
   List<Map<String, Object>> _buildDynamicContentGrouping() {
     String n(String? s) => (s ?? '').trim();
@@ -1889,7 +1930,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       _isLoading = true;
     });
     final totalSw = Stopwatch()..start();
-    
+
     // NOTE: Cache is NOT cleared here anymore for performance.
     // Cache is only cleared when permissions actually change (share/unshare actions).
     // See clearCategoryPermissionsCache() calls in share-related methods.
@@ -1897,34 +1938,46 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final userId = _authService.currentUser?.uid;
     try {
       final fetchSw = Stopwatch()..start();
-      
+
       // OPTIMIZATION: Run all initial queries in parallel instead of sequentially
       // This saves ~1-2 seconds by overlapping network requests
       final parallelFutures = await Future.wait([
         // Future 0: Categories (user + color)
-        _experienceService.getUserAndColorCategories(includeSharedEditable: true),
+        _experienceService.getUserAndColorCategories(
+            includeSharedEditable: true),
         // Future 1: Shared permissions (items shared WITH current user)
-        if (userId != null) _sharingService.getSharedItemsForUser(userId) else Future.value(<SharePermission>[]),
+        if (userId != null)
+          _sharingService.getSharedItemsForUser(userId)
+        else
+          Future.value(<SharePermission>[]),
         // Future 2: Owned permissions (items current user has shared with others) - cached
-        if (userId != null) _sharingService.getOwnedSharePermissions(userId) else Future.value(<SharePermission>[]),
+        if (userId != null)
+          _sharingService.getOwnedSharePermissions(userId)
+        else
+          Future.value(<SharePermission>[]),
       ]);
-      
-      final categoriesResult = parallelFutures[0] as ({List<UserCategory> userCategories, List<ColorCategory> colorCategories});
+
+      final categoriesResult = parallelFutures[0] as ({
+        List<UserCategory> userCategories,
+        List<ColorCategory> colorCategories
+      });
       final sharedPermissions = parallelFutures[1] as List<SharePermission>;
       final ownedPermissions = parallelFutures[2] as List<SharePermission>;
-      
+
       if (_perfLogs) {
         fetchSw.stop();
         final ms = fetchSw.elapsedMilliseconds;
         print(
             '[Perf][Collections] Parallel fetch (categories, shared perms, owned perms) took ${ms}ms');
         if (ms > 2000) {
-          print('[Perf][Collections] WARNING: Initial fetch is slow (>${ms}ms). Check Firestore indexes.');
+          print(
+              '[Perf][Collections] WARNING: Initial fetch is slow (>${ms}ms). Check Firestore indexes.');
         }
       }
 
       final List<UserCategory> ownCategories = categoriesResult.userCategories;
-      final List<ColorCategory> ownColorCategories = categoriesResult.colorCategories;
+      final List<ColorCategory> ownColorCategories =
+          categoriesResult.colorCategories;
 
       List<_SharedCategoryData> sharedCategoryData = [];
       List<_SharedExperienceData> sharedExperienceData = [];
@@ -1935,7 +1988,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (userId != null) {
         // Process shared permissions (items shared WITH current user)
         try {
-          print('[Collections] Found ${sharedPermissions.length} shared permissions');
+          print(
+              '[Collections] Found ${sharedPermissions.length} shared permissions');
           if (sharedPermissions.isNotEmpty) {
             // Prefetch all unique owner names in one batch
             final uniqueOwnerIds =
@@ -1963,14 +2017,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
             }
             // OPTIMIZATION: Skip direct experience resolution if we have many
             // The broad fetch in _combineSharedExperiences will get them via sharedWithUserIds
-            if (experiencePermissions.isNotEmpty && experiencePermissions.length < 100) {
-              print('[Collections] Resolving ${experiencePermissions.length} shared experiences (small set)...');
+            if (experiencePermissions.isNotEmpty &&
+                experiencePermissions.length < 100) {
+              print(
+                  '[Collections] Resolving ${experiencePermissions.length} shared experiences (small set)...');
               sharedExperienceData =
                   await _resolveSharedExperiences(experiencePermissions);
               print(
                   '[Collections] Resolved ${sharedExperienceData.length} shared experiences');
             } else if (experiencePermissions.isNotEmpty) {
-              print('[Collections] Skipping direct experience resolution (${experiencePermissions.length} items) - will use broad fetch instead');
+              print(
+                  '[Collections] Skipping direct experience resolution (${experiencePermissions.length} items) - will use broad fetch instead');
             }
           }
         } catch (e) {
@@ -1979,13 +2036,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
         // Process owned permissions (items current user has shared with others)
         try {
-          print('[Collections] Found ${ownedPermissions.length} owned share permissions');
-          
+          print(
+              '[Collections] Found ${ownedPermissions.length} owned share permissions');
+
           final Set<String> ownCategoryIds =
               ownCategories.map((c) => c.id).toSet();
           final Set<String> ownColorCategoryIds =
               ownColorCategories.map((c) => c.id).toSet();
-          
+
           final Set<String> ownedExperienceIds = {};
           for (final permission in ownedPermissions) {
             if (permission.itemType == ShareableItemType.category) {
@@ -2321,6 +2379,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       return 0;
     }
   }
+
   Future<List<_SharedCategoryData>> _resolveSharedCategories(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
@@ -2353,7 +2412,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       // Batch fetch both user and color categories for this owner
       final results = await Future.wait([
         _experienceService.getUserCategoriesByOwnerAndIds(ownerId, categoryIds),
-        _experienceService.getColorCategoriesByOwnerAndIds(ownerId, categoryIds),
+        _experienceService.getColorCategoriesByOwnerAndIds(
+            ownerId, categoryIds),
       ]);
 
       final List<UserCategory> userCategories =
@@ -2398,6 +2458,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     return allResults;
   }
+
   Future<List<_SharedExperienceData>> _resolveSharedExperiences(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
@@ -2421,8 +2482,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     ]);
     fetchSw.stop();
 
-    final List<Experience> experiences =
-        fetchResults[0] as List<Experience>;
+    final List<Experience> experiences = fetchResults[0] as List<Experience>;
     print(
         '[Collections] Batched fetch: ${experiences.length} experiences in ${fetchSw.elapsedMilliseconds}ms (${experienceIds.length} requested)');
 
@@ -2484,7 +2544,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     // Paginate internally to load all shared experiences (no UI pagination)
     while (true) {
-      final (pageExps, last) = await _experienceService.getExperiencesSharedWith(
+      final (pageExps, last) =
+          await _experienceService.getExperiencesSharedWith(
         userId,
         limit: 500,
         startAfter: lastDoc,
@@ -2511,7 +2572,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       final isColorCategory = categoryData.isColorCategory;
 
       // Filter experiences that match this category
-      final List<Experience> categoryExperiences = allSharedExperiences.where((exp) {
+      final List<Experience> categoryExperiences =
+          allSharedExperiences.where((exp) {
         if (isColorCategory) {
           return exp.colorCategoryId == categoryId ||
               exp.otherColorCategoryIds.contains(categoryId);
@@ -2986,10 +3048,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
     required bool isEnabled,
     required VoidCallback onToggle,
     required String subjectLabel,
+    CollectionsHelpTargetId? helpTargetId,
   }) {
     final IconData iconData = isPrivate ? Icons.lock : Icons.public;
-    final Color iconColor =
-        isPrivate ? Colors.grey.shade600 : Colors.black87;
+    final Color iconColor = isPrivate ? Colors.grey.shade600 : Colors.black87;
     final String tooltip = isEnabled
         ? 'Make $subjectLabel ${isPrivate ? 'public' : 'private'}'
         : 'Only the owner can change privacy';
@@ -3001,17 +3063,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
         size: 22,
       ),
     );
-    if (!isEnabled) {
+    if (!isEnabled && !_isHelpMode) {
       return Tooltip(message: tooltip, child: icon);
     }
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: withHeavyTap(onToggle),
-        child: icon,
-      ),
-    );
+    return Builder(
+        builder: (privCtx) => Tooltip(
+              message: tooltip,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: withHeavyTap(() {
+                  if (helpTargetId != null &&
+                      _tryHelpTap(helpTargetId, privCtx)) return;
+                  onToggle();
+                }),
+                child: icon,
+              ),
+            ));
   }
 
   Future<void> _toggleCategoryPrivacy(UserCategory category) async {
@@ -3019,7 +3086,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Only the owner can change this category privacy.')),
+              content:
+                  Text('Only the owner can change this category privacy.')),
         );
       }
       return;
@@ -3053,8 +3121,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content:
-                  Text('Only the owner can change this color category privacy.')),
+              content: Text(
+                  'Only the owner can change this color category privacy.')),
         );
       }
       return;
@@ -3167,20 +3235,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     ),
                 ],
               ),
+            ),
           ),
-        ),
-        Positioned(
-          top: 0,
-          right: 0,
-          child: _buildPrivacyIconToggle(
-            isPrivate: category.isPrivate,
-            isEnabled: canTogglePrivacy,
-            onToggle: () => _toggleCategoryPrivacy(category),
-            subjectLabel: 'category',
-          ),
-        ),
-        if (_isSelectingCategories)
           Positioned(
+            top: 0,
+            right: 0,
+            child: _buildPrivacyIconToggle(
+              isPrivate: category.isPrivate,
+              isEnabled: canTogglePrivacy,
+              onToggle: () => _toggleCategoryPrivacy(category),
+              subjectLabel: 'category',
+              helpTargetId: CollectionsHelpTargetId.categoryPrivacyToggle,
+            ),
+          ),
+          if (_isSelectingCategories)
+            Positioned(
               top: 4,
               left: 4,
               child: Checkbox(
@@ -3200,6 +3269,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       ),
     );
   }
+
   Widget _buildCategoriesList() {
     if (_categories.isEmpty) {
       return const Center(child: Text('No categories found.'));
@@ -3308,115 +3378,135 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 )
               : Text('$count ${count == 1 ? "experience" : "experiences"}');
 
-          final Widget popupMenu = PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'Category Options',
-            color: Colors.white,
-            onSelected: (String result) {
-              triggerHeavyHaptic();
-              switch (result) {
-                case 'edit':
-                  _showEditSingleCategoryModal(category);
-                  break;
-                case 'share':
-                  _showShareCategoryBottomSheet(category);
-                  break;
-                case 'remove':
-                  if (permission != null) {
-                    _showRemoveSharedUserCategoryConfirmation(
-                        category, permission);
-                  }
-                  break;
-                case 'delete':
-                  _showDeleteCategoryConfirmation(category);
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) {
-              final List<PopupMenuEntry<String>> items = [
-                PopupMenuItem<String>(
-                  value: 'edit',
-                  enabled: canEditCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.edit_outlined),
-                    title: Text('Edit'),
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'share',
-                  enabled: canManageCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.share_outlined, color: Colors.blue),
-                    title: Text('Share', style: TextStyle(color: Colors.blue)),
-                  ),
-                ),
-              ];
-              if (isShared) {
-                items.add(
-                  const PopupMenuItem<String>(
-                    value: 'remove',
-                    child: ListTile(
-                      leading: Icon(Icons.remove_circle_outline,
-                          color: Colors.red),
-                      title: Text('Remove', style: TextStyle(color: Colors.red)),
-                    ),
-                  ),
-                );
-              } else {
-                items.add(
-                  PopupMenuItem<String>(
-                    value: 'delete',
-                    enabled: canManageCategory,
-                    child: const ListTile(
-                      leading: Icon(Icons.delete_outline, color: Colors.red),
-                      title: Text('Delete', style: TextStyle(color: Colors.red)),
-                    ),
-                  ),
-                );
-              }
-              return items;
-            },
-          );
+          final Widget popupMenu = Builder(
+              builder: (catMenuCtx) => _isHelpMode
+                  ? IconButton(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Category Options',
+                      onPressed: () => _tryHelpTap(
+                          CollectionsHelpTargetId.categoryOptionsMenu,
+                          catMenuCtx),
+                    )
+                  : PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Category Options',
+                      color: Colors.white,
+                      onSelected: (String result) {
+                        triggerHeavyHaptic();
+                        switch (result) {
+                          case 'edit':
+                            _showEditSingleCategoryModal(category);
+                            break;
+                          case 'share':
+                            _showShareCategoryBottomSheet(category);
+                            break;
+                          case 'remove':
+                            if (permission != null) {
+                              _showRemoveSharedUserCategoryConfirmation(
+                                  category, permission);
+                            }
+                            break;
+                          case 'delete':
+                            _showDeleteCategoryConfirmation(category);
+                            break;
+                        }
+                      },
+                      itemBuilder: (BuildContext context) {
+                        final List<PopupMenuEntry<String>> items = [
+                          PopupMenuItem<String>(
+                            value: 'edit',
+                            enabled: canEditCategory,
+                            child: const ListTile(
+                              leading: Icon(Icons.edit_outlined),
+                              title: Text('Edit'),
+                            ),
+                          ),
+                          PopupMenuItem<String>(
+                            value: 'share',
+                            enabled: canManageCategory,
+                            child: const ListTile(
+                              leading: Icon(Icons.share_outlined,
+                                  color: Colors.blue),
+                              title: Text('Share',
+                                  style: TextStyle(color: Colors.blue)),
+                            ),
+                          ),
+                        ];
+                        if (isShared) {
+                          items.add(
+                            const PopupMenuItem<String>(
+                              value: 'remove',
+                              child: ListTile(
+                                leading: Icon(Icons.remove_circle_outline,
+                                    color: Colors.red),
+                                title: Text('Remove',
+                                    style: TextStyle(color: Colors.red)),
+                              ),
+                            ),
+                          );
+                        } else {
+                          items.add(
+                            PopupMenuItem<String>(
+                              value: 'delete',
+                              enabled: canManageCategory,
+                              child: const ListTile(
+                                leading: Icon(Icons.delete_outline,
+                                    color: Colors.red),
+                                title: Text('Delete',
+                                    style: TextStyle(color: Colors.red)),
+                              ),
+                            ),
+                          );
+                        }
+                        return items;
+                      },
+                    ));
 
-          final listTile = ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
-            minLeadingWidth: 24,
-            leading: leadingWidget,
-            title: Text(
-              category.name,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: subtitleWidget,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildPrivacyIconToggle(
-                  isPrivate: category.isPrivate,
-                  isEnabled: canTogglePrivacy,
-                  onToggle: () => _toggleCategoryPrivacy(category),
-                  subjectLabel: 'category',
-                ),
-                const SizedBox(width: 4),
-                popupMenu,
-              ],
-            ),
-            onTap: withHeavyTap(() {
-              triggerHeavyHaptic();
-              setState(() {
-                if (_isSelectingCategories) {
-                  if (isSelected) {
-                    _selectedCategoryIds.remove(category.id);
-                  } else {
-                    _selectedCategoryIds.add(category.id);
-                  }
-                } else {
-                  _selectedCategory = category;
-                  _showingColorCategories = false;
-                  _selectedColorCategory = null;
-                }
-              });
-            }),
-          );
+          final listTile = Builder(
+              builder: (catRowCtx) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
+                    minLeadingWidth: 24,
+                    leading: leadingWidget,
+                    title: Text(
+                      category.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: subtitleWidget,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildPrivacyIconToggle(
+                          isPrivate: category.isPrivate,
+                          isEnabled: canTogglePrivacy,
+                          onToggle: () => _toggleCategoryPrivacy(category),
+                          subjectLabel: 'category',
+                          helpTargetId:
+                              CollectionsHelpTargetId.categoryPrivacyToggle,
+                        ),
+                        const SizedBox(width: 4),
+                        popupMenu,
+                      ],
+                    ),
+                    onTap: withHeavyTap(() {
+                      if (_tryHelpTap(
+                          CollectionsHelpTargetId.categoryRow, catRowCtx))
+                        return;
+                      triggerHeavyHaptic();
+                      setState(() {
+                        if (_isSelectingCategories) {
+                          if (isSelected) {
+                            _selectedCategoryIds.remove(category.id);
+                          } else {
+                            _selectedCategoryIds.add(category.id);
+                          }
+                        } else {
+                          _selectedCategory = category;
+                          _showingColorCategories = false;
+                          _selectedColorCategory = null;
+                        }
+                      });
+                    }),
+                  ));
 
           return ReorderableDelayedDragStartListener(
             key: ValueKey(category.id),
@@ -3477,13 +3567,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
   Future<void> _applyExperienceSort(ExperienceSortType sortType,
       {bool applyToFiltered = false}) async {
     // If sort type changed and not just applying to filtered, reset pagination and reload
-    final bool sortChanged = sortType != _experienceSortType && !applyToFiltered;
-    
+    final bool sortChanged =
+        sortType != _experienceSortType && !applyToFiltered;
+
     // If not changed, and we're not applying to filtered, just return (avoid redundant work)
     if (!sortChanged && !applyToFiltered) {
       return;
     }
-    
+
     setState(() {
       _experienceSortType = sortType;
       // Only show loading indicator if sorting the main list by distance
@@ -3500,7 +3591,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         // Ensure unknown city key exists
         _cityExpansionExperiences.putIfAbsent('', () => false);
       }
-      
+
       // Reset pagination when sort changes
       if (sortChanged) {
         _lastExperienceDoc = null;
@@ -3509,12 +3600,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
         _filteredExperiences = [];
       }
     });
-    
+
     // If sort changed, reload with new ordering
     if (sortChanged) {
       // Persist the new sort preference
       unawaited(_saveExperienceSort(sortType));
-      
+
       final userId = _authService.currentUser?.uid;
       if (userId != null) {
         await _loadExperiencesPage(isInitialLoad: true);
@@ -3933,885 +4024,1325 @@ class CollectionsScreenState extends State<CollectionsScreen>
     });
   }
   // --- END REFACTORED ---
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Collection'),
-        backgroundColor: Color(0xFFF8F5F2),
-        foregroundColor: Colors.black,
-        actions: [
-          // ADDED: Map Button with text label
-          Tooltip(
-            message: 'View Map',
-            child: TextButton.icon(
-              style: TextButton.styleFrom(foregroundColor: Colors.black),
-              icon: Image.asset(
-                'assets/icon/icon-cropped.png',
-                height: 24,
-              ),
-              label: Text(
-                'Map',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              onPressed: () {
-                triggerHeavyHaptic();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const MapScreen()),
-                );
-              },
-            ),
+
+  // ─────────────── Help mode helpers ───────────────
+  CollectionsHelpTargetId _helpTargetForTab(int index) {
+    switch (index) {
+      case 0:
+        return CollectionsHelpTargetId.tabCategories;
+      case 1:
+        return CollectionsHelpTargetId.tabExperiences;
+      case 2:
+      default:
+        return CollectionsHelpTargetId.tabSaves;
+    }
+  }
+
+  void _onGlobalHelpModeChanged() {
+    final bool shouldBeActive = HelpModeService.isActive;
+    if (shouldBeActive == _isHelpMode) {
+      return;
+    }
+    _setHelpMode(
+      shouldBeActive,
+      fromGlobal: true,
+      withHaptic: false,
+      showInitialTarget: false,
+    );
+  }
+
+  void _setHelpMode(
+    bool isActive, {
+    bool fromGlobal = false,
+    bool withHaptic = true,
+    bool showInitialTarget = true,
+  }) {
+    if (_isHelpMode == isActive) {
+      return;
+    }
+
+    if (withHaptic) {
+      triggerHeavyHaptic();
+    }
+
+    if (!isActive) {
+      setState(() {
+        _isHelpMode = false;
+        _activeHelpTarget = null;
+        _activeHelpStep = 0;
+        _activeTargetRect = null;
+        _isHelpTyping = false;
+      });
+    } else {
+      setState(() {
+        _isHelpMode = true;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (showInitialTarget &&
+            mounted &&
+            _helpButtonKey.currentContext != null) {
+          _showHelpForTarget(
+            CollectionsHelpTargetId.helpButton,
+            _helpButtonKey.currentContext!,
+          );
+        }
+      });
+    }
+
+    if (!fromGlobal) {
+      HelpModeService.setActive(isActive);
+    }
+  }
+
+  void _toggleHelpMode() {
+    _setHelpMode(!_isHelpMode);
+  }
+
+  void _showHelpForTarget(CollectionsHelpTargetId id, BuildContext targetCtx) {
+    final RenderBox? box = targetCtx.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    setState(() {
+      _activeHelpTarget = id;
+      _activeHelpStep = 0;
+      _activeTargetRect =
+          Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+      _isHelpTyping = true;
+    });
+  }
+
+  void _advanceHelpStep() {
+    if (_activeHelpTarget == null) return;
+    final spec = collectionsHelpContent[_activeHelpTarget!];
+    final steps = spec?.steps ?? [];
+    if (_activeHelpStep < steps.length - 1) {
+      setState(() {
+        _activeHelpStep++;
+        _isHelpTyping = true;
+      });
+    } else {
+      _dismissHelpBubble();
+    }
+  }
+
+  void _dismissHelpBubble() {
+    setState(() {
+      _activeHelpTarget = null;
+      _activeHelpStep = 0;
+      _activeTargetRect = null;
+      _isHelpTyping = false;
+    });
+  }
+
+  void _onHelpBarrierTap() {
+    if (_activeHelpTarget != null) {
+      if (_isHelpTyping) {
+        _helpBubbleKey.currentState?.skipTypewriter();
+      } else {
+        _advanceHelpStep();
+      }
+    }
+  }
+
+  bool _tryHelpTap(CollectionsHelpTargetId id, BuildContext targetCtx,
+      {Experience? experience}) {
+    if (!_isHelpMode) return false;
+    triggerHeavyHaptic();
+    _helpContextExperience = experience;
+    _showHelpForTarget(id, targetCtx);
+    return true;
+  }
+
+  String _resolveHelpText(
+      CollectionsHelpTargetId targetId, int stepIndex, String staticText) {
+    if (targetId == CollectionsHelpTargetId.experienceContentPreview &&
+        _helpContextExperience != null) {
+      final count = _helpContextExperience!.sharedMediaItemIds.length;
+      if (count > 0) {
+        return 'Wanna peek at what\'s saved here? This experience has $count item${count == 1 ? '' : 's'} -- tap to preview them!';
+      }
+    }
+    return staticText;
+  }
+
+  Widget _buildHelpOverlay() {
+    return Positioned.fill(
+      child: AnimatedOpacity(
+        opacity: _activeHelpTarget != null ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 200),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _onHelpBarrierTap,
+          child: Stack(
+            children: [
+              if (_activeTargetRect != null)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _spotlightController,
+                    builder: (context, _) => CustomPaint(
+                      painter: HelpSpotlightPainter(
+                        targetRect: _activeTargetRect!,
+                        glowProgress: _spotlightController.value,
+                      ),
+                    ),
+                  ),
+                ),
+              if (_activeHelpTarget != null && _activeTargetRect != null)
+                CollectionsHelpBubble(
+                  key: _helpBubbleKey,
+                  targetId: _activeHelpTarget!,
+                  stepIndex: _activeHelpStep,
+                  targetRect: _activeTargetRect!,
+                  onAdvance: _advanceHelpStep,
+                  onDismiss: _dismissHelpBubble,
+                  onTypingStarted: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = true);
+                    });
+                  },
+                  onTypingFinished: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = false);
+                    });
+                  },
+                  textResolver: _resolveHelpText,
+                ),
+            ],
           ),
-          // --- MODIFIED: Conditionally show sort button for first tab ---
-          if (_currentTabIndex == 0 &&
-              _selectedCategory == null &&
-              !_showingColorCategories)
-            PopupMenuButton<CategorySortType>(
-              icon: const Icon(Icons.sort),
-              tooltip: 'Sort Categories',
-              color: Colors.white,
-              onSelected: (CategorySortType result) {
-                triggerHeavyHaptic();
-                _applySortAndSave(result); // Saves text category order
-              },
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<CategorySortType>>[
-                _buildPopupMenuItem<CategorySortType>(
-                  value: CategorySortType.mostRecent,
-                  text: 'Sort by Most Recent',
-                  currentValue: _categorySortType,
-                ),
-                _buildPopupMenuItem<CategorySortType>(
-                  value: CategorySortType.alphabetical,
-                  text: 'Sort Alphabetically',
-                  currentValue: _categorySortType,
-                ),
-              ],
-            ),
-          // --- ADDED: Sort button for Color Categories --- START ---
-          if (_currentTabIndex == 0 &&
-              _selectedCategory == null &&
-              _showingColorCategories)
-            PopupMenuButton<ColorCategorySortType>(
-              icon: const Icon(Icons.sort),
-              tooltip: 'Sort Color Categories',
-              color: Colors.white,
-              onSelected: (ColorCategorySortType result) {
-                triggerHeavyHaptic();
-                _applyColorSortAndSave(result); // Saves color category order
-              },
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<ColorCategorySortType>>[
-                _buildPopupMenuItem<ColorCategorySortType>(
-                  value: ColorCategorySortType.mostRecent,
-                  text: 'Sort by Most Recent',
-                  currentValue: _colorCategorySortType,
-                ),
-                _buildPopupMenuItem<ColorCategorySortType>(
-                  value: ColorCategorySortType.alphabetical,
-                  text: 'Sort Alphabetically',
-                  currentValue: _colorCategorySortType,
-                ),
-              ],
-            ),
-          // --- ADDED: Sort button for Color Categories --- END ---
-          if (_currentTabIndex == 1)
-            PopupMenuButton<ExperienceSortType>(
-              icon: const Icon(Icons.sort),
-              tooltip: 'Sort Experiences',
-              color: Colors.white,
-              onSelected: (ExperienceSortType result) {
-                triggerHeavyHaptic();
-                _applyExperienceSort(result);
-              },
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<ExperienceSortType>>[
-                _buildPopupMenuItem<ExperienceSortType>(
-                  value: ExperienceSortType.mostRecent,
-                  text: 'Sort by Most Recent',
-                  currentValue: _experienceSortType,
-                ),
-                _buildPopupMenuItem<ExperienceSortType>(
-                  value: ExperienceSortType.alphabetical,
-                  text: 'Sort Alphabetically',
-                  currentValue: _experienceSortType,
-                ),
-                _buildPopupMenuItem<ExperienceSortType>(
-                  value: ExperienceSortType.distanceFromMe,
-                  text: 'Sort by Distance',
-                  currentValue: _experienceSortType,
-                ),
-                const PopupMenuItem<ExperienceSortType>(
-                  enabled: false,
-                  child: Center(
-                    child: FractionallySizedBox(
-                      widthFactor: 0.5,
-                      child: Divider(height: 1),
-                    ),
-                  ),
-                ),
-                // --- Group by Location (single checkbox) ---
-                PopupMenuItem<ExperienceSortType>(
-                  onTap: withHeavyTap(() {
-                    triggerHeavyHaptic();
-                    _setGroupByLocationExperiences(
-                        !_groupByLocationExperiences);
-                  }),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _groupByLocationExperiences
-                            ? Icons.check_box
-                            : Icons.check_box_outline_blank,
-                        color: _groupByLocationExperiences
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(child: Text('Group by Location')),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          if (_currentTabIndex == 2)
-            PopupMenuButton<ContentSortType>(
-              icon: const Icon(Icons.sort),
-              tooltip: 'Sort Content',
-              color: Colors.white,
-              onSelected: (ContentSortType result) {
-                triggerHeavyHaptic();
-                _applyContentSort(result); // Use the new sort function
-              },
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<ContentSortType>>[
-                _buildPopupMenuItem<ContentSortType>(
-                  value: ContentSortType.mostRecent,
-                  text: 'Sort by Most Recent Added',
-                  currentValue: _contentSortType,
-                ),
-                _buildPopupMenuItem<ContentSortType>(
-                  value: ContentSortType.alphabetical,
-                  text: 'Sort Alphabetically (by Experience)',
-                  currentValue: _contentSortType,
-                ),
-                _buildPopupMenuItem<ContentSortType>(
-                  value: ContentSortType.distanceFromMe,
-                  text: 'Sort by Distance (from Experience)',
-                  currentValue: _contentSortType,
-                ),
-                const PopupMenuItem<ContentSortType>(
-                  enabled: false,
-                  child: Center(
-                    child: FractionallySizedBox(
-                      widthFactor: 0.5,
-                      child: Divider(height: 1),
-                    ),
-                  ),
-                ),
-                // --- Group by Location (single checkbox) ---
-                PopupMenuItem<ContentSortType>(
-                  onTap: withHeavyTap(() {
-                    triggerHeavyHaptic();
-                    _setGroupByLocationContent(!_groupByLocationContent);
-                  }),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _groupByLocationContent
-                            ? Icons.check_box
-                            : Icons.check_box_outline_blank,
-                        color: _groupByLocationContent
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(child: Text('Group by Location')),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          // --- ADDED: Filter Button for Experiences and Content tabs ---
-          if (_currentTabIndex == 1 || _currentTabIndex == 2)
-            IconButton(
-              icon: const Icon(Icons.filter_list),
-              tooltip: 'Filter Items',
-              onPressed: () {
-                triggerHeavyHaptic();
-                _showFilterDialog();
-              },
-            ),
-        ],
-      ),
-      body: _isLoading
-          ? Container(
-              color: Color(0xFFF8F5F2),
-              child: Center(
-                child: CircularProgressIndicator(color: Colors.black54),
-              ),
-            )
-          : Container(
-              color: Color(0xFFF8F5F2),
-              child: Column(
-                children: [
-                  // ADDED: Search Bar Area
-                  Builder(// ADDED Builder for conditional width
-                      builder: (context) {
-                    final bool isDesktopWeb =
-                        kIsWeb && MediaQuery.of(context).size.width > 600;
-
-                    // Original search bar widget (TypeAheadField wrapped in Padding)
-                    // This definition includes the original Padding and TypeAheadField configuration.
-                    Widget searchBarWidget = Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12.0, vertical: 4.0),
-                      child: Theme(
-                        data: Theme.of(context).copyWith(
-                          cardColor: Colors.white,
-                          canvasColor: Colors.white,
-                          colorScheme: Theme.of(context).colorScheme.copyWith(
-                                surface: Colors.white,
-                              ),
-                        ),
-                        child: TypeAheadField<Experience>(
-                          builder: (context, controller, focusNode) {
-                            // ADDED: Clear the TypeAhead controller when requested
-                            if (_clearSearchOnNextBuild) {
-                              controller.clear();
-                              focusNode.unfocus();
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  setState(() {
-                                    _clearSearchOnNextBuild = false;
-                                  });
-                                }
-                              });
-                            }
-                            return TextField(
-                              controller:
-                                  controller, // This is TypeAhead's controller
-                              focusNode: focusNode,
-                              autofocus: false,
-                              decoration: InputDecoration(
-                                labelText: 'Search your experiences',
-                                filled: true,
-                                fillColor: Color(0xFFE5E4DF),
-                                prefixIcon: Icon(Icons.search,
-                                    color: Theme.of(context).primaryColor),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(25.0),
-                                  borderSide: BorderSide(color: Color(0xFFE5E4DF)),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(25.0),
-                                  borderSide: BorderSide(color: Color(0xFFE5E4DF)),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(25.0),
-                                  borderSide: BorderSide(color: Color(0xFFE5E4DF)),
-                                ),
-                                suffixIcon: IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  tooltip: 'Clear Search',
-                                  onPressed: () {
-                                    triggerHeavyHaptic();
-                                    controller
-                                        .clear(); // Clear TypeAhead's controller
-                                    _searchController
-                                        .clear(); // Clear state's controller
-                                    FocusScope.of(context).unfocus();
-                                    // setState(() {}); // Removed as TypeAheadField/TextField should update with controller
-                                  },
-                                ),
-                              ),
-                            );
-                          },
-                          suggestionsCallback: (pattern) async {
-                            return await _getExperienceSuggestions(pattern);
-                          },
-                          itemBuilder: (context, suggestion) {
-                            return Container(
-                              color: Colors.white,
-                              child: ListTile(
-                                leading: const Icon(Icons.history),
-                                title: Text(suggestion.name),
-                              ),
-                            );
-                          },
-                          onSelected: (suggestion) async {
-                            triggerHeavyHaptic();
-                            await _openExperience(suggestion);
-                            if (mounted) {
-                              setState(() {
-                                _clearSearchOnNextBuild = true;
-                              });
-                            }
-                            _searchController.clear();
-                            FocusScope.of(context).unfocus();
-                          },
-                          emptyBuilder: (context) => const Padding(
-                            padding: EdgeInsets.all(8.0),
-                            child: Text('No experiences found.',
-                                style: TextStyle(color: Colors.grey)),
-                          ),
-                        ),
-                      ),
-                    );
-
-                    if (isDesktopWeb) {
-                      return Center(
-                        // Center the search bar on desktop
-                        child: SizedBox(
-                          width: MediaQuery.of(context).size.width *
-                              0.3, // 50% of screen width
-                          child: searchBarWidget,
-                        ),
-                      );
-                    } else {
-                      return searchBarWidget; // Original layout for mobile/mobile-web
-                    }
-                  }),
-                  // ADDED: TabBar placed here in the body's Column
-                  Container(
-                    color: const Color(0xFFF8F5F2),
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    child: Container(
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Color(0xFFE5E4DF),
-                        borderRadius: BorderRadius.circular(20.0),
-                      ),
-                      child: TabBar(
-                        controller: _tabController,
-                        onTap: withHeavyTap((_) => triggerHeavyHaptic()),
-                        tabs: const [
-                          Tab(text: 'Categories'),
-                          Tab(text: 'Experiences'),
-                          Tab(text: 'Saves'), // Changed "Saves" to "Content" to match image/context if needed, or keep Saves
-                        ],
-                        labelColor: Colors.black,
-                        unselectedLabelColor: Colors.grey[600],
-                        indicator: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20.0),
-                          color: Colors.white,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 2,
-                              offset: const Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: Colors.transparent,
-                        labelStyle: const TextStyle(fontWeight: FontWeight.w600),
-                        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal),
-                      ),
-                    ),
-                  ),
-                  // Existing TabBarView wrapped in Expanded
-                  Expanded(
-                    child: TabBarView(
-                      controller: _tabController,
-                      children: [
-                        // MODIFIED: Conditionally show category list or category experiences
-                        // _selectedCategory == null
-                        //     ? _buildCategoriesList()
-                        //     : _buildCategoryExperiencesList(_selectedCategory!),
-                        // --- MODIFIED: First tab now uses Column and toggle ---
-                        Container(
-                          color: AppColors.backgroundColor,
-                          child: Column(
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 7.0, vertical: 8.0),
-                                child: Row(
-                                  children: [
-                                    if (_selectedCategory == null &&
-                                        _selectedColorCategory == null)
-                                      Builder(builder: (context) {
-                                        final bool isViewingColor =
-                                            _showingColorCategories;
-                                        final int totalCount = isViewingColor
-                                            ? _colorCategories.length
-                                            : _categories.length;
-                                        final int selectedCount = isViewingColor
-                                            ? _selectedColorCategoryIds.length
-                                            : _selectedCategoryIds.length;
-                                        final bool allSelected =
-                                            totalCount > 0 &&
-                                                selectedCount == totalCount;
-                                        final bool someSelected =
-                                            selectedCount > 0 &&
-                                                selectedCount < totalCount;
-
-                                        if (_isSelectingCategories) {
-                                          return Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              // Space to align with icon column (checkbox width ~40px + padding)
-                                              Checkbox(
-                                                value: allSelected
-                                                    ? true
-                                                    : (someSelected
-                                                        ? null
-                                                        : false),
-                                                tristate: true,
-                                                onChanged: (bool? newValue) {
-                                                  setState(() {
-                                                    // Interpret tap based on current aggregate state for intuitive UX
-                                                    final bool selectAllNow =
-                                                        someSelected
-                                                            ? true // some -> all
-                                                            : (allSelected
-                                                                ? false // all -> none
-                                                                : (newValue ==
-                                                                    true)); // none -> all
-
-                                                    if (isViewingColor) {
-                                                      if (selectAllNow) {
-                                                        _selectedColorCategoryIds
-                                                          ..clear()
-                                                          ..addAll(
-                                                              _colorCategories
-                                                                  .map((c) =>
-                                                                      c.id));
-                                                      } else {
-                                                        _selectedColorCategoryIds
-                                                            .clear();
-                                                      }
-                                                    } else {
-                                                      if (selectAllNow) {
-                                                        _selectedCategoryIds
-                                                          ..clear()
-                                                          ..addAll(
-                                                              _categories.map(
-                                                                  (c) => c.id));
-                                                      } else {
-                                                        _selectedCategoryIds
-                                                            .clear();
-                                                      }
-                                                    }
-                                                  });
-                                                },
-                                              ),
-                                              const SizedBox(width: 6),
-                                              IconButton(
-                                                tooltip: 'Cancel selection',
-                                                icon: const Icon(Icons.close),
-                                                onPressed: () {
-                                                  triggerHeavyHaptic();
-                                                  setState(() {
-                                                    _isSelectingCategories =
-                                                        false;
-                                                    _selectedCategoryIds
-                                                        .clear();
-                                                    _selectedColorCategoryIds
-                                                        .clear();
-                                                  });
-                                                },
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Builder(
-                                                builder: (context) {
-                                                  final VoidCallback?
-                                                      onSharePressed =
-                                                      selectedCount == 0
-                                                          ? null
-                                                          : () {
-                                                              if (isViewingColor) {
-                                                                final List<
-                                                                        ColorCategory>
-                                                                    selected =
-                                                                    _colorCategories
-                                                                        .where((c) =>
-                                                                            _selectedColorCategoryIds.contains(c.id))
-                                                                        .toList();
-                                                                _showShareSelectedCategoriesBottomSheet(
-                                                                  colorCategories:
-                                                                      selected,
-                                                                );
-                                                              } else {
-                                                                final List<
-                                                                        UserCategory>
-                                                                    selected =
-                                                                    _categories
-                                                                        .where((c) =>
-                                                                            _selectedCategoryIds.contains(c.id))
-                                                                        .toList();
-                                                                _showShareSelectedCategoriesBottomSheet(
-                                                                  userCategories:
-                                                                      selected,
-                                                                );
-                                                              }
-                                                            };
-                                                  // In selection mode, always use compact icon-only to avoid overflow
-                                                  return IconButton(
-                                                    tooltip: 'Share',
-                                                    icon: Icon(
-                                                        Icons.share_outlined,
-                                                        color: selectedCount == 0
-                                                            ? Colors.grey
-                                                            : Colors.blue),
-                                                    onPressed: onSharePressed,
-                                                  );
-                                                },
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Builder(
-                                                builder: (context) {
-                                                  final bool hasSelection =
-                                                      selectedCount > 0;
-                                                  final String tooltip = isViewingColor
-                                                      ? 'Delete selected color categories'
-                                                      : 'Delete selected categories';
-                                                  return IconButton(
-                                                    tooltip: tooltip,
-                                                    icon: const Icon(
-                                                        Icons.delete_outline),
-                                                    color: Colors.red,
-                                                    onPressed: hasSelection
-                                                        ? () {
-                                                            triggerHeavyHaptic();
-                                                            if (isViewingColor) {
-                                                              _handleBulkDeleteSelectedColorCategories();
-                                                            } else {
-                                                              _handleBulkDeleteSelectedUserCategories();
-                                                            }
-                                                          }
-                                                        : null,
-                                                  );
-                                                },
-                                              ),
-                                            ],
-                                          );
-                                        }
-                                        return Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            IconButton(
-                                              tooltip: 'Select',
-                                              icon: const Icon(
-                                                  Icons.check_box_outlined),
-                                              onPressed: () {
-                                                triggerHeavyHaptic();
-                                                setState(() {
-                                                  _isSelectingCategories = true;
-                                                });
-                                              },
-                                            ),
-                                          ],
-                                        );
-                                      }),
-                                    Expanded(child: SizedBox()),
-                                    Flexible(
-                                      child: Builder(
-                                        builder: (context) {
-                                          final IconData toggleIcon =
-                                              _showingColorCategories
-                                                  ? Icons.category_outlined
-                                                  : Icons.color_lens_outlined;
-                                          final String toggleLabel =
-                                              _showingColorCategories
-                                                  ? 'Categories'
-                                                  : 'Color Categories';
-                                          void onToggle() {
-                                            setState(() {
-                                              _showingColorCategories =
-                                                  !_showingColorCategories;
-                                              _selectedCategory =
-                                                  null; // Clear selected text category when switching views
-                                              _selectedColorCategory =
-                                                  null; // Clear selected color category when switching views
-                                            });
-                                          }
-
-                                          return Align(
-                                            alignment: Alignment.centerRight,
-                                            child: FittedBox(
-                                              fit: BoxFit.scaleDown,
-                                              child: TextButton.icon(
-                                                style: TextButton.styleFrom(
-                                                  visualDensity:
-                                                      const VisualDensity(
-                                                          horizontal: -2,
-                                                          vertical: -2),
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 8.0),
-                                                ),
-                                                icon: Icon(toggleIcon),
-                                                label: Text(toggleLabel),
-                                                onPressed: onToggle,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Consumer<CategorySaveProgressNotifier>(
-                                builder: (context, notifier, _) {
-                                  final tasks = notifier.activeTasks;
-                                  if (tasks.isEmpty) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16.0,
-                                      vertical: 4.0,
-                                    ),
-                                    child: ConstrainedBox(
-                                      constraints:
-                                          const BoxConstraints(maxHeight: 200),
-                                      child: ListView.separated(
-                                        shrinkWrap: true,
-                                        physics: const ClampingScrollPhysics(),
-                                        itemCount: tasks.length,
-                                        itemBuilder: (context, index) =>
-                                            _buildCategorySaveProgressTile(
-                                                context, tasks[index]),
-                                        separatorBuilder: (context, index) =>
-                                            const SizedBox(height: 8),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                              // Show reorder hint only when viewing main category lists (not individual category experiences)
-                              // and only on mobile devices where reordering is available
-                              if (_selectedCategory == null &&
-                                  _selectedColorCategory == null &&
-                                  !_isSelectingCategories &&
-                                  !(kIsWeb &&
-                                      MediaQuery.of(context).size.width > 600))
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16.0, vertical: 4.0),
-                                  child: Text(
-                                    'Tap and hold to reorder',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          color: Colors.grey[600],
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              Expanded(
-                                child: _selectedCategory != null
-                                    ? _buildCategoryExperiencesList(
-                                        _selectedCategory!) // Still show experiences if a text category was selected
-                                    // --- MODIFIED: Check for selected color category first --- START ---
-                                    : _selectedColorCategory != null
-                                        ? _buildColorCategoryExperiencesList(
-                                            _selectedColorCategory!) // Show color experiences
-                                        : _showingColorCategories
-                                            ? _buildColorCategoriesList() // Show color list
-                                            : _buildCategoriesList(), // Show text list
-                                // --- MODIFIED: Check for selected color category first --- END ---
-                              ),
-                            ],
-                          ),
-                        ),
-                        // --- END MODIFIED ---
-                        Container(
-                          color: const Color(0xFFF8F5F2),
-                          child: Column(
-                            children: [
-                              ClipRect(
-                                child: SizeTransition(
-                                  sizeFactor: _experienceSelectionRowAnimation,
-                                  axisAlignment: -1,
-                                  child: FadeTransition(
-                                    opacity: _experienceSelectionRowAnimation,
-                                    child: IgnorePointer(
-                                      ignoring: !_isSelectingExperiences,
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(
-                                            left: 7.0,
-                                            right: 7.0,
-                                            top: 8.0,
-                                            bottom: 2.0),
-                                        child: Row(
-                                          children: [
-                                            Builder(builder: (context) {
-                                              final int totalCount =
-                                                  _filteredExperiences.length;
-                                              final int selectedCount =
-                                                  _selectedExperienceIds.length;
-                                              final bool allSelected =
-                                                  totalCount > 0 &&
-                                                      selectedCount ==
-                                                          totalCount;
-                                              final bool someSelected =
-                                                  selectedCount > 0 &&
-                                                      !allSelected;
-
-                                              return Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Checkbox(
-                                                    value: allSelected
-                                                        ? true
-                                                        : (someSelected
-                                                            ? null
-                                                            : false),
-                                                    tristate: true,
-                                                    onChanged: totalCount == 0
-                                                        ? null
-                                                        : (bool? value) {
-                                                            setState(() {
-                                                              final bool
-                                                                  selectAllNow =
-                                                                  someSelected
-                                                                      ? true
-                                                                      : (allSelected
-                                                                          ? false
-                                                                          : (value ??
-                                                                              true));
-                                                              if (selectAllNow) {
-                                                                _selectedExperienceIds
-                                                                  ..clear()
-                                                                  ..addAll(
-                                                                      _filteredExperiences
-                                                                          .map((e) =>
-                                                                              e.id));
-                                                              } else {
-                                                                _selectedExperienceIds
-                                                                    .clear();
-                                                              }
-                                                            });
-                                                          },
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  _buildExperienceSelectionAction(
-                                                    animation:
-                                                        _experienceSelectionCloseAnimation,
-                                                    child: IconButton(
-                                                      tooltip:
-                                                          'Cancel selection',
-                                                      icon: const Icon(
-                                                          Icons.close),
-                                                      onPressed: () {
-                                                        triggerHeavyHaptic();
-                                                        _exitExperienceSelectionMode();
-                                                      },
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  _buildExperienceSelectionAction(
-                                                    animation:
-                                                        _experienceSelectionEventAnimation,
-                                                    child: IconButton(
-                                                      tooltip:
-                                                          'Create event with selected',
-                                                      icon: Icon(
-                                                          Icons.event_outlined,
-                                                          color: selectedCount ==
-                                                                  0
-                                                              ? Colors.grey
-                                                              : Colors.deepPurple),
-                                                      onPressed: selectedCount ==
-                                                              0
-                                                          ? null
-                                                          : () {
-                                                              triggerHeavyHaptic();
-                                                              unawaited(
-                                                                  _handleCreateEventWithSelectedExperiences());
-                                                            },
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  _buildExperienceSelectionAction(
-                                                    animation:
-                                                        _experienceSelectionShareAnimation,
-                                                    child: IconButton(
-                                                      tooltip:
-                                                          'Share selected experiences',
-                                                      icon: Icon(
-                                                          Icons.share_outlined,
-                                                          color: selectedCount ==
-                                                                  0
-                                                              ? Colors.grey
-                                                              : Colors.blue),
-                                                      onPressed: selectedCount ==
-                                                              0
-                                                          ? null
-                                                          : () {
-                                                              triggerHeavyHaptic();
-                                                              unawaited(
-                                                                  _handleShareSelectedExperiences());
-                                                            },
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  _buildExperienceSelectionAction(
-                                                    animation:
-                                                        _experienceSelectionDeleteAnimation,
-                                                    child: IconButton(
-                                                      tooltip:
-                                                          'Delete selected experiences',
-                                                      icon: const Icon(
-                                                          Icons.delete_outline),
-                                                      color: Colors.red,
-                                                      onPressed: selectedCount ==
-                                                              0
-                                                          ? null
-                                                          : () {
-                                                              triggerHeavyHaptic();
-                                                              unawaited(
-                                                                  _handleBulkDeleteSelectedExperiences());
-                                                            },
-                                                    ),
-                                                  ),
-                                                ],
-                                              );
-                                            }),
-                                            const Expanded(child: SizedBox()),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Expanded(
-                                child: _buildExperiencesListView(),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // MODIFIED: Call builder for Content tab
-                        Container(
-                          color: AppColors.backgroundColor,
-                          child: _buildContentTabBody(),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddMenu,
-        tooltip: 'Add',
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.add),
+        ),
       ),
     );
   }
+  // ─────────────── End help mode helpers ───────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/icon/icon-cropped.png',
+                  height: 28,
+                ),
+                const SizedBox(width: 8),
+                const Text('Collection'),
+              ],
+            ),
+            backgroundColor: Color(0xFFF8F5F2),
+            foregroundColor: Colors.black,
+            actions: [
+              // --- MODIFIED: Conditionally show sort button for first tab ---
+              if (_currentTabIndex == 0 &&
+                  _selectedCategory == null &&
+                  !_showingColorCategories)
+                Builder(
+                  builder: (sortCtx) => _isHelpMode
+                      ? IconButton(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Categories',
+                          onPressed: () => _tryHelpTap(
+                              CollectionsHelpTargetId.sortCategories, sortCtx),
+                        )
+                      : PopupMenuButton<CategorySortType>(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Categories',
+                          color: Colors.white,
+                          onSelected: (CategorySortType result) {
+                            triggerHeavyHaptic();
+                            _applySortAndSave(result);
+                          },
+                          itemBuilder: (BuildContext context) =>
+                              <PopupMenuEntry<CategorySortType>>[
+                            _buildPopupMenuItem<CategorySortType>(
+                              value: CategorySortType.mostRecent,
+                              text: 'Sort by Most Recent',
+                              currentValue: _categorySortType,
+                            ),
+                            _buildPopupMenuItem<CategorySortType>(
+                              value: CategorySortType.alphabetical,
+                              text: 'Sort Alphabetically',
+                              currentValue: _categorySortType,
+                            ),
+                          ],
+                        ),
+                ),
+              // --- ADDED: Sort button for Color Categories --- START ---
+              if (_currentTabIndex == 0 &&
+                  _selectedCategory == null &&
+                  _showingColorCategories)
+                Builder(
+                  builder: (sortCtx) => _isHelpMode
+                      ? IconButton(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Color Categories',
+                          onPressed: () => _tryHelpTap(
+                              CollectionsHelpTargetId.sortColorCategories,
+                              sortCtx),
+                        )
+                      : PopupMenuButton<ColorCategorySortType>(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Color Categories',
+                          color: Colors.white,
+                          onSelected: (ColorCategorySortType result) {
+                            triggerHeavyHaptic();
+                            _applyColorSortAndSave(result);
+                          },
+                          itemBuilder: (BuildContext context) =>
+                              <PopupMenuEntry<ColorCategorySortType>>[
+                            _buildPopupMenuItem<ColorCategorySortType>(
+                              value: ColorCategorySortType.mostRecent,
+                              text: 'Sort by Most Recent',
+                              currentValue: _colorCategorySortType,
+                            ),
+                            _buildPopupMenuItem<ColorCategorySortType>(
+                              value: ColorCategorySortType.alphabetical,
+                              text: 'Sort Alphabetically',
+                              currentValue: _colorCategorySortType,
+                            ),
+                          ],
+                        ),
+                ),
+              // --- ADDED: Sort button for Color Categories --- END ---
+              if (_currentTabIndex == 1)
+                Builder(
+                  builder: (sortCtx) => _isHelpMode
+                      ? IconButton(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Experiences',
+                          onPressed: () => _tryHelpTap(
+                              CollectionsHelpTargetId.sortExperiences, sortCtx),
+                        )
+                      : PopupMenuButton<ExperienceSortType>(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Experiences',
+                          color: Colors.white,
+                          onSelected: (ExperienceSortType result) {
+                            triggerHeavyHaptic();
+                            _applyExperienceSort(result);
+                          },
+                          itemBuilder: (BuildContext context) =>
+                              <PopupMenuEntry<ExperienceSortType>>[
+                            _buildPopupMenuItem<ExperienceSortType>(
+                              value: ExperienceSortType.mostRecent,
+                              text: 'Sort by Most Recent',
+                              currentValue: _experienceSortType,
+                            ),
+                            _buildPopupMenuItem<ExperienceSortType>(
+                              value: ExperienceSortType.alphabetical,
+                              text: 'Sort Alphabetically',
+                              currentValue: _experienceSortType,
+                            ),
+                            _buildPopupMenuItem<ExperienceSortType>(
+                              value: ExperienceSortType.distanceFromMe,
+                              text: 'Sort by Distance',
+                              currentValue: _experienceSortType,
+                            ),
+                            const PopupMenuItem<ExperienceSortType>(
+                              enabled: false,
+                              child: Center(
+                                child: FractionallySizedBox(
+                                  widthFactor: 0.5,
+                                  child: Divider(height: 1),
+                                ),
+                              ),
+                            ),
+                            PopupMenuItem<ExperienceSortType>(
+                              onTap: withHeavyTap(() {
+                                triggerHeavyHaptic();
+                                _setGroupByLocationExperiences(
+                                    !_groupByLocationExperiences);
+                              }),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _groupByLocationExperiences
+                                        ? Icons.check_box
+                                        : Icons.check_box_outline_blank,
+                                    color: _groupByLocationExperiences
+                                        ? Theme.of(context).primaryColor
+                                        : Colors.grey,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Expanded(
+                                      child: Text('Group by Location')),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              if (_currentTabIndex == 2)
+                Builder(
+                  builder: (sortCtx) => _isHelpMode
+                      ? IconButton(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Content',
+                          onPressed: () => _tryHelpTap(
+                              CollectionsHelpTargetId.sortContent, sortCtx),
+                        )
+                      : PopupMenuButton<ContentSortType>(
+                          icon: const Icon(Icons.sort),
+                          tooltip: 'Sort Content',
+                          color: Colors.white,
+                          onSelected: (ContentSortType result) {
+                            triggerHeavyHaptic();
+                            _applyContentSort(result);
+                          },
+                          itemBuilder: (BuildContext context) =>
+                              <PopupMenuEntry<ContentSortType>>[
+                            _buildPopupMenuItem<ContentSortType>(
+                              value: ContentSortType.mostRecent,
+                              text: 'Sort by Most Recent Added',
+                              currentValue: _contentSortType,
+                            ),
+                            _buildPopupMenuItem<ContentSortType>(
+                              value: ContentSortType.alphabetical,
+                              text: 'Sort Alphabetically (by Experience)',
+                              currentValue: _contentSortType,
+                            ),
+                            _buildPopupMenuItem<ContentSortType>(
+                              value: ContentSortType.distanceFromMe,
+                              text: 'Sort by Distance (from Experience)',
+                              currentValue: _contentSortType,
+                            ),
+                            const PopupMenuItem<ContentSortType>(
+                              enabled: false,
+                              child: Center(
+                                child: FractionallySizedBox(
+                                  widthFactor: 0.5,
+                                  child: Divider(height: 1),
+                                ),
+                              ),
+                            ),
+                            PopupMenuItem<ContentSortType>(
+                              onTap: withHeavyTap(() {
+                                triggerHeavyHaptic();
+                                _setGroupByLocationContent(
+                                    !_groupByLocationContent);
+                              }),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _groupByLocationContent
+                                        ? Icons.check_box
+                                        : Icons.check_box_outline_blank,
+                                    color: _groupByLocationContent
+                                        ? Theme.of(context).primaryColor
+                                        : Colors.grey,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Expanded(
+                                      child: Text('Group by Location')),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              // --- ADDED: Filter Button for Experiences and Content tabs ---
+              if (_currentTabIndex == 1 || _currentTabIndex == 2)
+                Builder(
+                    builder: (filterCtx) => IconButton(
+                          icon: const Icon(Icons.filter_list),
+                          tooltip: 'Filter Items',
+                          onPressed: () {
+                            if (_tryHelpTap(
+                                CollectionsHelpTargetId.filterButton,
+                                filterCtx)) return;
+                            triggerHeavyHaptic();
+                            _showFilterDialog();
+                          },
+                        )),
+              // Help button (far right)
+              if ((_currentTabIndex == 0 && _selectedCategory == null) ||
+                  _currentTabIndex == 1 ||
+                  _currentTabIndex == 2)
+                Semantics(
+                  label: _isHelpMode ? 'Exit help mode' : 'Enter help mode',
+                  child: _isHelpMode
+                      ? AnimatedBuilder(
+                          animation: _spotlightController,
+                          builder: (context, child) {
+                            final scale =
+                                1.0 + 0.15 * _spotlightController.value;
+                            return Transform.scale(scale: scale, child: child);
+                          },
+                          child: IconButton(
+                            key: _helpButtonKey,
+                            icon: Icon(
+                              Icons.help,
+                              color: AppColors.teal,
+                            ),
+                            tooltip: 'Exit Help Mode',
+                            onPressed: _toggleHelpMode,
+                          ),
+                        )
+                      : IconButton(
+                          key: _helpButtonKey,
+                          icon: const Icon(Icons.help_outline),
+                          tooltip: 'Help',
+                          onPressed: _toggleHelpMode,
+                        ),
+                ),
+            ],
+          ),
+          body: _isLoading
+              ? Container(
+                  color: Color(0xFFF8F5F2),
+                  child: Center(
+                    child: CircularProgressIndicator(color: Colors.black54),
+                  ),
+                )
+              : Container(
+                  color: Color(0xFFF8F5F2),
+                  child: Column(
+                    children: [
+                      if (_isHelpMode)
+                        GestureDetector(
+                          onTap: _toggleHelpMode,
+                          child: AnimatedBuilder(
+                            animation: _spotlightController,
+                            builder: (context, child) {
+                              final opacity =
+                                  0.6 + 0.4 * _spotlightController.value;
+                              return Opacity(opacity: opacity, child: child);
+                            },
+                            child: Container(
+                              width: double.infinity,
+                              color: AppColors.teal.withValues(alpha: 0.08),
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Text(
+                                'Help mode is ON  \u2022  Tap here to exit',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppColors.teal,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      // ADDED: Search Bar Area
+                      Builder(// ADDED Builder for conditional width
+                          builder: (context) {
+                        final bool isDesktopWeb =
+                            kIsWeb && MediaQuery.of(context).size.width > 600;
+
+                        // Original search bar widget (TypeAheadField wrapped in Padding)
+                        // This definition includes the original Padding and TypeAheadField configuration.
+                        Widget searchBarWidget = Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0, vertical: 4.0),
+                          child: Theme(
+                            data: Theme.of(context).copyWith(
+                              cardColor: Colors.white,
+                              canvasColor: Colors.white,
+                              colorScheme:
+                                  Theme.of(context).colorScheme.copyWith(
+                                        surface: Colors.white,
+                                      ),
+                            ),
+                            child: TypeAheadField<Experience>(
+                              builder: (context, controller, focusNode) {
+                                // ADDED: Clear the TypeAhead controller when requested
+                                if (_clearSearchOnNextBuild) {
+                                  controller.clear();
+                                  focusNode.unfocus();
+                                  WidgetsBinding.instance
+                                      .addPostFrameCallback((_) {
+                                    if (mounted) {
+                                      setState(() {
+                                        _clearSearchOnNextBuild = false;
+                                      });
+                                    }
+                                  });
+                                }
+                                return Builder(
+                                    builder: (searchCtx) => GestureDetector(
+                                          behavior: _isHelpMode
+                                              ? HitTestBehavior.opaque
+                                              : HitTestBehavior.deferToChild,
+                                          onTap: _isHelpMode
+                                              ? () => _tryHelpTap(
+                                                  CollectionsHelpTargetId
+                                                      .searchBar,
+                                                  searchCtx)
+                                              : null,
+                                          child: IgnorePointer(
+                                            ignoring: _isHelpMode,
+                                            child: TextField(
+                                              controller: controller,
+                                              focusNode: focusNode,
+                                              autofocus: false,
+                                              decoration: InputDecoration(
+                                                labelText:
+                                                    'Search your experiences',
+                                                filled: true,
+                                                fillColor: Color(0xFFE5E4DF),
+                                                prefixIcon: Icon(Icons.search,
+                                                    color: Theme.of(context)
+                                                        .primaryColor),
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          25.0),
+                                                  borderSide: BorderSide(
+                                                      color: Color(0xFFE5E4DF)),
+                                                ),
+                                                enabledBorder:
+                                                    OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          25.0),
+                                                  borderSide: BorderSide(
+                                                      color: Color(0xFFE5E4DF)),
+                                                ),
+                                                focusedBorder:
+                                                    OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          25.0),
+                                                  borderSide: BorderSide(
+                                                      color: Color(0xFFE5E4DF)),
+                                                ),
+                                                suffixIcon: Builder(
+                                                    builder: (clearCtx) =>
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                              Icons.clear),
+                                                          tooltip:
+                                                              'Clear Search',
+                                                          onPressed: () {
+                                                            if (_tryHelpTap(
+                                                                CollectionsHelpTargetId
+                                                                    .clearSearch,
+                                                                clearCtx))
+                                                              return;
+                                                            triggerHeavyHaptic();
+                                                            controller.clear();
+                                                            _searchController
+                                                                .clear();
+                                                            FocusScope.of(
+                                                                    context)
+                                                                .unfocus();
+                                                          },
+                                                        )),
+                                              ),
+                                            ),
+                                          ),
+                                        ));
+                              },
+                              suggestionsCallback: (pattern) async {
+                                return await _getExperienceSuggestions(pattern);
+                              },
+                              itemBuilder: (context, suggestion) {
+                                return Container(
+                                  color: Colors.white,
+                                  child: ListTile(
+                                    leading: const Icon(Icons.history),
+                                    title: Text(suggestion.name),
+                                  ),
+                                );
+                              },
+                              onSelected: (suggestion) async {
+                                triggerHeavyHaptic();
+                                await _openExperience(suggestion);
+                                if (mounted) {
+                                  setState(() {
+                                    _clearSearchOnNextBuild = true;
+                                  });
+                                }
+                                _searchController.clear();
+                                FocusScope.of(context).unfocus();
+                              },
+                              emptyBuilder: (context) => const Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: Text('No experiences found.',
+                                    style: TextStyle(color: Colors.grey)),
+                              ),
+                            ),
+                          ),
+                        );
+
+                        if (isDesktopWeb) {
+                          return Center(
+                            // Center the search bar on desktop
+                            child: SizedBox(
+                              width: MediaQuery.of(context).size.width *
+                                  0.3, // 50% of screen width
+                              child: searchBarWidget,
+                            ),
+                          );
+                        } else {
+                          return searchBarWidget; // Original layout for mobile/mobile-web
+                        }
+                      }),
+                      // ADDED: TabBar placed here in the body's Column
+                      Container(
+                        color: const Color(0xFFF8F5F2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0, vertical: 8.0),
+                        child: Container(
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Color(0xFFE5E4DF),
+                            borderRadius: BorderRadius.circular(20.0),
+                          ),
+                          child: TabBar(
+                            controller: _tabController,
+                            onTap: (index) {
+                              if (_isHelpMode) {
+                                final tabCtx = _tabKeys[index].currentContext;
+                                if (tabCtx != null) {
+                                  _tryHelpTap(_helpTargetForTab(index), tabCtx);
+                                }
+                                return;
+                              }
+                              triggerHeavyHaptic();
+                            },
+                            tabs: [
+                              Tab(key: _tabKeys[0], text: 'Categories'),
+                              Tab(key: _tabKeys[1], text: 'Experiences'),
+                              Tab(
+                                key: _tabKeys[2],
+                                text: 'Saves',
+                              ),
+                            ],
+                            labelColor: Colors.black,
+                            unselectedLabelColor: Colors.grey[600],
+                            indicator: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20.0),
+                              color: Colors.white,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 1),
+                                ),
+                              ],
+                            ),
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            dividerColor: Colors.transparent,
+                            labelStyle:
+                                const TextStyle(fontWeight: FontWeight.w600),
+                            unselectedLabelStyle:
+                                const TextStyle(fontWeight: FontWeight.normal),
+                          ),
+                        ),
+                      ),
+                      // Existing TabBarView wrapped in Expanded
+                      Expanded(
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: [
+                            // MODIFIED: Conditionally show category list or category experiences
+                            // _selectedCategory == null
+                            //     ? _buildCategoriesList()
+                            //     : _buildCategoryExperiencesList(_selectedCategory!),
+                            // --- MODIFIED: First tab now uses Column and toggle ---
+                            Container(
+                              color: AppColors.backgroundColor,
+                              child: Column(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 7.0, vertical: 8.0),
+                                    child: Row(
+                                      children: [
+                                        if (_selectedCategory == null &&
+                                            _selectedColorCategory == null)
+                                          Builder(builder: (context) {
+                                            final bool isViewingColor =
+                                                _showingColorCategories;
+                                            final int totalCount =
+                                                isViewingColor
+                                                    ? _colorCategories.length
+                                                    : _categories.length;
+                                            final int selectedCount =
+                                                isViewingColor
+                                                    ? _selectedColorCategoryIds
+                                                        .length
+                                                    : _selectedCategoryIds
+                                                        .length;
+                                            final bool allSelected =
+                                                totalCount > 0 &&
+                                                    selectedCount == totalCount;
+                                            final bool someSelected =
+                                                selectedCount > 0 &&
+                                                    selectedCount < totalCount;
+
+                                            if (_isSelectingCategories) {
+                                              return Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Builder(
+                                                      builder:
+                                                          (selAllCtx) =>
+                                                              Checkbox(
+                                                                value: allSelected
+                                                                    ? true
+                                                                    : (someSelected
+                                                                        ? null
+                                                                        : false),
+                                                                tristate: true,
+                                                                onChanged: (bool?
+                                                                    newValue) {
+                                                                  if (_tryHelpTap(
+                                                                      CollectionsHelpTargetId
+                                                                          .categorySelectAll,
+                                                                      selAllCtx))
+                                                                    return;
+                                                                  setState(() {
+                                                                    final bool
+                                                                        selectAllNow =
+                                                                        someSelected
+                                                                            ? true
+                                                                            : (allSelected
+                                                                                ? false
+                                                                                : (newValue == true));
+
+                                                                    if (isViewingColor) {
+                                                                      if (selectAllNow) {
+                                                                        _selectedColorCategoryIds
+                                                                          ..clear()
+                                                                          ..addAll(_colorCategories.map((c) =>
+                                                                              c.id));
+                                                                      } else {
+                                                                        _selectedColorCategoryIds
+                                                                            .clear();
+                                                                      }
+                                                                    } else {
+                                                                      if (selectAllNow) {
+                                                                        _selectedCategoryIds
+                                                                          ..clear()
+                                                                          ..addAll(_categories.map((c) =>
+                                                                              c.id));
+                                                                      } else {
+                                                                        _selectedCategoryIds
+                                                                            .clear();
+                                                                      }
+                                                                    }
+                                                                  });
+                                                                },
+                                                              )),
+                                                  const SizedBox(width: 6),
+                                                  Builder(
+                                                      builder: (cancelCtx) =>
+                                                          IconButton(
+                                                            tooltip:
+                                                                'Cancel selection',
+                                                            icon: const Icon(
+                                                                Icons.close),
+                                                            onPressed: () {
+                                                              if (_tryHelpTap(
+                                                                  CollectionsHelpTargetId
+                                                                      .categoryCancelSelection,
+                                                                  cancelCtx))
+                                                                return;
+                                                              triggerHeavyHaptic();
+                                                              setState(() {
+                                                                _isSelectingCategories =
+                                                                    false;
+                                                                _selectedCategoryIds
+                                                                    .clear();
+                                                                _selectedColorCategoryIds
+                                                                    .clear();
+                                                              });
+                                                            },
+                                                          )),
+                                                  const SizedBox(width: 6),
+                                                  Builder(
+                                                    builder: (context) {
+                                                      final VoidCallback?
+                                                          onSharePressed =
+                                                          selectedCount == 0
+                                                              ? null
+                                                              : () {
+                                                                  if (isViewingColor) {
+                                                                    final List<
+                                                                            ColorCategory>
+                                                                        selected =
+                                                                        _colorCategories
+                                                                            .where((c) =>
+                                                                                _selectedColorCategoryIds.contains(c.id))
+                                                                            .toList();
+                                                                    _showShareSelectedCategoriesBottomSheet(
+                                                                      colorCategories:
+                                                                          selected,
+                                                                    );
+                                                                  } else {
+                                                                    final List<
+                                                                            UserCategory>
+                                                                        selected =
+                                                                        _categories
+                                                                            .where((c) =>
+                                                                                _selectedCategoryIds.contains(c.id))
+                                                                            .toList();
+                                                                    _showShareSelectedCategoriesBottomSheet(
+                                                                      userCategories:
+                                                                          selected,
+                                                                    );
+                                                                  }
+                                                                };
+                                                      return Builder(
+                                                          builder:
+                                                              (shareCtx) =>
+                                                                  IconButton(
+                                                                    tooltip:
+                                                                        'Share',
+                                                                    icon: Icon(
+                                                                        Icons
+                                                                            .share_outlined,
+                                                                        color: selectedCount ==
+                                                                                0
+                                                                            ? Colors.grey
+                                                                            : Colors.blue),
+                                                                    onPressed:
+                                                                        () {
+                                                                      if (_tryHelpTap(
+                                                                          CollectionsHelpTargetId
+                                                                              .categoryShareSelected,
+                                                                          shareCtx))
+                                                                        return;
+                                                                      onSharePressed
+                                                                          ?.call();
+                                                                    },
+                                                                  ));
+                                                    },
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  Builder(
+                                                    builder: (delCtx) {
+                                                      final bool hasSelection =
+                                                          selectedCount > 0;
+                                                      final String tooltip =
+                                                          isViewingColor
+                                                              ? 'Delete selected color categories'
+                                                              : 'Delete selected categories';
+                                                      return IconButton(
+                                                        tooltip: tooltip,
+                                                        icon: const Icon(Icons
+                                                            .delete_outline),
+                                                        color: Colors.red,
+                                                        onPressed:
+                                                            hasSelection ||
+                                                                    _isHelpMode
+                                                                ? () {
+                                                                    if (_tryHelpTap(
+                                                                        CollectionsHelpTargetId
+                                                                            .categoryDeleteSelected,
+                                                                        delCtx))
+                                                                      return;
+                                                                    triggerHeavyHaptic();
+                                                                    if (isViewingColor) {
+                                                                      _handleBulkDeleteSelectedColorCategories();
+                                                                    } else {
+                                                                      _handleBulkDeleteSelectedUserCategories();
+                                                                    }
+                                                                  }
+                                                                : null,
+                                                      );
+                                                    },
+                                                  ),
+                                                ],
+                                              );
+                                            }
+                                            return Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Builder(
+                                                    builder: (selCtx) =>
+                                                        IconButton(
+                                                          tooltip: 'Select',
+                                                          icon: const Icon(Icons
+                                                              .check_box_outlined),
+                                                          onPressed: () {
+                                                            if (_tryHelpTap(
+                                                                CollectionsHelpTargetId
+                                                                    .categorySelectMode,
+                                                                selCtx)) return;
+                                                            triggerHeavyHaptic();
+                                                            setState(() {
+                                                              _isSelectingCategories =
+                                                                  true;
+                                                            });
+                                                          },
+                                                        )),
+                                              ],
+                                            );
+                                          }),
+                                        Expanded(child: SizedBox()),
+                                        Flexible(
+                                          child: Builder(
+                                            builder: (context) {
+                                              final IconData toggleIcon =
+                                                  _showingColorCategories
+                                                      ? Icons.category_outlined
+                                                      : Icons
+                                                          .color_lens_outlined;
+                                              final String toggleLabel =
+                                                  _showingColorCategories
+                                                      ? 'Categories'
+                                                      : 'Color Categories';
+                                              void onToggle() {
+                                                setState(() {
+                                                  _showingColorCategories =
+                                                      !_showingColorCategories;
+                                                  _selectedCategory =
+                                                      null; // Clear selected text category when switching views
+                                                  _selectedColorCategory =
+                                                      null; // Clear selected color category when switching views
+                                                });
+                                              }
+
+                                              return Builder(
+                                                  builder: (toggleCtx) => Align(
+                                                        alignment: Alignment
+                                                            .centerRight,
+                                                        child: FittedBox(
+                                                          fit: BoxFit.scaleDown,
+                                                          child:
+                                                              TextButton.icon(
+                                                            style: TextButton
+                                                                .styleFrom(
+                                                              visualDensity:
+                                                                  const VisualDensity(
+                                                                      horizontal:
+                                                                          -2,
+                                                                      vertical:
+                                                                          -2),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          8.0),
+                                                            ),
+                                                            icon: Icon(
+                                                                toggleIcon),
+                                                            label: Text(
+                                                                toggleLabel),
+                                                            onPressed: () {
+                                                              if (_tryHelpTap(
+                                                                  CollectionsHelpTargetId
+                                                                      .toggleCategoryView,
+                                                                  toggleCtx))
+                                                                return;
+                                                              onToggle();
+                                                            },
+                                                          ),
+                                                        ),
+                                                      ));
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Consumer<CategorySaveProgressNotifier>(
+                                    builder: (context, notifier, _) {
+                                      final tasks = notifier.activeTasks;
+                                      if (tasks.isEmpty) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16.0,
+                                          vertical: 4.0,
+                                        ),
+                                        child: ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                              maxHeight: 200),
+                                          child: ListView.separated(
+                                            shrinkWrap: true,
+                                            physics:
+                                                const ClampingScrollPhysics(),
+                                            itemCount: tasks.length,
+                                            itemBuilder: (context, index) =>
+                                                _buildCategorySaveProgressTile(
+                                                    context, tasks[index]),
+                                            separatorBuilder:
+                                                (context, index) =>
+                                                    const SizedBox(height: 8),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  // Show reorder hint only when viewing main category lists (not individual category experiences)
+                                  // and only on mobile devices where reordering is available
+                                  if (_selectedCategory == null &&
+                                      _selectedColorCategory == null &&
+                                      !_isSelectingCategories &&
+                                      !(kIsWeb &&
+                                          MediaQuery.of(context).size.width >
+                                              600))
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16.0, vertical: 4.0),
+                                      child: Text(
+                                        'Tap and hold to reorder',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Colors.grey[600],
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  Expanded(
+                                    child: _selectedCategory != null
+                                        ? _buildCategoryExperiencesList(
+                                            _selectedCategory!) // Still show experiences if a text category was selected
+                                        // --- MODIFIED: Check for selected color category first --- START ---
+                                        : _selectedColorCategory != null
+                                            ? _buildColorCategoryExperiencesList(
+                                                _selectedColorCategory!) // Show color experiences
+                                            : _showingColorCategories
+                                                ? _buildColorCategoriesList() // Show color list
+                                                : _buildCategoriesList(), // Show text list
+                                    // --- MODIFIED: Check for selected color category first --- END ---
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // --- END MODIFIED ---
+                            Container(
+                              color: const Color(0xFFF8F5F2),
+                              child: Column(
+                                children: [
+                                  ClipRect(
+                                    child: SizeTransition(
+                                      sizeFactor:
+                                          _experienceSelectionRowAnimation,
+                                      axisAlignment: -1,
+                                      child: FadeTransition(
+                                        opacity:
+                                            _experienceSelectionRowAnimation,
+                                        child: IgnorePointer(
+                                          ignoring: !_isSelectingExperiences,
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                                left: 7.0,
+                                                right: 7.0,
+                                                top: 8.0,
+                                                bottom: 2.0),
+                                            child: Row(
+                                              children: [
+                                                Builder(builder: (context) {
+                                                  final int totalCount =
+                                                      _filteredExperiences
+                                                          .length;
+                                                  final int selectedCount =
+                                                      _selectedExperienceIds
+                                                          .length;
+                                                  final bool allSelected =
+                                                      totalCount > 0 &&
+                                                          selectedCount ==
+                                                              totalCount;
+                                                  final bool someSelected =
+                                                      selectedCount > 0 &&
+                                                          !allSelected;
+
+                                                  return Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Builder(
+                                                          builder:
+                                                              (expSelAllCtx) =>
+                                                                  Checkbox(
+                                                                    value: allSelected
+                                                                        ? true
+                                                                        : (someSelected
+                                                                            ? null
+                                                                            : false),
+                                                                    tristate:
+                                                                        true,
+                                                                    onChanged: totalCount ==
+                                                                                0 &&
+                                                                            !_isHelpMode
+                                                                        ? null
+                                                                        : (bool?
+                                                                            value) {
+                                                                            if (_tryHelpTap(CollectionsHelpTargetId.experienceSelectAll, expSelAllCtx))
+                                                                              return;
+                                                                            setState(() {
+                                                                              final bool selectAllNow = someSelected ? true : (allSelected ? false : (value ?? true));
+                                                                              if (selectAllNow) {
+                                                                                _selectedExperienceIds
+                                                                                  ..clear()
+                                                                                  ..addAll(_filteredExperiences.map((e) => e.id));
+                                                                              } else {
+                                                                                _selectedExperienceIds.clear();
+                                                                              }
+                                                                            });
+                                                                          },
+                                                                  )),
+                                                      const SizedBox(width: 6),
+                                                      _buildExperienceSelectionAction(
+                                                        animation:
+                                                            _experienceSelectionCloseAnimation,
+                                                        child: Builder(
+                                                            builder:
+                                                                (expCancelCtx) =>
+                                                                    IconButton(
+                                                                      tooltip:
+                                                                          'Cancel selection',
+                                                                      icon: const Icon(
+                                                                          Icons
+                                                                              .close),
+                                                                      onPressed:
+                                                                          () {
+                                                                        if (_tryHelpTap(
+                                                                            CollectionsHelpTargetId
+                                                                                .experienceCancelSelection,
+                                                                            expCancelCtx))
+                                                                          return;
+                                                                        triggerHeavyHaptic();
+                                                                        _exitExperienceSelectionMode();
+                                                                      },
+                                                                    )),
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      _buildExperienceSelectionAction(
+                                                        animation:
+                                                            _experienceSelectionEventAnimation,
+                                                        child: Builder(
+                                                            builder:
+                                                                (expEventCtx) =>
+                                                                    IconButton(
+                                                                      tooltip:
+                                                                          'Create event with selected',
+                                                                      icon: Icon(
+                                                                          Icons
+                                                                              .event_outlined,
+                                                                          color: selectedCount == 0
+                                                                              ? Colors.grey
+                                                                              : Colors.deepPurple),
+                                                                      onPressed: selectedCount == 0 &&
+                                                                              !_isHelpMode
+                                                                          ? null
+                                                                          : () {
+                                                                              if (_tryHelpTap(CollectionsHelpTargetId.experienceCreateEvent, expEventCtx))
+                                                                                return;
+                                                                              triggerHeavyHaptic();
+                                                                              unawaited(_handleCreateEventWithSelectedExperiences());
+                                                                            },
+                                                                    )),
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      _buildExperienceSelectionAction(
+                                                        animation:
+                                                            _experienceSelectionShareAnimation,
+                                                        child: Builder(
+                                                            builder:
+                                                                (expShareCtx) =>
+                                                                    IconButton(
+                                                                      tooltip:
+                                                                          'Share selected experiences',
+                                                                      icon: Icon(
+                                                                          Icons
+                                                                              .share_outlined,
+                                                                          color: selectedCount == 0
+                                                                              ? Colors.grey
+                                                                              : Colors.blue),
+                                                                      onPressed: selectedCount == 0 &&
+                                                                              !_isHelpMode
+                                                                          ? null
+                                                                          : () {
+                                                                              if (_tryHelpTap(CollectionsHelpTargetId.experienceShareSelected, expShareCtx))
+                                                                                return;
+                                                                              triggerHeavyHaptic();
+                                                                              unawaited(_handleShareSelectedExperiences());
+                                                                            },
+                                                                    )),
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      _buildExperienceSelectionAction(
+                                                        animation:
+                                                            _experienceSelectionDeleteAnimation,
+                                                        child: Builder(
+                                                            builder:
+                                                                (expDelCtx) =>
+                                                                    IconButton(
+                                                                      tooltip:
+                                                                          'Delete selected experiences',
+                                                                      icon: const Icon(
+                                                                          Icons
+                                                                              .delete_outline),
+                                                                      color: Colors
+                                                                          .red,
+                                                                      onPressed: selectedCount == 0 &&
+                                                                              !_isHelpMode
+                                                                          ? null
+                                                                          : () {
+                                                                              if (_tryHelpTap(CollectionsHelpTargetId.experienceDeleteSelected, expDelCtx))
+                                                                                return;
+                                                                              triggerHeavyHaptic();
+                                                                              unawaited(_handleBulkDeleteSelectedExperiences());
+                                                                            },
+                                                                    )),
+                                                      ),
+                                                    ],
+                                                  );
+                                                }),
+                                                const Expanded(
+                                                    child: SizedBox()),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: _buildExperiencesListView(),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // MODIFIED: Call builder for Content tab
+                            Container(
+                              color: AppColors.backgroundColor,
+                              child: _buildContentTabBody(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          floatingActionButton: Builder(
+            builder: (fabContext) => FloatingActionButton(
+              key: _fabKey,
+              onPressed: () {
+                if (_tryHelpTap(CollectionsHelpTargetId.fab, fabContext))
+                  return;
+                _showAddMenu();
+              },
+              tooltip: 'Add',
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.add),
+            ),
+          ),
+        ),
+        if (_isHelpMode && _activeHelpTarget != null) _buildHelpOverlay(),
+      ],
+    );
+  }
+
   void _showAddMenu() {
     showModalBottomSheet<void>(
       context: context,
@@ -5080,7 +5611,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
         borderRadius: BorderRadius.circular(28.0), // Make it circular
       ),
       child: MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
+        data:
+            MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.center,
@@ -5122,252 +5654,285 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     // Check if this experience is in an upcoming/ongoing event
     final Event? matchingEvent = _experienceIdToEvent[experience.id];
-    
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20.0),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.12),
-            blurRadius: 20,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: ListTile(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20.0),
-        ),
-        key: ValueKey(experience.id), // Use experience ID as key
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        visualDensity: const VisualDensity(horizontal: -4),
-      isThreeLine: true,
-      titleAlignment: ListTileTitleAlignment.threeLine,
-      leading: leadingWidget,
-      minLeadingWidth: 56,
-      selected: isSelecting && isSelected,
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              experience.name,
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          if (matchingEvent != null) ...[
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: withHeavyTap(() {
-                triggerHeavyHaptic();
-                _openEventEditorForExperience(matchingEvent);
-              }),
-              child: Icon(
-                Icons.event,
-                color: _getEventColor(matchingEvent),
-                size: 28,
-              ),
-            ),
-          ],
-        ],
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (shareLabel != null)
-            Text(
-              shareLabel,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.grey[600]),
-            ),
-          if (fullAddress != null && fullAddress.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      fullAddress,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+
+    return Builder(
+        builder: (expRowCtx) => Container(
+              margin:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20.0),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.12),
+                    blurRadius: 20,
+                    offset: const Offset(0, 6),
                   ),
-                  if (contentCount > 0) ...[
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: playButtonDiameter,
-                      height: playButtonDiameter,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: withHeavyTap(() {
-                          triggerHeavyHaptic();
-                          _openExperienceContentPreview(experience);
-                        }),
-                        child: Stack(
-                          clipBehavior: Clip.none,
+                ],
+              ),
+              child: ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20.0),
+                ),
+                key: ValueKey(experience.id), // Use experience ID as key
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                visualDensity: const VisualDensity(horizontal: -4),
+                isThreeLine: true,
+                titleAlignment: ListTileTitleAlignment.threeLine,
+                leading: leadingWidget,
+                minLeadingWidth: 56,
+                selected: isSelecting && isSelected,
+                title: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        experience.name,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    if (matchingEvent != null) ...[
+                      const SizedBox(width: 8),
+                      Builder(
+                          builder: (eventIconCtx) => GestureDetector(
+                                onTap: withHeavyTap(() {
+                                  if (_tryHelpTap(
+                                      CollectionsHelpTargetId
+                                          .experienceEventIcon,
+                                      eventIconCtx)) return;
+                                  triggerHeavyHaptic();
+                                  _openEventEditorForExperience(matchingEvent);
+                                }),
+                                child: Icon(
+                                  Icons.event,
+                                  color: _getEventColor(matchingEvent),
+                                  size: 28,
+                                ),
+                              )),
+                    ],
+                  ],
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (shareLabel != null)
+                      Text(
+                        shareLabel,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Colors.grey[600]),
+                      ),
+                    if (fullAddress != null && fullAddress.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 2.0),
+                        child: Row(
                           children: [
-                            Container(
-                              width: playButtonDiameter,
-                              height: playButtonDiameter,
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).primaryColor,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                Icons.play_arrow,
-                                color: Colors.white,
-                                size: playIconSize,
+                            Expanded(
+                              child: Text(
+                                fullAddress,
+                                style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ),
-                            Positioned(
-                              bottom: badgeOffset,
-                              right: badgeOffset,
-                              child: Container(
-                                width: badgeDiameter,
-                                height: badgeDiameter,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Theme.of(context).primaryColor,
-                                    width: badgeBorderWidth,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    contentCount.toString(),
-                                    style: TextStyle(
-                                      color: Theme.of(context).primaryColor,
-                                      fontSize: badgeFontSize,
-                                      fontWeight: FontWeight.w600,
+                            if (contentCount > 0) ...[
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: playButtonDiameter,
+                                height: playButtonDiameter,
+                                child: Builder(
+                                    builder: (contentPrevCtx) =>
+                                        GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: withHeavyTap(() {
+                                            if (_tryHelpTap(
+                                                CollectionsHelpTargetId
+                                                    .experienceContentPreview,
+                                                contentPrevCtx,
+                                                experience: experience)) return;
+                                            triggerHeavyHaptic();
+                                            _openExperienceContentPreview(
+                                                experience);
+                                          }),
+                                          child: Stack(
+                                            clipBehavior: Clip.none,
+                                            children: [
+                                              Container(
+                                                width: playButtonDiameter,
+                                                height: playButtonDiameter,
+                                                decoration: BoxDecoration(
+                                                  color: Theme.of(context)
+                                                      .primaryColor,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Icon(
+                                                  Icons.play_arrow,
+                                                  color: Colors.white,
+                                                  size: playIconSize,
+                                                ),
+                                              ),
+                                              Positioned(
+                                                bottom: badgeOffset,
+                                                right: badgeOffset,
+                                                child: Container(
+                                                  width: badgeDiameter,
+                                                  height: badgeDiameter,
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: Theme.of(context)
+                                                          .primaryColor,
+                                                      width: badgeBorderWidth,
+                                                    ),
+                                                  ),
+                                                  child: Center(
+                                                    child: Text(
+                                                      contentCount.toString(),
+                                                      style: TextStyle(
+                                                        color: Theme.of(context)
+                                                            .primaryColor,
+                                                        fontSize: badgeFontSize,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    // Row for subcategory icons and/or content count; also lift notes here when no subcategories
+                    if (shouldShowSubRow)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2.0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (hasOtherCategories ||
+                                      hasOtherColorCategories)
+                                    Wrap(
+                                      spacing: 6.0,
+                                      runSpacing: 2.0,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        ...experience.otherCategories
+                                            .map((categoryId) {
+                                          final otherCategory =
+                                              _categories.firstWhereOrNull(
+                                            (cat) => cat.id == categoryId,
+                                          );
+                                          if (otherCategory != null) {
+                                            return Text(
+                                              otherCategory.icon,
+                                              style:
+                                                  const TextStyle(fontSize: 14),
+                                            );
+                                          }
+                                          return const SizedBox.shrink();
+                                        }),
+                                        ...otherColorCategories
+                                            .map((colorCategory) {
+                                          final Color chipColor =
+                                              colorCategory.color;
+                                          return Container(
+                                            width: 10,
+                                            height: 10,
+                                            decoration: BoxDecoration(
+                                              color: chipColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          );
+                                        }),
+                                      ],
                                     ),
-                                  ),
-                                ),
+                                  if (experience.additionalNotes != null &&
+                                      experience.additionalNotes!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2.0),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.notes,
+                                              size: 14,
+                                              color: Colors.grey[600]),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(
+                                              experience.additionalNotes!,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                      fontStyle:
+                                                          FontStyle.italic),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                    // Separate notes block is suppressed because notes render in the subcategory row
+                    if (experience.additionalNotes != null &&
+                        experience.additionalNotes!.isNotEmpty &&
+                        false)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4.0),
+                        child: Text(
+                          experience.additionalNotes!,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
-                ],
+                ),
+                onTap: withHeavyTap(() async {
+                  if (_tryHelpTap(
+                      CollectionsHelpTargetId.experienceRow, expRowCtx)) return;
+                  triggerHeavyHaptic();
+                  if (_isSelectingExperiences) {
+                    setState(() {
+                      if (_selectedExperienceIds.contains(experience.id)) {
+                        _selectedExperienceIds.remove(experience.id);
+                      } else {
+                        _selectedExperienceIds.add(experience.id);
+                      }
+                    });
+                  } else {
+                    await _openExperience(experience);
+                  }
+                }),
+                onLongPress: () {
+                  if (_isHelpMode) return;
+                  if (!_isSelectingExperiences) {
+                    _enterExperienceSelectionMode(selectId: experience.id);
+                  }
+                },
               ),
-            ),
-          // Row for subcategory icons and/or content count; also lift notes here when no subcategories
-          if (shouldShowSubRow)
-            Padding(
-              padding: const EdgeInsets.only(top: 2.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (hasOtherCategories || hasOtherColorCategories)
-                          Wrap(
-                            spacing: 6.0,
-                            runSpacing: 2.0,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              ...experience.otherCategories
-                                  .map((categoryId) {
-                                final otherCategory =
-                                    _categories.firstWhereOrNull(
-                                  (cat) => cat.id == categoryId,
-                                );
-                                if (otherCategory != null) {
-                                  return Text(
-                                    otherCategory.icon,
-                                    style: const TextStyle(fontSize: 14),
-                                  );
-                                }
-                                return const SizedBox.shrink();
-                              }),
-                              ...otherColorCategories.map((colorCategory) {
-                                final Color chipColor = colorCategory.color;
-                                return Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration: BoxDecoration(
-                                    color: chipColor,
-                                    shape: BoxShape.circle,
-                                  ),
-                                );
-                              }),
-                            ],
-                          ),
-                        if (experience.additionalNotes != null &&
-                            experience.additionalNotes!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Icon(Icons.notes,
-                                    size: 14, color: Colors.grey[600]),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    experience.additionalNotes!,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(fontStyle: FontStyle.italic),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          // Separate notes block is suppressed because notes render in the subcategory row
-          if (experience.additionalNotes != null &&
-              experience.additionalNotes!.isNotEmpty &&
-              false)
-            Padding(
-              padding: const EdgeInsets.only(top: 4.0),
-              child: Text(
-                experience.additionalNotes!,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontStyle: FontStyle.italic,
-                    ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-        ],
-      ),
-      onTap: withHeavyTap(() async {
-        triggerHeavyHaptic();
-        if (_isSelectingExperiences) {
-          setState(() {
-            if (_selectedExperienceIds.contains(experience.id)) {
-              _selectedExperienceIds.remove(experience.id);
-            } else {
-              _selectedExperienceIds.add(experience.id);
-            }
-          });
-        } else {
-          await _openExperience(experience);
-        }
-      }),
-      onLongPress: () {
-        if (!_isSelectingExperiences) {
-          _enterExperienceSelectionMode(selectId: experience.id);
-        }
-      },
-      ),
-    );
+            ));
   }
 
   // ADDED: Widget builder for an Experience Grid Item (for web)
@@ -5388,7 +5953,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final String? ownerName = sharePermission != null
         ? (_shareOwnerNames[sharePermission.ownerUserId] ?? 'Someone')
         : null;
-    
+
     // Check if this experience is in an upcoming/ongoing event
     final Event? matchingEvent = _experienceIdToEvent[experience.id];
 
@@ -5655,40 +6220,45 @@ class CollectionsScreenState extends State<CollectionsScreen>
       clipBehavior: Clip.antiAlias,
       elevation: 2.0,
       shape: cardShape,
-      child: InkWell(
-        onTap: withHeavyTap(() async {
-          triggerHeavyHaptic();
-          if (_isSelectingExperiences) {
-            setState(() {
-              if (_selectedExperienceIds.contains(experience.id)) {
-                _selectedExperienceIds.remove(experience.id);
-              } else {
-                _selectedExperienceIds.add(experience.id);
-              }
-            });
-          } else {
-            await _openExperience(experience);
-          }
-        }),
-        onLongPress: () {
-          if (!_isSelectingExperiences) {
-            _enterExperienceSelectionMode(selectId: experience.id);
-          }
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            categoryIconWidget, // Category icon always on top
-            Expanded(
-                child:
-                    lowerSectionContent), // Lower section takes remaining space
-            // Padding(
-            //   padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
-            //   child: Text(
-            // ... existing code ...
-          ],
-        ),
-      ),
+      child: Builder(
+          builder: (expGridCtx) => InkWell(
+                onTap: withHeavyTap(() async {
+                  if (_tryHelpTap(
+                      CollectionsHelpTargetId.experienceRow, expGridCtx))
+                    return;
+                  triggerHeavyHaptic();
+                  if (_isSelectingExperiences) {
+                    setState(() {
+                      if (_selectedExperienceIds.contains(experience.id)) {
+                        _selectedExperienceIds.remove(experience.id);
+                      } else {
+                        _selectedExperienceIds.add(experience.id);
+                      }
+                    });
+                  } else {
+                    await _openExperience(experience);
+                  }
+                }),
+                onLongPress: () {
+                  if (_isHelpMode) return;
+                  if (!_isSelectingExperiences) {
+                    _enterExperienceSelectionMode(selectId: experience.id);
+                  }
+                },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    categoryIconWidget, // Category icon always on top
+                    Expanded(
+                        child:
+                            lowerSectionContent), // Lower section takes remaining space
+                    // Padding(
+                    //   padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
+                    //   child: Text(
+                    // ... existing code ...
+                  ],
+                ),
+              )),
     );
 
     if (!isSelecting) {
@@ -5731,6 +6301,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
+
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildShareInstructionEmptyState({required bool isSaves}) {
     final ThemeData theme = Theme.of(context);
@@ -5868,8 +6439,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         unawaited(_showAddContentModal());
                       }),
                       icon: const Icon(Icons.link),
-                      label: Text(
-                          isSaves ? 'Save Manually' : 'Add Experience Manually'),
+                      label: Text(isSaves
+                          ? 'Save Manually'
+                          : 'Add Experience Manually'),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
@@ -5902,9 +6474,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final String countLabel =
         '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}';
     final Widget countText = AnimatedSlide(
-      offset: _isSelectingExperiences
-          ? _experienceCountSlideOffset
-          : Offset.zero,
+      offset:
+          _isSelectingExperiences ? _experienceCountSlideOffset : Offset.zero,
       duration: _experienceCountSlideDuration,
       curve: Curves.easeInOut,
       child: Text(
@@ -5933,14 +6504,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 opacity: _isSelectingExperiences ? 0.0 : 1.0,
                 duration: _experienceCountSlideDuration,
                 curve: Curves.easeInOut,
-                child: IconButton(
-                  tooltip: 'Select experiences',
-                  icon: const Icon(Icons.check_box_outlined),
-                  onPressed: () {
-                    triggerHeavyHaptic();
-                    _enterExperienceSelectionMode();
-                  },
-                ),
+                child: Builder(
+                    builder: (expSelCtx) => IconButton(
+                          tooltip: 'Select experiences',
+                          icon: const Icon(Icons.check_box_outlined),
+                          onPressed: () {
+                            if (_tryHelpTap(
+                                CollectionsHelpTargetId.experienceSelectMode,
+                                expSelCtx)) return;
+                            triggerHeavyHaptic();
+                            _enterExperienceSelectionMode();
+                          },
+                        )),
               ),
             ),
           ),
@@ -6149,7 +6724,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       }
 
       return ListView.builder(
-        key: ValueKey('experiences_${_filteredExperiences.length}_${_filteredExperiences.hashCode}'),
+        key: ValueKey(
+            'experiences_${_filteredExperiences.length}_${_filteredExperiences.hashCode}'),
         controller: _experiencesScrollController,
         padding: const EdgeInsets.only(bottom: _bottomListPadding),
         itemCount: (expRegionStructured != null
@@ -6161,11 +6737,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
           if (index == 0) {
             return countHeader;
           }
-          
+
           // Check if this is the loading indicator at the end
           final int dataCount = (expRegionStructured != null
-              ? expRegionStructured.length
-              : _filteredExperiences.length) + 1;
+                  ? expRegionStructured.length
+                  : _filteredExperiences.length) +
+              1;
           if (index == dataCount && _isLoadingMoreExperiences) {
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 16.0),
@@ -6174,7 +6751,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               ),
             );
           }
-          
+
           if (expRegionStructured != null) {
             final entry = expRegionStructured[index - 1];
             if (entry.containsKey('header')) {
@@ -6210,32 +6787,42 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     : base.copyWith(
                         fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
                 final double leftPadding = (depth * 16).toDouble();
-                return InkWell(
-                  onTap: withHeavyTap(() {
-                    triggerHeavyHaptic();
-                    setState(() {
-                      _locationExpansionExperiences[key] = !isExpanded;
-                    });
-                  }),
-                  child: Container(
-                    width: double.infinity,
-                    color: Colors.white,
-                    padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
-                    child: Row(
-                      children: [
-                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
-                            color: Colors.grey[700], size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            displayRegion,
-                            style: style,
+                return Builder(
+                    builder: (locExpCtx) => InkWell(
+                          onTap: withHeavyTap(() {
+                            if (_tryHelpTap(
+                                CollectionsHelpTargetId
+                                    .experienceLocationGroupHeader,
+                                locExpCtx)) return;
+                            triggerHeavyHaptic();
+                            setState(() {
+                              _locationExpansionExperiences[key] = !isExpanded;
+                            });
+                          }),
+                          child: Container(
+                            width: double.infinity,
+                            color: Colors.white,
+                            padding: EdgeInsets.fromLTRB(
+                                16 + leftPadding, 12, 16, 6),
+                            child: Row(
+                              children: [
+                                Icon(
+                                    isExpanded
+                                        ? Icons.expand_less
+                                        : Icons.expand_more,
+                                    color: Colors.grey[700],
+                                    size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    displayRegion,
+                                    style: style,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
+                        ));
               } else {
                 // Legacy country/state/city grouping path
                 final bool isExpanded = (level == 'country')
@@ -6338,16 +6925,20 @@ class CollectionsScreenState extends State<CollectionsScreen>
           padding: const EdgeInsets.all(8.0),
           child: Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: 'Back to Categories',
-                onPressed: () {
-                  triggerHeavyHaptic();
-                  setState(() {
-                    _selectedCategory = null; // Go back to category list
-                  });
-                },
-              ),
+              Builder(
+                  builder: (backCtx) => IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: 'Back to Categories',
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              CollectionsHelpTargetId.categoryDetailBack,
+                              backCtx)) return;
+                          triggerHeavyHaptic();
+                          setState(() {
+                            _selectedCategory = null;
+                          });
+                        },
+                      )),
               const SizedBox(width: 8),
               // Category title with icon, and optional shared-by subtext
               Expanded(
@@ -6374,7 +6965,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         children: [
                           SizedBox(
                             width: 16,
-                            child: Center(child: UserCategory.buildIconText(category.icon)),
+                            child: Center(
+                                child:
+                                    UserCategory.buildIconText(category.icon)),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -6409,53 +7002,65 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 final bool canEditCategory = !isShared ||
                     permission.accessLevel == ShareAccessLevel.edit;
                 final bool canManageCategory = !isShared;
-                return PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  tooltip: 'Category Options',
-                  color: Colors.white,
-                  onSelected: (String result) {
-                    triggerHeavyHaptic();
-                    switch (result) {
-                      case 'edit':
-                        _showEditSingleCategoryModal(category);
-                        break;
-                      case 'share':
-                        _showShareCategoryBottomSheet(category);
-                        break;
-                      case 'delete':
-                        _showDeleteCategoryConfirmation(category);
-                        break;
-                    }
-                  },
-                  itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<String>>[
-                    PopupMenuItem<String>(
-                      value: 'edit',
-                      enabled: canEditCategory,
-                      child: const ListTile(
-                        leading: Icon(Icons.edit_outlined),
-                        title: Text('Edit'),
-                      ),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'share',
-                      enabled: canManageCategory,
-                      child: const ListTile(
-                        leading: Icon(Icons.share_outlined, color: Colors.blue),
-                        title: Text('Share', style: TextStyle(color: Colors.blue)),
-                      ),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'delete',
-                      enabled: canManageCategory,
-                      child: const ListTile(
-                        leading: Icon(Icons.delete_outline, color: Colors.red),
-                        title:
-                            Text('Delete', style: TextStyle(color: Colors.red)),
-                      ),
-                    ),
-                  ],
-                );
+                return Builder(
+                    builder: (catOptCtx) => _isHelpMode
+                        ? IconButton(
+                            icon: const Icon(Icons.more_vert),
+                            tooltip: 'Category Options',
+                            onPressed: () => _tryHelpTap(
+                                CollectionsHelpTargetId.categoryDetailOptions,
+                                catOptCtx),
+                          )
+                        : PopupMenuButton<String>(
+                            icon: const Icon(Icons.more_vert),
+                            tooltip: 'Category Options',
+                            color: Colors.white,
+                            onSelected: (String result) {
+                              triggerHeavyHaptic();
+                              switch (result) {
+                                case 'edit':
+                                  _showEditSingleCategoryModal(category);
+                                  break;
+                                case 'share':
+                                  _showShareCategoryBottomSheet(category);
+                                  break;
+                                case 'delete':
+                                  _showDeleteCategoryConfirmation(category);
+                                  break;
+                              }
+                            },
+                            itemBuilder: (BuildContext context) =>
+                                <PopupMenuEntry<String>>[
+                              PopupMenuItem<String>(
+                                value: 'edit',
+                                enabled: canEditCategory,
+                                child: const ListTile(
+                                  leading: Icon(Icons.edit_outlined),
+                                  title: Text('Edit'),
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'share',
+                                enabled: canManageCategory,
+                                child: const ListTile(
+                                  leading: Icon(Icons.share_outlined,
+                                      color: Colors.blue),
+                                  title: Text('Share',
+                                      style: TextStyle(color: Colors.blue)),
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'delete',
+                                enabled: canManageCategory,
+                                child: const ListTile(
+                                  leading: Icon(Icons.delete_outline,
+                                      color: Colors.red),
+                                  title: Text('Delete',
+                                      style: TextStyle(color: Colors.red)),
+                                ),
+                              ),
+                            ],
+                          ));
               }),
             ],
           ),
@@ -6572,8 +7177,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 child: countHeader,
               );
             }
-            final Map<String, Object> entry =
-                flat[index - 1];
+            final Map<String, Object> entry = flat[index - 1];
             if (entry.containsKey('header')) {
               final display = entry['header'] as String;
               final level = entry['level'] as String;
@@ -6605,35 +7209,42 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   : base.copyWith(
                       fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
               final double leftPadding = (depth * 16).toDouble();
-              return InkWell(
-                onTap: withHeavyTap(() {
-                  triggerHeavyHaptic();
-                  setState(() {
-                    _locationExpansionContent[key] = !isExpanded;
-                  });
-                }),
-                child: Container(
-                  width: double.infinity,
-                  color: Colors.white,
-                  padding: EdgeInsets.fromLTRB(leftPadding, 8, 0, 8),
-                  child: Row(
-                    children: [
-                      Icon(
-                        isExpanded ? Icons.expand_less : Icons.expand_more,
-                        color: Colors.grey[700],
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          display,
-                          style: style,
+              return Builder(
+                  builder: (locConCtx) => InkWell(
+                        onTap: withHeavyTap(() {
+                          if (_tryHelpTap(
+                              CollectionsHelpTargetId
+                                  .contentLocationGroupHeader,
+                              locConCtx)) return;
+                          triggerHeavyHaptic();
+                          setState(() {
+                            _locationExpansionContent[key] = !isExpanded;
+                          });
+                        }),
+                        child: Container(
+                          width: double.infinity,
+                          color: Colors.white,
+                          padding: EdgeInsets.fromLTRB(leftPadding, 8, 0, 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isExpanded
+                                    ? Icons.expand_less
+                                    : Icons.expand_more,
+                                color: Colors.grey[700],
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  display,
+                                  style: style,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
+                      ));
             } else {
               final group = entry['item'] as GroupedContentItem;
               final pathKey = entry['pathKey'] as String;
@@ -6661,6 +7272,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       );
     }
   }
+
   // --- ADDED: Method to show delete confirmation dialog for content ---
   Future<void> _showDeleteContentConfirmation(GroupedContentItem group) async {
     final mediaItem = group.mediaItem;
@@ -6866,26 +7478,26 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text(
-                  'You can only share experiences you own.')),
+              content: Text('You can only share experiences you own.')),
         );
       }
       return;
     }
 
     final int count = shareableExperiences.length;
-    final String titleText = count == 1
-        ? 'Share Experience'
-        : 'Share $count Experiences';
+    final String titleText =
+        count == 1 ? 'Share Experience' : 'Share $count Experiences';
 
     await showShareExperienceBottomSheet(
       context: context,
       titleText: titleText,
-      onDirectShare: () => _directShareSelectedExperiences(shareableExperiences),
+      onDirectShare: () =>
+          _directShareSelectedExperiences(shareableExperiences),
       onCreateLink: ({
         required String shareMode,
         required bool giveEditAccess,
-      }) => _createLinkShareForSelectedExperiences(
+      }) =>
+          _createLinkShareForSelectedExperiences(
         shareableExperiences,
         shareMode: shareMode,
         giveEditAccess: giveEditAccess,
@@ -6893,16 +7505,17 @@ class CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
-  Future<void> _directShareSelectedExperiences(List<Experience> experiences) async {
+  Future<void> _directShareSelectedExperiences(
+      List<Experience> experiences) async {
     if (!mounted) return;
-    
+
     final String subjectLabel = experiences.length == 1
         ? experiences.first.name
         : '${experiences.length} experiences';
-    
+
     final ExperienceShareService shareService = ExperienceShareService();
     final bool isMultiple = experiences.length > 1;
-    
+
     final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: subjectLabel,
@@ -6948,7 +7561,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         }
       },
     );
-    
+
     if (!mounted) return;
     if (result != null) {
       showSharedWithFriendsSnackbar(context, result);
@@ -6964,11 +7577,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
     messenger.showSnackBar(
       const SnackBar(content: Text('Creating shareable link...')),
     );
-    
+
     try {
       final ExperienceShareService shareService = ExperienceShareService();
       final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
-      
+
       String url;
       if (experiences.length > 1) {
         url = await shareService.createLinkShareForMultiple(
@@ -6984,10 +7597,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
           grantEdit: giveEditAccess,
         );
       }
-      
+
       if (!mounted) return;
       Navigator.of(context).pop();
-      
+
       final int count = experiences.length;
       final String shareText = count == 1
           ? 'Check out this experience from Plendy! $url'
@@ -7298,6 +7911,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       }
     }
   }
+
   Future<void> _handleBulkDeleteSelectedUserCategories() async {
     final List<UserCategory> selectedCategories = _categories
         .where((category) => _selectedCategoryIds.contains(category.id))
@@ -7736,8 +8350,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     // Count experiences where the color is primary or listed in otherColorCategoryIds
     return _experiences.where((exp) {
       final bool isPrimary = exp.colorCategoryId == category.id;
-      final bool isOther =
-          exp.otherColorCategoryIds.contains(category.id);
+      final bool isOther = exp.otherColorCategoryIds.contains(category.id);
       return isPrimary || isOther;
     }).length;
   }
@@ -7833,20 +8446,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     ),
                 ],
               ),
+            ),
           ),
-        ),
-        Positioned(
-          top: 0,
-          right: 0,
-          child: _buildPrivacyIconToggle(
-            isPrivate: category.isPrivate,
-            isEnabled: canTogglePrivacy,
-            onToggle: () => _toggleColorCategoryPrivacy(category),
-            subjectLabel: 'color category',
-          ),
-        ),
-        if (_isSelectingCategories)
           Positioned(
+            top: 0,
+            right: 0,
+            child: _buildPrivacyIconToggle(
+              isPrivate: category.isPrivate,
+              isEnabled: canTogglePrivacy,
+              onToggle: () => _toggleColorCategoryPrivacy(category),
+              subjectLabel: 'color category',
+              helpTargetId: CollectionsHelpTargetId.colorCategoryPrivacyToggle,
+            ),
+          ),
+          if (_isSelectingCategories)
+            Positioned(
               top: 4,
               left: 4,
               child: Checkbox(
@@ -7918,8 +8532,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               : (isOwnerShared ? 'Shared' : null);
           final bool isSelected =
               _selectedColorCategoryIds.contains(category.id);
-          final bool canTogglePrivacy =
-              _canModifyPrivacy(category.ownerUserId);
+          final bool canTogglePrivacy = _canModifyPrivacy(category.ownerUserId);
 
           final Widget colorDot = Padding(
             padding: const EdgeInsets.only(left: 9.0),
@@ -7971,115 +8584,135 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 )
               : Text('$count ${count == 1 ? "experience" : "experiences"}');
 
-          final Widget popupMenu = PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'Color Category Options',
-            color: Colors.white,
-            onSelected: (String result) {
-              triggerHeavyHaptic();
-              switch (result) {
-                case 'edit':
-                  _showEditSingleColorCategoryModal(category);
-                  break;
-                case 'share':
-                  _showShareColorCategoryBottomSheet(category);
-                  break;
-                case 'remove':
-                  if (permission != null) {
-                    _showRemoveSharedColorCategoryConfirmation(
-                        category, permission);
-                  }
-                  break;
-                case 'delete':
-                  _showDeleteColorCategoryConfirmation(category);
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) {
-              final List<PopupMenuEntry<String>> items = [
-                PopupMenuItem<String>(
-                  value: 'edit',
-                  enabled: canEditCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.edit_outlined),
-                    title: Text('Edit'),
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'share',
-                  enabled: canManageCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.share_outlined, color: Colors.blue),
-                    title: Text('Share', style: TextStyle(color: Colors.blue)),
-                  ),
-                ),
-              ];
-              if (isShared && permission != null) {
-                items.add(
-                  const PopupMenuItem<String>(
-                    value: 'remove',
-                    child: ListTile(
-                      leading: Icon(Icons.remove_circle_outline,
-                          color: Colors.red),
-                      title: Text('Remove', style: TextStyle(color: Colors.red)),
-                    ),
-                  ),
-                );
-              } else {
-                items.add(
-                  PopupMenuItem<String>(
-                    value: 'delete',
-                    enabled: canManageCategory,
-                    child: const ListTile(
-                      leading: Icon(Icons.delete_outline, color: Colors.red),
-                      title: Text('Delete', style: TextStyle(color: Colors.red)),
-                    ),
-                  ),
-                );
-              }
-              return items;
-            },
-          );
+          final Widget popupMenu = Builder(
+              builder: (ccMenuCtx) => _isHelpMode
+                  ? IconButton(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Color Category Options',
+                      onPressed: () => _tryHelpTap(
+                          CollectionsHelpTargetId.colorCategoryOptionsMenu,
+                          ccMenuCtx),
+                    )
+                  : PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Color Category Options',
+                      color: Colors.white,
+                      onSelected: (String result) {
+                        triggerHeavyHaptic();
+                        switch (result) {
+                          case 'edit':
+                            _showEditSingleColorCategoryModal(category);
+                            break;
+                          case 'share':
+                            _showShareColorCategoryBottomSheet(category);
+                            break;
+                          case 'remove':
+                            if (permission != null) {
+                              _showRemoveSharedColorCategoryConfirmation(
+                                  category, permission);
+                            }
+                            break;
+                          case 'delete':
+                            _showDeleteColorCategoryConfirmation(category);
+                            break;
+                        }
+                      },
+                      itemBuilder: (BuildContext context) {
+                        final List<PopupMenuEntry<String>> items = [
+                          PopupMenuItem<String>(
+                            value: 'edit',
+                            enabled: canEditCategory,
+                            child: const ListTile(
+                              leading: Icon(Icons.edit_outlined),
+                              title: Text('Edit'),
+                            ),
+                          ),
+                          PopupMenuItem<String>(
+                            value: 'share',
+                            enabled: canManageCategory,
+                            child: const ListTile(
+                              leading: Icon(Icons.share_outlined,
+                                  color: Colors.blue),
+                              title: Text('Share',
+                                  style: TextStyle(color: Colors.blue)),
+                            ),
+                          ),
+                        ];
+                        if (isShared && permission != null) {
+                          items.add(
+                            const PopupMenuItem<String>(
+                              value: 'remove',
+                              child: ListTile(
+                                leading: Icon(Icons.remove_circle_outline,
+                                    color: Colors.red),
+                                title: Text('Remove',
+                                    style: TextStyle(color: Colors.red)),
+                              ),
+                            ),
+                          );
+                        } else {
+                          items.add(
+                            PopupMenuItem<String>(
+                              value: 'delete',
+                              enabled: canManageCategory,
+                              child: const ListTile(
+                                leading: Icon(Icons.delete_outline,
+                                    color: Colors.red),
+                                title: Text('Delete',
+                                    style: TextStyle(color: Colors.red)),
+                              ),
+                            ),
+                          );
+                        }
+                        return items;
+                      },
+                    ));
 
-          final listTile = ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
-            minLeadingWidth: 24,
-            leading: leadingWidget,
-            title: Text(
-              category.name,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: subtitleWidget,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildPrivacyIconToggle(
-                  isPrivate: category.isPrivate,
-                  isEnabled: canTogglePrivacy,
-                  onToggle: () => _toggleColorCategoryPrivacy(category),
-                  subjectLabel: 'color category',
-                ),
-                const SizedBox(width: 4),
-                popupMenu,
-              ],
-            ),
-            onTap: withHeavyTap(() {
-              triggerHeavyHaptic();
-              setState(() {
-                if (_isSelectingCategories) {
-                  if (isSelected) {
-                    _selectedColorCategoryIds.remove(category.id);
-                  } else {
-                    _selectedColorCategoryIds.add(category.id);
-                  }
-                } else {
-                  _selectedColorCategory = category;
-                  _showingColorCategories = true;
-                  _selectedCategory = null;
-                }
-              });
-            }),
-          );
+          final listTile = Builder(
+              builder: (ccRowCtx) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
+                    minLeadingWidth: 24,
+                    leading: leadingWidget,
+                    title: Text(
+                      category.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: subtitleWidget,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildPrivacyIconToggle(
+                          isPrivate: category.isPrivate,
+                          isEnabled: canTogglePrivacy,
+                          onToggle: () => _toggleColorCategoryPrivacy(category),
+                          subjectLabel: 'color category',
+                          helpTargetId: CollectionsHelpTargetId
+                              .colorCategoryPrivacyToggle,
+                        ),
+                        const SizedBox(width: 4),
+                        popupMenu,
+                      ],
+                    ),
+                    onTap: withHeavyTap(() {
+                      if (_tryHelpTap(
+                          CollectionsHelpTargetId.colorCategoryRow, ccRowCtx))
+                        return;
+                      triggerHeavyHaptic();
+                      setState(() {
+                        if (_isSelectingCategories) {
+                          if (isSelected) {
+                            _selectedColorCategoryIds.remove(category.id);
+                          } else {
+                            _selectedColorCategoryIds.add(category.id);
+                          }
+                        } else {
+                          _selectedColorCategory = category;
+                          _showingColorCategories = true;
+                          _selectedCategory = null;
+                        }
+                      });
+                    }),
+                  ));
           return ReorderableDelayedDragStartListener(
             key: ValueKey(category.id),
             index: index,
@@ -8112,13 +8745,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
       );
     }
   }
+
   // --- ADDED: Builder for Color Category List --- END ---
   // --- ADDED: Widget to display experiences for a specific color category --- START ---
   Widget _buildColorCategoryExperiencesList(ColorCategory category) {
     final categoryExperiences = _experiences.where((exp) {
       final bool isPrimary = exp.colorCategoryId == category.id;
-      final bool isOther =
-          exp.otherColorCategoryIds.contains(category.id);
+      final bool isOther = exp.otherColorCategoryIds.contains(category.id);
       return isPrimary || isOther;
     }).toList(); // Filter experiences by colorCategoryId or otherColorCategoryIds
 
@@ -8141,17 +8774,20 @@ class CollectionsScreenState extends State<CollectionsScreen>
           padding: const EdgeInsets.all(8.0),
           child: Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: 'Back to Color Categories',
-                onPressed: () {
-                  triggerHeavyHaptic();
-                  setState(() {
-                    _selectedColorCategory =
-                        null; // Go back to color category list
-                  });
-                },
-              ),
+              Builder(
+                  builder: (ccBackCtx) => IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: 'Back to Color Categories',
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              CollectionsHelpTargetId.colorCategoryDetailBack,
+                              ccBackCtx)) return;
+                          triggerHeavyHaptic();
+                          setState(() {
+                            _selectedColorCategory = null;
+                          });
+                        },
+                      )),
               const SizedBox(width: 8),
               Expanded(
                 child: Builder(builder: (context) {
@@ -8209,13 +8845,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   );
                 }),
               ),
-              Builder(builder: (context) {
+              Builder(builder: (ccDetOptCtx) {
                 final SharePermission? permission =
                     _sharedCategoryPermissions[category.id];
                 final bool isShared = permission != null;
                 final bool canEditCategory = !isShared ||
                     permission.accessLevel == ShareAccessLevel.edit;
                 final bool canManageCategory = !isShared;
+                if (_isHelpMode) {
+                  return IconButton(
+                    icon: const Icon(Icons.more_vert),
+                    tooltip: 'Color Category Options',
+                    onPressed: () => _tryHelpTap(
+                        CollectionsHelpTargetId.colorCategoryDetailOptions,
+                        ccDetOptCtx),
+                  );
+                }
                 return PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
                   tooltip: 'Color Category Options',
@@ -8249,7 +8894,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       enabled: canManageCategory,
                       child: const ListTile(
                         leading: Icon(Icons.share_outlined, color: Colors.blue),
-                        title: Text('Share', style: TextStyle(color: Colors.blue)),
+                        title:
+                            Text('Share', style: TextStyle(color: Colors.blue)),
                       ),
                     ),
                     PopupMenuItem<String>(
@@ -8568,8 +9214,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
         final bool matchesPrimaryColor = exp.colorCategoryId != null &&
             _selectedColorCategoryIds.contains(exp.colorCategoryId);
-        final bool matchesOtherColor = exp.otherColorCategoryIds.any(
-            (colorId) => _selectedColorCategoryIds.contains(colorId));
+        final bool matchesOtherColor = exp.otherColorCategoryIds
+            .any((colorId) => _selectedColorCategoryIds.contains(colorId));
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             matchesPrimaryColor ||
             matchesOtherColor;
@@ -8714,32 +9360,32 @@ class CollectionsScreenState extends State<CollectionsScreen>
     if (isTikTokUrl) {
       mediaDisplayWidget = kIsWeb
           ? WebMediaPreviewCard(
-            url: mediaPath,
-            experienceName: group.associatedExperiences.isNotEmpty 
-              ? group.associatedExperiences.first.name 
-              : null,
-            onOpenPressed: () => _launchUrl(mediaPath),
-          )
+              url: mediaPath,
+              experienceName: group.associatedExperiences.isNotEmpty
+                  ? group.associatedExperiences.first.name
+                  : null,
+              onOpenPressed: () => _launchUrl(mediaPath),
+            )
           : TikTokPreviewWidget(
-        url: mediaPath,
-        launchUrlCallback: _launchUrl,
-      );
+              url: mediaPath,
+              launchUrlCallback: _launchUrl,
+            );
     } else if (isInstagramUrl) {
       mediaDisplayWidget = kIsWeb
           ? WebMediaPreviewCard(
-            url: mediaPath,
-            experienceName: group.associatedExperiences.isNotEmpty 
-              ? group.associatedExperiences.first.name 
-              : null,
-            onOpenPressed: () => _launchUrl(mediaPath),
-          )
+              url: mediaPath,
+              experienceName: group.associatedExperiences.isNotEmpty
+                  ? group.associatedExperiences.first.name
+                  : null,
+              onOpenPressed: () => _launchUrl(mediaPath),
+            )
           : instagram_widget.InstagramWebView(
-        url: mediaPath,
-        height: 640.0, // Height for InstagramWebView
-        launchUrlCallback: _launchUrl,
-        onWebViewCreated: (_) {},
-        onPageFinished: (_) {},
-      );
+              url: mediaPath,
+              height: 640.0, // Height for InstagramWebView
+              launchUrlCallback: _launchUrl,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+            );
       if (kIsWeb) {
         mediaDisplayWidget = Center(
           child: ConstrainedBox(
@@ -8750,50 +9396,52 @@ class CollectionsScreenState extends State<CollectionsScreen>
       }
     } else if (isFacebookUrl) {
       // Use taller height for Facebook Reels
-      final isReel = mediaPath.contains('/reel/') || mediaPath.contains('/reels/');
+      final isReel =
+          mediaPath.contains('/reel/') || mediaPath.contains('/reels/');
       final facebookHeight = isReel ? 700.0 : 500.0;
 
       mediaDisplayWidget = kIsWeb
           ? WebMediaPreviewCard(
-            url: mediaPath,
-            experienceName: group.associatedExperiences.isNotEmpty
-              ? group.associatedExperiences.first.name
-              : null,
-            onOpenPressed: () => _launchUrl(mediaPath),
-          )
+              url: mediaPath,
+              experienceName: group.associatedExperiences.isNotEmpty
+                  ? group.associatedExperiences.first.name
+                  : null,
+              onOpenPressed: () => _launchUrl(mediaPath),
+            )
           : FacebookPreviewWidget(
-        url: mediaPath,
-        height: facebookHeight, // Height for FacebookPreviewWidget
-        launchUrlCallback: _launchUrl,
-        onWebViewCreated: (_) {},
-        onPageFinished: (_) {},
-      );
+              url: mediaPath,
+              height: facebookHeight, // Height for FacebookPreviewWidget
+              launchUrlCallback: _launchUrl,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+            );
     } else if (isYouTubeUrl) {
       mediaDisplayWidget = kIsWeb
           ? WebMediaPreviewCard(
-            url: mediaPath,
-            experienceName: group.associatedExperiences.isNotEmpty 
-              ? group.associatedExperiences.first.name 
-              : null,
-            onOpenPressed: () => _launchUrl(mediaPath),
-          )
+              url: mediaPath,
+              experienceName: group.associatedExperiences.isNotEmpty
+                  ? group.associatedExperiences.first.name
+                  : null,
+              onOpenPressed: () => _launchUrl(mediaPath),
+            )
           : YouTubePreviewWidget(
-        url: mediaPath,
-        launchUrlCallback: _launchUrl,
-      );
+              url: mediaPath,
+              launchUrlCallback: _launchUrl,
+            );
     } else if (isTicketmasterUrl) {
       // First check if we have cached data in the SharedMediaItem
-      final hasCachedData = mediaItem.ticketmasterEventName != null || 
-                            mediaItem.ticketmasterImageUrl != null;
-      
+      final hasCachedData = mediaItem.ticketmasterEventName != null ||
+          mediaItem.ticketmasterImageUrl != null;
+
       // Only load from API if we don't have cached data
       if (!hasCachedData) {
         _queueTicketmasterDetailsLoad(mediaPath);
       }
-      
+
       final details = _ticketmasterEventDetails[mediaPath];
-      final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(mediaPath);
-      
+      final isLoading =
+          !hasCachedData && _ticketmasterUrlsLoading.contains(mediaPath);
+
       // Prefer cached data from SharedMediaItem, fall back to API data
       mediaDisplayWidget = TicketmasterPreviewWidget(
         ticketmasterUrl: mediaPath,
@@ -8898,25 +9546,29 @@ class CollectionsScreenState extends State<CollectionsScreen>
     required String mediaPath,
     required bool isExpanded,
   }) {
-    return Tooltip(
-      message: isExpanded ? 'Hide preview' : 'Show preview',
-      child: GestureDetector(
-        onTap: withHeavyTap(() {
-          triggerHeavyHaptic();
-          _toggleContentPreview(mediaPath);
-        }),
-        child: CircleAvatar(
-          radius: 18,
-          backgroundColor: Theme.of(context).primaryColor,
-          child: Icon(
-            isExpanded ? Icons.stop : Icons.play_arrow,
-            size: 20,
-            color: Colors.white,
-          ),
-        ),
-      ),
-    );
+    return Builder(
+        builder: (prevToggleCtx) => Tooltip(
+              message: isExpanded ? 'Hide preview' : 'Show preview',
+              child: GestureDetector(
+                onTap: withHeavyTap(() {
+                  if (_tryHelpTap(CollectionsHelpTargetId.contentPreviewToggle,
+                      prevToggleCtx)) return;
+                  triggerHeavyHaptic();
+                  _toggleContentPreview(mediaPath);
+                }),
+                child: CircleAvatar(
+                  radius: 18,
+                  backgroundColor: Theme.of(context).primaryColor,
+                  child: Icon(
+                    isExpanded ? Icons.stop : Icons.play_arrow,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ));
   }
+
   Widget _buildContentListItem(GroupedContentItem group, int index) {
     final mediaItem = group.mediaItem;
     final String mediaPath = mediaItem.path;
@@ -8950,17 +9602,23 @@ class CollectionsScreenState extends State<CollectionsScreen>
       required VoidCallback? onTap,
       Color? backgroundColor,
     }) {
-      return Tooltip(
-        message: tooltip,
-        child: GestureDetector(
-          onTap: withHeavyTap(onTap),
-          child: CircleAvatar(
-            radius: 18,
-            backgroundColor: backgroundColor ?? Colors.white,
-            child: icon,
-          ),
-        ),
-      );
+      return Builder(
+          builder: (actionCtx) => Tooltip(
+                message: tooltip,
+                child: GestureDetector(
+                  onTap: withHeavyTap(() {
+                    if (_tryHelpTap(
+                        CollectionsHelpTargetId.contentExternalOpen, actionCtx))
+                      return;
+                    onTap?.call();
+                  }),
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: backgroundColor ?? Colors.white,
+                    child: icon,
+                  ),
+                ),
+              ));
     }
 
     Widget? actionButton;
@@ -9056,9 +9714,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
         mediaWidget = kIsWeb
             ? WebMediaPreviewCard(
                 url: mediaPath,
-                experienceName: group.associatedExperiences.isNotEmpty 
-                  ? group.associatedExperiences.first.name 
-                  : null,
+                experienceName: group.associatedExperiences.isNotEmpty
+                    ? group.associatedExperiences.first.name
+                    : null,
                 onOpenPressed: () => _launchUrl(mediaPath),
               )
             : TikTokPreviewWidget(
@@ -9069,9 +9727,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
         mediaWidget = kIsWeb
             ? WebMediaPreviewCard(
                 url: mediaPath,
-                experienceName: group.associatedExperiences.isNotEmpty 
-                  ? group.associatedExperiences.first.name 
-                  : null,
+                experienceName: group.associatedExperiences.isNotEmpty
+                    ? group.associatedExperiences.first.name
+                    : null,
                 onOpenPressed: () => _launchUrl(mediaPath),
               )
             : instagram_widget.InstagramWebView(
@@ -9093,9 +9751,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
         mediaWidget = kIsWeb
             ? WebMediaPreviewCard(
                 url: mediaPath,
-                experienceName: group.associatedExperiences.isNotEmpty 
-                  ? group.associatedExperiences.first.name 
-                  : null,
+                experienceName: group.associatedExperiences.isNotEmpty
+                    ? group.associatedExperiences.first.name
+                    : null,
                 onOpenPressed: () => _launchUrl(mediaPath),
               )
             : FacebookPreviewWidget(
@@ -9109,9 +9767,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
         mediaWidget = kIsWeb
             ? WebMediaPreviewCard(
                 url: mediaPath,
-                experienceName: group.associatedExperiences.isNotEmpty 
-                  ? group.associatedExperiences.first.name 
-                  : null,
+                experienceName: group.associatedExperiences.isNotEmpty
+                    ? group.associatedExperiences.first.name
+                    : null,
                 onOpenPressed: () => _launchUrl(mediaPath),
               )
             : YouTubePreviewWidget(
@@ -9120,17 +9778,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
               );
       } else if (isTicketmasterUrl) {
         // First check if we have cached data in the SharedMediaItem
-        final hasCachedData = mediaItem.ticketmasterEventName != null || 
-                              mediaItem.ticketmasterImageUrl != null;
-        
+        final hasCachedData = mediaItem.ticketmasterEventName != null ||
+            mediaItem.ticketmasterImageUrl != null;
+
         // Only load from API if we don't have cached data
         if (!hasCachedData) {
           _queueTicketmasterDetailsLoad(mediaPath);
         }
-        
+
         final details = _ticketmasterEventDetails[mediaPath];
-        final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(mediaPath);
-        
+        final isLoading =
+            !hasCachedData && _ticketmasterUrlsLoading.contains(mediaPath);
+
         // Prefer cached data from SharedMediaItem, fall back to API data
         mediaWidget = TicketmasterPreviewWidget(
           ticketmasterUrl: mediaPath,
@@ -9198,7 +9857,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
           color: Colors.grey[300],
           height: 150,
           child: Center(
-              child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
+              child:
+                  Icon(Icons.description, color: Colors.grey[700], size: 40)),
         );
       }
     }
@@ -9228,31 +9888,39 @@ class CollectionsScreenState extends State<CollectionsScreen>
           if (associatedExperiences.isNotEmpty)
             Positioned(
               right: showPrivacyToggle ? 48 : 0,
-                child: Tooltip(
-                  message: 'Share',
-                  child: GestureDetector(
-                  onTap: withHeavyTap(() {
-                    triggerHeavyHaptic();
-                    _shareContentItem(group);
-                  }),
-                  child: const Icon(
-                    Icons.share_outlined,
-                    color: Colors.blue,
-                    size: 22,
-                  ),
-                ),
-              ),
+              child: Builder(
+                  builder: (shareContentCtx) => Tooltip(
+                        message: 'Share',
+                        child: GestureDetector(
+                          onTap: withHeavyTap(() {
+                            if (_tryHelpTap(
+                                CollectionsHelpTargetId.contentShare,
+                                shareContentCtx)) return;
+                            triggerHeavyHaptic();
+                            _shareContentItem(group);
+                          }),
+                          child: const Icon(
+                            Icons.share_outlined,
+                            color: Colors.blue,
+                            size: 22,
+                          ),
+                        ),
+                      )),
             ),
           if (showPrivacyToggle)
             Positioned(
               right: 0,
-              child: PrivacyToggleButton(
-                isPrivate: group.mediaItem.isPrivate,
-                showLabel: false,
-                onPressed: () {
-                  _toggleGroupedContentPrivacy(group);
-                },
-              ),
+              child: Builder(
+                  builder: (privBtnCtx) => PrivacyToggleButton(
+                        isPrivate: group.mediaItem.isPrivate,
+                        showLabel: false,
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              CollectionsHelpTargetId.contentPrivacyToggle,
+                              privBtnCtx)) return;
+                          _toggleGroupedContentPrivacy(group);
+                        },
+                      )),
             ),
         ],
       ),
@@ -9336,52 +10004,61 @@ class CollectionsScreenState extends State<CollectionsScreen>
                               final category = _categories.firstWhereOrNull(
                                   (cat) => cat.id == exp.categoryId);
                               final categoryIcon = category?.icon ?? '?';
-                              final colorCategory = _colorCategories
-                                  .firstWhereOrNull(
+                              final colorCategory =
+                                  _colorCategories.firstWhereOrNull(
                                       (cc) => cc.id == exp.colorCategoryId);
                               final color = colorCategory != null
                                   ? _parseColor(colorCategory.colorHex)
                                   : Theme.of(context).disabledColor;
 
-                              return InkWell(
-                                onTap: withHeavyTap(() {
-                                  triggerHeavyHaptic();
-                                  _openExperience(exp);
-                                }),
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 4.0),
-                                  child: Row(
-                                    children: [
-                                      Text(categoryIcon,
-                                          style: const TextStyle(fontSize: 16)),
-                                      const SizedBox(width: 6),
-                                      if (colorCategory != null)
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(right: 6.0),
-                                          child: Icon(Icons.circle,
-                                              color: color, size: 10),
+                              return Builder(
+                                  builder: (linkedExpCtx) => InkWell(
+                                        onTap: withHeavyTap(() {
+                                          if (_tryHelpTap(
+                                              CollectionsHelpTargetId
+                                                  .contentLinkedExperience,
+                                              linkedExpCtx)) return;
+                                          triggerHeavyHaptic();
+                                          _openExperience(exp);
+                                        }),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 4.0),
+                                          child: Row(
+                                            children: [
+                                              Text(categoryIcon,
+                                                  style: const TextStyle(
+                                                      fontSize: 16)),
+                                              const SizedBox(width: 6),
+                                              if (colorCategory != null)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          right: 6.0),
+                                                  child: Icon(Icons.circle,
+                                                      color: color, size: 10),
+                                                ),
+                                              Expanded(
+                                                child: Text(
+                                                  exp.name,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              const Icon(Icons.chevron_right,
+                                                  color: Colors.grey, size: 18),
+                                            ],
+                                          ),
                                         ),
-                                      Expanded(
-                                        child: Text(
-                                          exp.name,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      const Icon(Icons.chevron_right,
-                                          color: Colors.grey, size: 18),
-                                    ],
-                                  ),
-                                ),
-                              );
+                                      ));
                             }),
                             if (associatedExperiences.isEmpty)
                               const Text('No linked experiences.',
-                                  style: TextStyle(fontStyle: FontStyle.italic)),
+                                  style:
+                                      TextStyle(fontStyle: FontStyle.italic)),
                           ],
                         ),
                       ),
@@ -9391,8 +10068,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           if (actionButton != null) actionButton,
-                          if (actionButton != null)
-                            const SizedBox(width: 8.0),
+                          if (actionButton != null) const SizedBox(width: 8.0),
                           _buildContentPreviewToggleButton(
                             mediaPath: mediaPath,
                             isExpanded: isExpanded,
@@ -9422,7 +10098,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     await showShareExperienceBottomSheet(
       context: context,
-      onDirectShare: () => _directShareContentItem(experience, highlightedMediaUrl),
+      onDirectShare: () =>
+          _directShareContentItem(experience, highlightedMediaUrl),
       onCreateLink: ({
         required String shareMode,
         required bool giveEditAccess,
@@ -9506,7 +10183,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final String mediaId = group.mediaItem.id;
     if (mediaId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This content item cannot be updated yet.')),
+        const SnackBar(
+            content: Text('This content item cannot be updated yet.')),
       );
       return;
     }
@@ -9580,8 +10258,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (newIsPrivate) {
         if (otherHasPublic) return;
         for (final placeId in placeIds) {
-          await _experienceService
-              .removeMediaPathFromPublicExperienceByPlaceId(placeId, mediaPath);
+          await _experienceService.removeMediaPathFromPublicExperienceByPlaceId(
+              placeId, mediaPath);
         }
       } else {
         if (otherHasPublic) return;
@@ -9778,7 +10456,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
             print(
                 '[Perf][Collections] sharedMediaItems fetch (${allMediaItemIds.length} ids) took ${ms}ms');
             if (ms > 3000) {
-              print('[Perf][Collections] WARNING: Media fetch is slow (${ms}ms for ${allMediaItemIds.length} items). Consider pagination.');
+              print(
+                  '[Perf][Collections] WARNING: Media fetch is slow (${ms}ms for ${allMediaItemIds.length} items). Consider pagination.');
             }
           }
 
@@ -10021,6 +10700,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           '_refreshSharedExperiencesFromCategories: Error refreshing shared experiences: $e');
     }
   }
+
   /// Fetch a paginated set of experiences based on current sort type
   Future<void> _loadExperiencesPage({bool isInitialLoad = false}) async {
     if (_isLoadingMoreExperiences && !isInitialLoad) return;
@@ -10070,7 +10750,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       final int pageLimit = requiresClientSort ? 500 : _experiencesPageSize;
 
       List<Experience> ownedExperiences = [];
-      
+
       // Only fetch owned experiences on initial load
       if (isInitialLoad) {
         final expSw = Stopwatch()..start();
@@ -10079,7 +10759,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
           limit: 0, // No limit - load all owned experiences
         );
         expSw.stop();
-        print('[Perf][Collections] getExperiencesByUser took ${expSw.elapsedMilliseconds}ms for ${ownedExperiences.length} experiences');
+        print(
+            '[Perf][Collections] getExperiencesByUser took ${expSw.elapsedMilliseconds}ms for ${ownedExperiences.length} experiences');
       }
 
       // Fetch paginated shared experiences with server-side sorting
@@ -10099,8 +10780,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
         setState(() {
           if (isInitialLoad) {
             // First load: combine owned + first page of shared
-            final combinedExperiences = _combineExperiencesWithShared(ownedExperiences);
-            
+            final combinedExperiences =
+                _combineExperiencesWithShared(ownedExperiences);
+
             // Add shared experiences to combined list
             final Map<String, Experience> experienceMap = {
               for (final exp in combinedExperiences) exp.id: exp
@@ -10115,7 +10797,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               currentCategoryIds,
               currentColorCategoryIds,
             );
-            
+
             _experiences = filteredExperiences;
             _filteredExperiences = List.from(_experiences);
             _lastExperienceDoc = lastDoc;
@@ -10129,14 +10811,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
             for (final exp in sharedExperiences) {
               existing[exp.id] = exp;
             }
-            
+
             final allExperiences = existing.values.toList();
             final filteredExperiences = _filterExperiencesWithAssignments(
               allExperiences,
               currentCategoryIds,
               currentColorCategoryIds,
             );
-            
+
             _experiences = filteredExperiences;
             _filteredExperiences = List.from(_experiences);
             _lastExperienceDoc = lastDoc;
@@ -10170,11 +10852,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
         } else if (requiresClientSort && isInitialLoad) {
           // For distance sort, show data first, then calculate distances in background
           _filteredExperiences = List.from(_experiences);
-          print('[Collections] Distance sort: Showing ${_experiences.length} experiences, calculating distances in background...');
+          print(
+              '[Collections] Distance sort: Showing ${_experiences.length} experiences, calculating distances in background...');
           // Calculate distances asynchronously without blocking
           Future.microtask(() async {
-            if (mounted && _experienceSortType == ExperienceSortType.distanceFromMe) {
-              print('[Collections] Starting distance calculation for ${_experiences.length} experiences...');
+            if (mounted &&
+                _experienceSortType == ExperienceSortType.distanceFromMe) {
+              print(
+                  '[Collections] Starting distance calculation for ${_experiences.length} experiences...');
               try {
                 // Sort the main list
                 await _sortExperiencesByDistance(_experiences);
@@ -10183,9 +10868,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     // Create new list instances to force ListView rebuild
                     _experiences = List.from(_experiences);
                     _filteredExperiences = List.from(_experiences);
-                    print('[Collections] Distance sort complete: ${_experiences.length} experiences sorted');
+                    print(
+                        '[Collections] Distance sort complete: ${_experiences.length} experiences sorted');
                   });
-                  print('[Collections] UI updated with distance-sorted experiences');
+                  print(
+                      '[Collections] UI updated with distance-sorted experiences');
                 }
               } catch (e) {
                 print('[Collections] Distance sort failed: $e');
@@ -10198,7 +10885,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         if (_hasActiveFilters) {
           _applyFiltersAndUpdateLists();
         }
-        
+
         print(
             '[Collections] Pagination: ${_experiences.length} total, hasMore=$_hasMoreExperiences');
       }
@@ -10231,51 +10918,52 @@ class CollectionsScreenState extends State<CollectionsScreen>
       // Fire and forget - don't await, let it load in background
       unawaited(_loadGroupedContent());
     }
-    
+
     // Load events for experience banners
     _loadEventsForExperiences(userId);
   }
-  
+
   /// Fetch events and map them to experiences
   Future<void> _loadEventsForExperiences(String userId) async {
     setState(() {
       _isLoadingEvents = true;
     });
-    
+
     try {
       final events = await _eventService.getEventsForUser(userId);
       final now = DateTime.now();
       final Map<String, Event> experienceToEvent = {};
-      
+
       // For each experience, find the earliest upcoming/ongoing event containing it
       for (final experience in _experiences) {
         Event? earliestEvent;
         DateTime? earliestStart;
-        
+
         for (final event in events) {
           // Only consider upcoming or ongoing events
           if (event.endDateTime.isBefore(now)) {
             continue;
           }
-          
+
           // Check if this event contains the experience
           final hasMatch = event.experiences.any((entry) =>
               entry.experienceId.isNotEmpty &&
               entry.experienceId == experience.id);
-          
+
           if (hasMatch) {
-            if (earliestStart == null || event.startDateTime.isBefore(earliestStart)) {
+            if (earliestStart == null ||
+                event.startDateTime.isBefore(earliestStart)) {
               earliestStart = event.startDateTime;
               earliestEvent = event;
             }
           }
         }
-        
+
         if (earliestEvent != null) {
           experienceToEvent[experience.id] = earliestEvent;
         }
       }
-      
+
       if (mounted) {
         setState(() {
           _experienceIdToEvent = experienceToEvent;
@@ -10291,7 +10979,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       }
     }
   }
-  
+
   /// Get the event color (prefer colorHex, fall back to ID-based color)
   Color _getEventColor(Event event) {
     if (event.colorHex != null && event.colorHex!.isNotEmpty) {
@@ -10326,7 +11014,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     }
     return Colors.blue;
   }
-  
+
   /// Open the event editor modal
   Future<void> _openEventEditorForExperience(Event event) async {
     try {
@@ -10406,10 +11094,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
     List<UserCategory>? userCategories,
     List<ColorCategory>? colorCategories,
   }) {
-    final int count = (userCategories?.length ?? 0) + (colorCategories?.length ?? 0);
-    final String titleText = count == 1
-        ? 'Share Category'
-        : 'Share $count Categories';
+    final int count =
+        (userCategories?.length ?? 0) + (colorCategories?.length ?? 0);
+    final String titleText =
+        count == 1 ? 'Share Category' : 'Share $count Categories';
 
     showShareExperienceBottomSheet(
       context: context,
@@ -10421,7 +11109,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       onCreateLink: ({
         required String shareMode,
         required bool giveEditAccess,
-      }) => _createLinkShareForSelectedCategories(
+      }) =>
+          _createLinkShareForSelectedCategories(
         userCategories: userCategories,
         colorCategories: colorCategories,
         giveEditAccess: giveEditAccess,
@@ -10434,20 +11123,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
     List<ColorCategory>? colorCategories,
   }) async {
     if (!mounted) return;
-    
+
     final int userCount = userCategories?.length ?? 0;
     final int colorCount = colorCategories?.length ?? 0;
     final int totalCount = userCount + colorCount;
-    
+
     if (totalCount == 0) return;
-    
+
     final String subjectLabel = totalCount == 1
-        ? (userCategories?.firstOrNull?.name ?? colorCategories?.firstOrNull?.name ?? 'Category')
+        ? (userCategories?.firstOrNull?.name ??
+            colorCategories?.firstOrNull?.name ??
+            'Category')
         : '$totalCount categories';
-    
+
     final CategoryShareService shareService = CategoryShareService();
     final bool isMultiple = totalCount > 1;
-    
+
     final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: subjectLabel,
@@ -10474,7 +11165,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       },
       onSubmitToThreads: (threadIds) async {
         if (isMultiple) {
-          return await shareService.createDirectShareForMultipleCategoriesToThreads(
+          return await shareService
+              .createDirectShareForMultipleCategoriesToThreads(
             userCategories: userCategories ?? [],
             colorCategories: colorCategories ?? [],
             threadIds: threadIds,
@@ -10494,7 +11186,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       },
       onSubmitToNewGroupChat: (participantIds) async {
         if (isMultiple) {
-          return await shareService.createDirectShareForMultipleCategoriesToNewGroupChat(
+          return await shareService
+              .createDirectShareForMultipleCategoriesToNewGroupChat(
             userCategories: userCategories ?? [],
             colorCategories: colorCategories ?? [],
             participantIds: participantIds,
@@ -10505,7 +11198,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
             participantIds: participantIds,
           );
         } else if (colorCount == 1) {
-          return await shareService.createDirectShareForColorCategoryToNewGroupChat(
+          return await shareService
+              .createDirectShareForColorCategoryToNewGroupChat(
             colorCategory: colorCategories!.first,
             participantIds: participantIds,
           );
@@ -10513,7 +11207,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         return DirectShareResult(threadIds: []);
       },
     );
-    
+
     if (!mounted) return;
     if (result != null) {
       showSharedWithFriendsSnackbar(context, result);
@@ -10529,16 +11223,16 @@ class CollectionsScreenState extends State<CollectionsScreen>
     messenger.showSnackBar(
       const SnackBar(content: Text('Creating shareable link...')),
     );
-    
+
     try {
       final CategoryShareService shareService = CategoryShareService();
       final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
       final String accessMode = giveEditAccess ? 'edit' : 'view';
       String url;
-      
+
       final int userCount = userCategories?.length ?? 0;
       final int colorCount = colorCategories?.length ?? 0;
-      
+
       if (userCount + colorCount > 1) {
         // Multiple categories - use bulk share
         url = await shareService.createLinkShareForMultiple(
@@ -10562,10 +11256,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
       } else {
         throw Exception('No categories selected');
       }
-      
+
       if (!mounted) return;
       Navigator.of(context).pop();
-      
+
       final int count = userCount + colorCount;
       final String shareText = count == 1
           ? 'Check out this category from Plendy! $url'
@@ -10636,8 +11330,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
     } else if (widget.colorCategory != null) {
       return allOwned.where((exp) {
         final bool inPrimary = (exp.colorCategoryId == categoryId);
-        final bool inOther =
-            exp.otherColorCategoryIds.contains(categoryId);
+        final bool inOther = exp.otherColorCategoryIds.contains(categoryId);
         return inPrimary || inOther;
       }).toList();
     }
@@ -10680,7 +11373,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       final profile = await _experienceService.getUserProfileById(entry.key);
       final displayName =
           profile?.displayName ?? profile?.username ?? 'Someone';
-      _log('Participant ${entry.key} resolved to "$displayName" with access ${entry.value.accessLevel}');
+      _log(
+          'Participant ${entry.key} resolved to "$displayName" with access ${entry.value.accessLevel}');
       participants.add(_ShareParticipantInfo(
         userId: entry.key,
         displayName: displayName,
@@ -10706,7 +11400,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         widget.userCategory?.id ?? widget.colorCategory?.id ?? '';
     final String? initialOwnerId = _resolveOwnerUserId();
     final String? currentUserId = _firebaseAuth.currentUser?.uid;
-    _log('Loading share access for categoryId=$categoryId ownerId=${initialOwnerId ?? 'null'} currentUserId=${currentUserId ?? 'null'}');
+    _log(
+        'Loading share access for categoryId=$categoryId ownerId=${initialOwnerId ?? 'null'} currentUserId=${currentUserId ?? 'null'}');
 
     if (categoryId.isEmpty) {
       _log('No categoryId available, skipping share access load');
@@ -10737,7 +11432,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 perm.itemId == categoryId &&
                 perm.itemType == ShareableItemType.category)
             .toList();
-        _log('Owner fallback query returned ${permissions.length} record(s) for item $categoryId');
+        _log(
+            'Owner fallback query returned ${permissions.length} record(s) for item $categoryId');
       }
 
       if (permissions.isEmpty) {
@@ -10791,7 +11487,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   perm.itemId == categoryId &&
                   perm.itemType == ShareableItemType.category)
               .toList();
-          _log('Owner fallback query returned ${ownerPermissions.length} record(s)');
+          _log(
+              'Owner fallback query returned ${ownerPermissions.length} record(s)');
           if (ownerPermissions.isNotEmpty) {
             final ownerName = await _fetchOwnerName(fallbackOwnerId);
             final details = await _composeShareDetails(
@@ -10998,7 +11695,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
             }
 
             if (!keepEdit) {
-              final String expPermissionId = '${ownerUserId}_experience_${exp.id}_${participant.userId}';
+              final String expPermissionId =
+                  '${ownerUserId}_experience_${exp.id}_${participant.userId}';
               experienceUpdates.add(_sharingService
                   .updatePermissionAccessLevel(
                 permissionId: expPermissionId,
@@ -11020,7 +11718,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
 
           final List<Future<void>> experienceEdits = [];
           for (final exp in experiences) {
-            final String expPermissionId = '${ownerUserId}_experience_${exp.id}_${participant.userId}';
+            final String expPermissionId =
+                '${ownerUserId}_experience_${exp.id}_${participant.userId}';
 
             // Try to update to edit; if doc is missing, create it
             experienceEdits.add(_sharingService
@@ -11048,7 +11747,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       final ExperienceService experienceService = ExperienceService();
       experienceService.clearCategoryPermissionsCache();
       _sharingService.clearOwnedPermissionsCache();
-      
+
       await _loadShareAccessDetails();
 
       if (!mounted) return;
@@ -11200,11 +11899,12 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 triggerHeavyHaptic();
                 final bool grantEdit = _shareMode == 'edit_access';
                 final String accessMode = grantEdit ? 'edit' : 'view';
-                final String categoryName = widget.userCategory?.name ?? 
-                    widget.colorCategory?.name ?? 'Category';
-                
+                final String categoryName = widget.userCategory?.name ??
+                    widget.colorCategory?.name ??
+                    'Category';
+
                 Navigator.of(context).pop(); // Close the bottom sheet first
-                
+
                 final result = await showShareToFriendsModal(
                   context: context,
                   subjectLabel: categoryName,
@@ -11217,7 +11917,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         accessMode: accessMode,
                       );
                     } else if (widget.colorCategory != null) {
-                      return await shareService.createDirectShareForColorCategory(
+                      return await shareService
+                          .createDirectShareForColorCategory(
                         colorCategory: widget.colorCategory!,
                         toUserIds: recipientIds,
                         accessMode: accessMode,
@@ -11228,13 +11929,15 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   onSubmitToThreads: (threadIds) async {
                     final shareService = CategoryShareService();
                     if (widget.userCategory != null) {
-                      return await shareService.createDirectShareForCategoryToThreads(
+                      return await shareService
+                          .createDirectShareForCategoryToThreads(
                         category: widget.userCategory!,
                         threadIds: threadIds,
                         accessMode: accessMode,
                       );
                     } else if (widget.colorCategory != null) {
-                      return await shareService.createDirectShareForColorCategoryToThreads(
+                      return await shareService
+                          .createDirectShareForColorCategoryToThreads(
                         colorCategory: widget.colorCategory!,
                         threadIds: threadIds,
                         accessMode: accessMode,
@@ -11245,13 +11948,15 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   onSubmitToNewGroupChat: (participantIds) async {
                     final shareService = CategoryShareService();
                     if (widget.userCategory != null) {
-                      return await shareService.createDirectShareForCategoryToNewGroupChat(
+                      return await shareService
+                          .createDirectShareForCategoryToNewGroupChat(
                         category: widget.userCategory!,
                         participantIds: participantIds,
                         accessMode: accessMode,
                       );
                     } else if (widget.colorCategory != null) {
-                      return await shareService.createDirectShareForColorCategoryToNewGroupChat(
+                      return await shareService
+                          .createDirectShareForColorCategoryToNewGroupChat(
                         colorCategory: widget.colorCategory!,
                         participantIds: participantIds,
                         accessMode: accessMode,
@@ -11260,7 +11965,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                     return DirectShareResult(threadIds: []);
                   },
                 );
-                
+
                 if (result != null && context.mounted) {
                   showSharedWithFriendsSnackbar(context, result);
                 }
@@ -11284,15 +11989,17 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                       final bool grantEdit = _shareMode == 'edit_access';
                       final messenger = ScaffoldMessenger.of(context);
                       messenger.showSnackBar(
-                        const SnackBar(content: Text('Creating shareable link...')),
+                        const SnackBar(
+                            content: Text('Creating shareable link...')),
                       );
                       try {
                         final DateTime expiresAt =
                             DateTime.now().add(const Duration(days: 30));
                         final shareService = CategoryShareService();
                         late final String url;
-                        final String categoryName = widget.userCategory?.name ?? 
-                            widget.colorCategory?.name ?? 'category';
+                        final String categoryName = widget.userCategory?.name ??
+                            widget.colorCategory?.name ??
+                            'category';
                         if (widget.userCategory != null) {
                           url = await shareService.createLinkShareForCategory(
                             category: widget.userCategory!,
@@ -11309,17 +12016,19 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         } else {
                           throw Exception('No category provided');
                         }
-                        
+
                         // Clear the permissions cache since we just created a share link
-                        final ExperienceService experienceService = ExperienceService();
+                        final ExperienceService experienceService =
+                            ExperienceService();
                         experienceService.clearCategoryPermissionsCache();
                         _sharingService.clearOwnedPermissionsCache();
-                        
+
                         if (mounted) {
                           Navigator.of(context).pop();
                         }
                         // Open system share sheet directly (consistent with experience share)
-                        await Share.share('Check out my "$categoryName" category on Plendy! $url');
+                        await Share.share(
+                            'Check out my "$categoryName" category on Plendy! $url');
                       } catch (e) {
                         messenger.showSnackBar(
                           SnackBar(
@@ -11551,21 +12260,20 @@ class _BulkShareBottomSheetContentState
                           accessMode: mode,
                           expiresAt: expiresAt,
                         );
-                        
+
                         // Clear the permissions cache since we just created share links
-                        final ExperienceService experienceService = ExperienceService();
+                        final ExperienceService experienceService =
+                            ExperienceService();
                         experienceService.clearCategoryPermissionsCache();
                         SharingService().clearOwnedPermissionsCache();
-                        
+
                         if (!mounted) return;
                         Navigator.of(context).pop();
                         _showShareUrlOptionsLocal(context, url);
                       } catch (e) {
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                              content: Text(
-                                  'Failed to create link: $e')),
+                          SnackBar(content: Text('Failed to create link: $e')),
                         );
                       } finally {
                         if (mounted) setState(() => _creating = false);

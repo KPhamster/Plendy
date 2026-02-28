@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 /// Displays a branded preview for Ticketmaster links.
 ///
@@ -18,6 +19,8 @@ class TicketmasterPreviewWidget extends StatelessWidget {
   final String? venueName;
   final DateTime? eventDate;
   final String? imageUrl;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const TicketmasterPreviewWidget({
     super.key,
@@ -29,7 +32,14 @@ class TicketmasterPreviewWidget extends StatelessWidget {
     this.venueName,
     this.eventDate,
     this.imageUrl,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (onHelpTap != null) return onHelpTap!(id, ctx);
+    return false;
+  }
 
   Future<void> _handleTap(BuildContext context) async {
     final callback = launchUrlCallback;
@@ -129,8 +139,11 @@ class TicketmasterPreviewWidget extends StatelessWidget {
     return Semantics(
       button: true,
       label: 'Tap to open Ticketmaster link',
-      child: InkWell(
-        onTap: withHeavyTap(() => _handleTap(context)),
+      child: Builder(builder: (ctx) => InkWell(
+        onTap: withHeavyTap(() {
+          if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+          _handleTap(ctx);
+        }),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           width: double.infinity,
@@ -408,7 +421,7 @@ class TicketmasterPreviewWidget extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      )),
     );
   }
 }

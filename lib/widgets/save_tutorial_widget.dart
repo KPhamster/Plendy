@@ -76,10 +76,12 @@ List<TextSpan> _buildTutorialFormattedSpans(String text, TextStyle? baseStyle) {
 /// the steps of saving content to Plendy with highlight-and-explain dialogues.
 class SaveTutorialWidget extends StatefulWidget {
   final VoidCallback onComplete;
+  final VoidCallback? onClose;
 
   const SaveTutorialWidget({
     super.key,
     required this.onComplete,
+    this.onClose,
   });
 
   @override
@@ -399,6 +401,12 @@ class _SaveTutorialWidgetState extends State<SaveTutorialWidget>
         toolbarHeight: 40,
         automaticallyImplyLeading: false,
         actions: [
+          if (widget.onClose != null)
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: widget.onClose,
+              tooltip: 'Close',
+            ),
           // Privacy toggle button (mocked)
           Padding(
             padding: const EdgeInsets.only(right: 8),

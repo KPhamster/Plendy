@@ -1,0 +1,4 @@
+enum ReviewsHelpTargetId {
+  helpButton,
+  reviewsList,
+}

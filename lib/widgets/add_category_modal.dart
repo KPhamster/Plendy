@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/models/user_category.dart';
-import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
@@ -215,11 +214,6 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
                           _isPrivate = !_isPrivate;
                         });
                       },
-                    ),
-                    const SizedBox(width: 6),
-                    const PrivacyTooltipIcon(
-                      message:
-                          'Private categories will only be visible to you. Public categories may be surfaced to others wherever your shared experiences reference them.',
                     ),
                   ],
                 ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:typed_data';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 class WebUrlPreviewWidget extends StatefulWidget {
   final String url;
@@ -10,6 +11,8 @@ class WebUrlPreviewWidget extends StatefulWidget {
   final void Function(String url)? onPageFinished;
   final bool showControls;
   final double? height;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const WebUrlPreviewWidget({
     super.key,
@@ -19,6 +22,8 @@ class WebUrlPreviewWidget extends StatefulWidget {
     this.onPageFinished,
     this.showControls = true,
     this.height,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -39,6 +44,11 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
   void dispose() {
     _isDisposed = true;
     super.dispose();
+  }
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
   }
 
   /// Take a screenshot of the current WebView content
@@ -384,8 +394,11 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
               Icon(Icons.public, color: Colors.blue.shade700, size: 16),
               const SizedBox(width: 8),
               Expanded(
-                child: InkWell(
-                  onTap: withHeavyTap(() => widget.launchUrlCallback(widget.url)),
+                child: Builder(builder: (ctx) => InkWell(
+                  onTap: withHeavyTap(() {
+                    if (_helpTap(ReceiveShareHelpTargetId.previewLinkRow, ctx)) return;
+                    widget.launchUrlCallback(widget.url);
+                  }),
                   child: Text(
                     widget.url,
                     style: TextStyle(
@@ -397,7 +410,7 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                ),
+                )),
               ),
             ],
           ),
@@ -416,29 +429,38 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
           ),
           child: Row(
             children: [
-              IconButton(
-                onPressed: refreshWebView,
+              Builder(builder: (ctx) => IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewRefreshButton, ctx)) return;
+                  refreshWebView();
+                },
                 icon: Icon(Icons.refresh, size: 20, color: Colors.blue.shade700),
                 tooltip: 'Refresh Preview',
                 padding: const EdgeInsets.all(8),
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              ),
+              )),
               const Spacer(),
-              IconButton(
-                onPressed: () => widget.launchUrlCallback(widget.url),
+              Builder(builder: (ctx) => IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+                  widget.launchUrlCallback(widget.url);
+                },
                 icon: Icon(Icons.open_in_new, size: 20, color: Colors.blue.shade700),
                 tooltip: 'Open Link',
                 padding: const EdgeInsets.all(8),
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              ),
+              )),
               const Spacer(),
-              IconButton(
-                onPressed: _toggleExpand,
+              Builder(builder: (ctx) => IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewExpandButton, ctx)) return;
+                  _toggleExpand();
+                },
                 icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen, size: 20, color: Colors.blue.shade700),
                 tooltip: _isExpanded ? 'Collapse Preview' : 'Expand Preview',
                 padding: const EdgeInsets.all(8),
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              ),
+              )),
             ],
           ),
         ),

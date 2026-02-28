@@ -9,6 +9,9 @@ import '../models/user_category.dart';
 import '../models/color_category.dart';
 import 'experience_page_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/media_fullscreen_help_content.dart';
+import '../models/media_fullscreen_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class MediaFullscreenScreen extends StatefulWidget {
   final List<SharedMediaItem> mediaItems;
@@ -28,7 +31,8 @@ class MediaFullscreenScreen extends StatefulWidget {
   _MediaFullscreenScreenState createState() => _MediaFullscreenScreenState();
 }
 
-class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
+class _MediaFullscreenScreenState extends State<MediaFullscreenScreen>
+    with TickerProviderStateMixin {
   late PageController _pageController;
   int _currentIndex = 0;
   // State map for expansion
@@ -44,10 +48,18 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
   List<ColorCategory> _userColorCategories = [];
   final bool _isLoadingColorCategories = true;
   // --- ADDED: State for Color Categories --- END ---
+  late final ScreenHelpController<MediaFullscreenHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<MediaFullscreenHelpTargetId>(
+      vsync: this,
+      content: mediaFullscreenHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: MediaFullscreenHelpTargetId.helpButton,
+    );
     _pageController = PageController();
     _localInstagramItems = List<SharedMediaItem>.from(widget.mediaItems);
     _localInstagramItems.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -59,6 +71,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
 
   @override
   void dispose() {
+    _help.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -66,7 +79,8 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
   Future<void> _loadOtherExperienceData() async {
     print("[Fullscreen - _loadOtherExperienceData] Starting...");
     if (!mounted || widget.mediaItems.isEmpty) {
-      print("[Fullscreen - _loadOtherExperienceData] Not mounted or no media items. Aborting.");
+      print(
+          "[Fullscreen - _loadOtherExperienceData] Not mounted or no media items. Aborting.");
       setState(() => _isLoadingOtherExperiences = false);
       return;
     }
@@ -80,7 +94,8 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     final Set<String?> requiredCategoryIds = {};
 
     for (final item in widget.mediaItems) {
-      final otherIds = item.experienceIds.where((id) => id != widget.experience.id).toList();
+      final otherIds =
+          item.experienceIds.where((id) => id != widget.experience.id).toList();
       if (otherIds.isNotEmpty) {
         otherExperienceIds.addAll(otherIds);
       }
@@ -89,8 +104,12 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     Map<String, Experience> fetchedExperiencesById = {};
     if (otherExperienceIds.isNotEmpty) {
       try {
-        final List<Experience?> experienceFutures = await Future.wait(otherExperienceIds.map((id) => widget.experienceService.getExperience(id)).toList());
-        final List<Experience> experiences = experienceFutures.whereType<Experience>().toList();
+        final List<Experience?> experienceFutures = await Future.wait(
+            otherExperienceIds
+                .map((id) => widget.experienceService.getExperience(id))
+                .toList());
+        final List<Experience> experiences =
+            experienceFutures.whereType<Experience>().toList();
         fetchedExperiencesById = {for (var exp in experiences) exp.id: exp};
         for (final exp in experiences) {
           if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
@@ -105,7 +124,8 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     Map<String, UserCategory> categoryLookupMap = {};
     if (requiredCategoryIds.isNotEmpty) {
       try {
-        final List<UserCategory> categories = await widget.experienceService.getUserCategories();
+        final List<UserCategory> categories =
+            await widget.experienceService.getUserCategories();
         categoryLookupMap = {for (var cat in categories) cat.id: cat};
       } catch (e) {
         print("Error fetching user categories: $e");
@@ -113,10 +133,16 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     }
 
     for (final item in widget.mediaItems) {
-      final otherIds = item.experienceIds.where((id) => id != widget.experience.id).toList();
+      final otherIds =
+          item.experienceIds.where((id) => id != widget.experience.id).toList();
       if (otherIds.isNotEmpty) {
-        final associatedExps = otherIds.map((id) => fetchedExperiencesById[id]).where((exp) => exp != null).cast<Experience>().toList();
-        associatedExps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        final associatedExps = otherIds
+            .map((id) => fetchedExperiencesById[id])
+            .where((exp) => exp != null)
+            .cast<Experience>()
+            .toList();
+        associatedExps.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         otherExperiencesMap[item.path] = associatedExps;
       }
     }
@@ -126,7 +152,8 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
         _otherAssociatedExperiences = otherExperiencesMap;
         _fetchedCategories = categoryLookupMap;
         _isLoadingOtherExperiences = false;
-        print("[Fullscreen - _loadOtherExperienceData] Set state: isLoading=false");
+        print(
+            "[Fullscreen - _loadOtherExperienceData] Set state: isLoading=false");
       });
     }
   }
@@ -247,178 +274,208 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
         Navigator.of(context).pop(_didDataChange);
         return false;
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Content'),
-        ),
-        body: PageView.builder(
-          controller: _pageController,
-          itemCount: widget.mediaItems.length,
-          onPageChanged: (index) {
-            setState(() {
-              _currentIndex = index;
-            });
-          },
-          itemBuilder: (context, index) {
-            final item = widget.mediaItems[index];
-            final url = item.path;
-            final otherExperiences = _otherAssociatedExperiences[url] ?? [];
+      child: Stack(
+        children: [
+          Scaffold(
+            appBar: AppBar(
+              title: const Text('Content'),
+              actions: [_help.buildIconButton(inactiveColor: Colors.black87)],
+              bottom: _help.isActive
+                  ? PreferredSize(
+                      preferredSize: const Size.fromHeight(24),
+                      child: _help.buildExitBanner(),
+                    )
+                  : null,
+            ),
+            body: GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(
+                      MediaFullscreenHelpTargetId.mediaViewer, context)
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: widget.mediaItems.length,
+                  onPageChanged: (index) {
+                    setState(() {
+                      _currentIndex = index;
+                    });
+                  },
+                  itemBuilder: (context, index) {
+                    final item = widget.mediaItems[index];
+                    final url = item.path;
+                    final otherExperiences =
+                        _otherAssociatedExperiences[url] ?? [];
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: CircleAvatar(
-                    radius: 14,
-                    backgroundColor:
-                        Theme.of(context).primaryColor.withOpacity(0.8),
-                    child: Text(
-                      '${index + 1}',
-                      style: TextStyle(
-                        fontSize: 14.0,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 2.0,
-                  clipBehavior: Clip.antiAlias,
-                  child: instagram_widget.InstagramWebView(
-                    url: url,
-                    height: (_expansionStates[url] ?? false)
-                        ? 1200.0
-                        : 840.0,
-                    launchUrlCallback: widget.launchUrlCallback,
-                    onWebViewCreated: (controller) {},
-                    onPageFinished: (url) {},
-                  ),
-                ),
-                if (!_isLoadingOtherExperiences && otherExperiences.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12.0, bottom: 4.0),
-                    child: Column(
+                    return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 6.0),
-                          child: Text(
-                            otherExperiences.length == 1
-                                ? 'Also linked to:'
-                                : 'Also linked to (${otherExperiences.length}):',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
-                                ?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
-                                ),
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: CircleAvatar(
+                            radius: 14,
+                            backgroundColor:
+                                Theme.of(context).primaryColor.withOpacity(0.8),
+                            child: Text(
+                              '${index + 1}',
+                              style: TextStyle(
+                                fontSize: 14.0,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
                           ),
                         ),
-                        ...otherExperiences.map((exp) {
-                          final UserCategory? categoryForDisplay = _fetchedCategories[exp.categoryId];
-                          final String categoryIcon = categoryForDisplay?.icon ?? '❓';
-                          final String categoryName = categoryForDisplay?.name ?? 'Uncategorized';
-
-                          return ListTile(
-                            leading: Text(categoryIcon, style: const TextStyle(fontSize: 20)),
-                            title: Text(exp.name),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: withHeavyTap(() async {
-                              print('Tapped on other experience ${exp.name} from fullscreen');
-                              final UserCategory categoryForNavigation = 
-                                  _fetchedCategories[exp.categoryId] ??
-                                  UserCategory(
-                                      id: exp.categoryId ?? '',
-                                      name: 'Uncategorized',
-                                      icon: '❓',
-                                      ownerUserId: ''
-                                  );
-                              final result = await Navigator.push<bool>(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      ExperiencePageScreen(
-                                    experience: exp,
-                                    category:
-                                        categoryForNavigation,
-                                    userColorCategories:
-                                        _userColorCategories,
+                        Card(
+                          margin: EdgeInsets.zero,
+                          elevation: 2.0,
+                          clipBehavior: Clip.antiAlias,
+                          child: instagram_widget.InstagramWebView(
+                            url: url,
+                            height: (_expansionStates[url] ?? false)
+                                ? 1200.0
+                                : 840.0,
+                            launchUrlCallback: widget.launchUrlCallback,
+                            onWebViewCreated: (controller) {},
+                            onPageFinished: (url) {},
+                          ),
+                        ),
+                        if (!_isLoadingOtherExperiences &&
+                            otherExperiences.isNotEmpty)
+                          Padding(
+                            padding:
+                                const EdgeInsets.only(top: 12.0, bottom: 4.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6.0),
+                                  child: Text(
+                                    otherExperiences.length == 1
+                                        ? 'Also linked to:'
+                                        : 'Also linked to (${otherExperiences.length}):',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
+                                        ),
                                   ),
                                 ),
-                              );
-                              if (result == true && mounted) {
-                                _loadOtherExperienceData();
-                              }
-                            }),
-                          );
-                        }),
+                                ...otherExperiences.map((exp) {
+                                  final UserCategory? categoryForDisplay =
+                                      _fetchedCategories[exp.categoryId];
+                                  final String categoryIcon =
+                                      categoryForDisplay?.icon ?? '❓';
+                                  final String categoryName =
+                                      categoryForDisplay?.name ??
+                                          'Uncategorized';
+
+                                  return ListTile(
+                                    leading: Text(categoryIcon,
+                                        style: const TextStyle(fontSize: 20)),
+                                    title: Text(exp.name),
+                                    trailing: const Icon(Icons.chevron_right),
+                                    onTap: withHeavyTap(() async {
+                                      print(
+                                          'Tapped on other experience ${exp.name} from fullscreen');
+                                      final UserCategory categoryForNavigation =
+                                          _fetchedCategories[exp.categoryId] ??
+                                              UserCategory(
+                                                  id: exp.categoryId ?? '',
+                                                  name: 'Uncategorized',
+                                                  icon: '❓',
+                                                  ownerUserId: '');
+                                      final result = await Navigator.push<bool>(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              ExperiencePageScreen(
+                                            experience: exp,
+                                            category: categoryForNavigation,
+                                            userColorCategories:
+                                                _userColorCategories,
+                                          ),
+                                        ),
+                                      );
+                                      if (result == true && mounted) {
+                                        _loadOtherExperienceData();
+                                      }
+                                    }),
+                                  );
+                                }),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 48,
+                          child: Stack(
+                            children: [
+                              Align(
+                                alignment: Alignment.center,
+                                child: IconButton(
+                                  icon: const Icon(FontAwesomeIcons.instagram),
+                                  color: const Color(0xFFE1306C),
+                                  iconSize: 32,
+                                  tooltip: 'Open in Instagram',
+                                  constraints: const BoxConstraints(),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () =>
+                                      widget.launchUrlCallback(url),
+                                ),
+                              ),
+                              Align(
+                                alignment: const Alignment(0.5, 0.0),
+                                child: IconButton(
+                                  icon: Icon((_expansionStates[url] ?? false)
+                                      ? Icons.fullscreen_exit
+                                      : Icons.fullscreen),
+                                  iconSize: 24,
+                                  color: Colors.blue,
+                                  tooltip: (_expansionStates[url] ?? false)
+                                      ? 'Collapse'
+                                      : 'Expand',
+                                  constraints: const BoxConstraints(),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () {
+                                    setState(() {
+                                      _expansionStates[url] =
+                                          !(_expansionStates[url] ?? false);
+                                    });
+                                  },
+                                ),
+                              ),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  iconSize: 24,
+                                  color: Colors.red[700],
+                                  tooltip: 'Delete Media',
+                                  constraints: const BoxConstraints(),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12),
+                                  onPressed: () => _confirmAndDelete(url),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
-                    ),
-                  ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 48,
-                  child: Stack(
-                    children: [
-                      Align(
-                        alignment: Alignment.center,
-                        child: IconButton(
-                          icon: const Icon(FontAwesomeIcons.instagram),
-                          color: const Color(0xFFE1306C),
-                          iconSize: 32,
-                          tooltip: 'Open in Instagram',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
-                          onPressed: () => widget.launchUrlCallback(url),
-                        ),
-                      ),
-                      Align(
-                        alignment: const Alignment(0.5, 0.0),
-                        child: IconButton(
-                          icon: Icon((_expansionStates[url] ?? false)
-                              ? Icons.fullscreen_exit
-                              : Icons.fullscreen),
-                          iconSize: 24,
-                          color: Colors.blue,
-                          tooltip: (_expansionStates[url] ?? false)
-                              ? 'Collapse'
-                              : 'Expand',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets
-                              .zero,
-                          onPressed: () {
-                            setState(() {
-                              _expansionStates[url] =
-                                  !(_expansionStates[url] ?? false);
-                            });
-                          },
-                        ),
-                      ),
-                      Align(
-                        alignment:
-                            Alignment.centerRight,
-                        child: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          iconSize: 24,
-                          color: Colors.red[700],
-                          tooltip: 'Delete Media',
-                          constraints: const BoxConstraints(),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12),
-                          onPressed: () => _confirmAndDelete(url),
-                        ),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-              ],
-            );
-          },
-        ),
+              ),
+            ),
+          ),
+          if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+        ],
       ),
     );
   }

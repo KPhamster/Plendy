@@ -18,6 +18,9 @@ import '../widgets/event_editor_modal.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../screens/map_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/event_experience_selector_help_content.dart';
+import '../models/event_experience_selector_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 /// A reusable full-screen modal for selecting experiences for events.
 ///
@@ -88,8 +91,7 @@ class EventExperienceSelectorScreen extends StatefulWidget {
 }
 
 class _EventExperienceSelectorScreenState
-    extends State<EventExperienceSelectorScreen>
-    with SingleTickerProviderStateMixin {
+    extends State<EventExperienceSelectorScreen> with TickerProviderStateMixin {
   late TabController _tabController;
   int _currentTabIndex = 1;
   late Set<String> _selectedExperienceIds;
@@ -134,6 +136,9 @@ class _EventExperienceSelectorScreenState
   final _authService = AuthService();
   final _experienceService = ExperienceService();
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
+  late final ScreenHelpController<EventExperienceSelectorHelpTargetId> _help;
+  final List<GlobalKey> _tabKeys =
+      List<GlobalKey>.generate(2, (_) => GlobalKey());
 
   bool get _hasActiveFilters =>
       _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
@@ -141,6 +146,13 @@ class _EventExperienceSelectorScreenState
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<EventExperienceSelectorHelpTargetId>(
+      vsync: this,
+      content: eventExperienceSelectorHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: EventExperienceSelectorHelpTargetId.helpButton,
+    );
     _selectedExperienceIds = widget.preSelectedExperienceIds != null
         ? Set.from(widget.preSelectedExperienceIds!)
         : {};
@@ -199,11 +211,18 @@ class _EventExperienceSelectorScreenState
 
   @override
   void dispose() {
+    _help.dispose();
     _tabController.dispose();
     _searchController.dispose();
     _experiencesScrollController.dispose();
     _flashTimer?.cancel();
     super.dispose();
+  }
+
+  EventExperienceSelectorHelpTargetId _helpTargetForTab(int index) {
+    return index == 0
+        ? EventExperienceSelectorHelpTargetId.categoriesTabSwitch
+        : EventExperienceSelectorHelpTargetId.experiencesTabSwitch;
   }
 
   // Helper to parse hex color string
@@ -822,255 +841,354 @@ class _EventExperienceSelectorScreenState
   }
 
   Widget _buildFilterActionButton() {
-    return IconButton(
-      icon: const Icon(Icons.filter_list),
-      tooltip: 'Filter Items',
-      onPressed: _showFilterDialog,
+    return Builder(
+      builder: (filterCtx) => IconButton(
+        icon: const Icon(Icons.filter_list),
+        tooltip: 'Filter Items',
+        onPressed: _help.isActive
+            ? () => _help.tryTap(
+                  EventExperienceSelectorHelpTargetId.filterButton,
+                  filterCtx,
+                )
+            : _showFilterDialog,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title ?? 'Select Experiences for Event'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        actions: [
-          // Map button (only show when there are selected experiences)
-          if (_selectedExperienceIds.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Tooltip(
-                message: 'View selected experiences on map',
-                child: ActionChip(
-                  avatar: Image.asset(
-                    'assets/icon/icon-cropped.png',
-                    height: 18,
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: Text(widget.title ?? 'Select Experiences for Event'),
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            actions: [
+              // Map button (only show when there are selected experiences)
+              if (_selectedExperienceIds.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Tooltip(
+                    message: 'View selected experiences on map',
+                    child: ActionChip(
+                      avatar: Image.asset(
+                        'assets/icon/icon-cropped.png',
+                        height: 18,
+                      ),
+                      label: const SizedBox.shrink(),
+                      labelPadding: EdgeInsets.zero,
+                      onPressed: () => _openMapWithSelectedExperiences(),
+                      tooltip: 'View selected experiences on map',
+                      backgroundColor: Colors.white,
+                      shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.all(4),
+                    ),
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () => _openMapWithSelectedExperiences(),
-                  tooltip: 'View selected experiences on map',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                    side: BorderSide(color: Colors.grey.shade300),
+                ),
+              // Done button
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Builder(
+                  builder: (doneCtx) => ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _selectedExperienceIds.isEmpty
+                          ? Colors.grey.shade300
+                          : Theme.of(context).primaryColor,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                    onPressed: _help.isActive
+                        ? () => _help.tryTap(
+                              EventExperienceSelectorHelpTargetId.doneButton,
+                              doneCtx,
+                            )
+                        : (_selectedExperienceIds.isEmpty
+                            ? null
+                            : () async {
+                                if (widget.returnSelectionOnly) {
+                                  Navigator.of(context)
+                                      .pop(_orderedSelectedExperienceIds());
+                                  return;
+                                }
+                                await _navigateToEditor();
+                              }),
+                    child: Text('Done (${_selectedExperienceIds.length})'),
                   ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
                 ),
               ),
-            ),
-          // Done button
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _selectedExperienceIds.isEmpty
-                    ? Colors.grey.shade300
-                    : Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-              ),
-              onPressed: _selectedExperienceIds.isEmpty
-                  ? null
-                  : () async {
-                      if (widget.returnSelectionOnly) {
-                        Navigator.of(context)
-                            .pop(_orderedSelectedExperienceIds());
-                        return;
-                      }
-                      await _navigateToEditor();
-                    },
-              child: Text('Done (${_selectedExperienceIds.length})'),
-            ),
+              _help.buildIconButton(inactiveColor: Colors.black87),
+            ],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
           ),
-        ],
-      ),
-      body: _isLoading
-          ? Container(
-              color: Colors.white,
-              child: const Center(
-                child: CircularProgressIndicator(color: Colors.black54),
-              ),
-            )
-          : Container(
-              color: Colors.white,
-              child: Column(
-                children: [
-                  // Search Bar
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12.0, vertical: 4.0),
-                    child: Theme(
-                      data: Theme.of(context).copyWith(
-                        cardColor: Colors.white,
-                        canvasColor: Colors.white,
-                        colorScheme: Theme.of(context).colorScheme.copyWith(
-                              surface: Colors.white,
-                            ),
+          body: Builder(
+            builder: (viewCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(
+                        EventExperienceSelectorHelpTargetId.currentView,
+                        viewCtx,
+                      )
+                  : null,
+              child: _isLoading
+                  ? Container(
+                      color: Colors.white,
+                      child: const Center(
+                        child: CircularProgressIndicator(color: Colors.black54),
                       ),
-                      child: TypeAheadField<Experience>(
-                        builder: (context, controller, focusNode) {
-                          if (_clearSearchOnNextBuild) {
-                            controller.clear();
-                            focusNode.unfocus();
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                setState(() {
-                                  _clearSearchOnNextBuild = false;
-                                });
-                              }
-                            });
-                          }
-                          return TextField(
-                            controller: controller,
-                            focusNode: focusNode,
-                            autofocus: false,
-                            decoration: InputDecoration(
-                              labelText: 'Search experiences',
-                              prefixIcon: Icon(Icons.search,
-                                  color: Theme.of(context).primaryColor),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(25.0),
-                              ),
-                              suffixIcon: IconButton(
-                                icon: const Icon(Icons.clear),
-                                tooltip: 'Clear Search',
-                                onPressed: () {
-                                  controller.clear();
-                                  _searchController.clear();
-                                  FocusScope.of(context).unfocus();
-                                },
-                              ),
-                            ),
-                          );
-                        },
-                        suggestionsCallback: (pattern) async {
-                          return await _getExperienceSuggestions(pattern);
-                        },
-                        itemBuilder: (context, suggestion) {
-                          return Container(
-                            color: Colors.white,
-                            child: ListTile(
-                              leading: const Icon(Icons.history),
-                              title: Text(suggestion.name),
-                            ),
-                          );
-                        },
-                        onSelected: (suggestion) async {
-                          await _onExperienceSelectedFromSearch(suggestion);
-                        },
-                        emptyBuilder: (context) => const Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: Text('No experiences found.',
-                              style: TextStyle(color: Colors.grey)),
-                        ),
-                      ),
-                    ),
-                  ),
-                  _buildTopActionRow(),
-                  Container(
-                    color: Colors.white,
-                    child: TabBar(
-                      controller: _tabController,
-                      tabs: const [
-                        Tab(text: 'Categories'),
-                        Tab(text: 'Experiences'),
-                      ],
-                      labelColor: Theme.of(context).primaryColor,
-                      unselectedLabelColor: Colors.grey,
-                      indicatorColor: Theme.of(context).primaryColor,
-                    ),
-                  ),
-                  Expanded(
-                    child: TabBarView(
-                      controller: _tabController,
-                      children: [
-                        // Categories Tab
-                        Container(
-                          color: Colors.white,
-                          child: Column(
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 7.0, vertical: 8.0),
-                                child: Row(
-                                  children: [
-                                    const Expanded(child: SizedBox()),
-                                    Flexible(
-                                      child: Builder(
-                                        builder: (context) {
-                                          final IconData toggleIcon =
-                                              _showingColorCategories
-                                                  ? Icons.category_outlined
-                                                  : Icons.color_lens_outlined;
-                                          final String toggleLabel =
-                                              _showingColorCategories
-                                                  ? 'Categories'
-                                                  : 'Color Categories';
-                                          void onToggle() {
-                                            setState(() {
-                                              _showingColorCategories =
-                                                  !_showingColorCategories;
-                                              _selectedCategory = null;
-                                              _selectedColorCategory = null;
-                                            });
-                                          }
-
-                                          return Align(
-                                            alignment: Alignment.centerRight,
-                                            child: FittedBox(
-                                              fit: BoxFit.scaleDown,
-                                              child: TextButton.icon(
-                                                style: TextButton.styleFrom(
-                                                  visualDensity:
-                                                      const VisualDensity(
-                                                          horizontal: -2,
-                                                          vertical: -2),
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 8.0),
-                                                ),
-                                                icon: Icon(toggleIcon),
-                                                label: Text(toggleLabel),
-                                                onPressed: onToggle,
-                                              ),
+                    )
+                  : Container(
+                      color: Colors.white,
+                      child: Column(
+                        children: [
+                          // Search Bar
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12.0, vertical: 4.0),
+                            child: Builder(
+                              builder: (searchCtx) => GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _help.isActive
+                                    ? () => _help.tryTap(
+                                          EventExperienceSelectorHelpTargetId
+                                              .searchBar,
+                                          searchCtx,
+                                        )
+                                    : null,
+                                child: IgnorePointer(
+                                  ignoring: _help.isActive,
+                                  child: Theme(
+                                    data: Theme.of(context).copyWith(
+                                      cardColor: Colors.white,
+                                      canvasColor: Colors.white,
+                                      colorScheme: Theme.of(context)
+                                          .colorScheme
+                                          .copyWith(
+                                            surface: Colors.white,
+                                          ),
+                                    ),
+                                    child: TypeAheadField<Experience>(
+                                      builder:
+                                          (context, controller, focusNode) {
+                                        if (_clearSearchOnNextBuild) {
+                                          controller.clear();
+                                          focusNode.unfocus();
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            if (mounted) {
+                                              setState(() {
+                                                _clearSearchOnNextBuild = false;
+                                              });
+                                            }
+                                          });
+                                        }
+                                        return TextField(
+                                          controller: controller,
+                                          focusNode: focusNode,
+                                          autofocus: false,
+                                          decoration: InputDecoration(
+                                            labelText: 'Search experiences',
+                                            prefixIcon: Icon(Icons.search,
+                                                color: Theme.of(context)
+                                                    .primaryColor),
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(25.0),
                                             ),
-                                          );
-                                        },
+                                            suffixIcon: IconButton(
+                                              icon: const Icon(Icons.clear),
+                                              tooltip: 'Clear Search',
+                                              onPressed: () {
+                                                controller.clear();
+                                                _searchController.clear();
+                                                FocusScope.of(context)
+                                                    .unfocus();
+                                              },
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      suggestionsCallback: (pattern) async {
+                                        return await _getExperienceSuggestions(
+                                            pattern);
+                                      },
+                                      itemBuilder: (context, suggestion) {
+                                        return Container(
+                                          color: Colors.white,
+                                          child: ListTile(
+                                            leading: const Icon(Icons.history),
+                                            title: Text(suggestion.name),
+                                          ),
+                                        );
+                                      },
+                                      onSelected: (suggestion) async {
+                                        await _onExperienceSelectedFromSearch(
+                                            suggestion);
+                                      },
+                                      emptyBuilder: (context) => const Padding(
+                                        padding: EdgeInsets.all(8.0),
+                                        child: Text('No experiences found.',
+                                            style:
+                                                TextStyle(color: Colors.grey)),
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ),
                               ),
-                              Expanded(
-                                child: _selectedCategory != null
-                                    ? _buildCategoryExperiencesView()
-                                    : _selectedColorCategory != null
-                                        ? _buildColorCategoryExperiencesView()
-                                        : _showingColorCategories
-                                            ? _buildColorCategoriesList()
-                                            : _buildCategoriesList(),
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                        // Experiences Tab
-                        Container(
-                          color: Colors.white,
-                          child: _buildExperiencesListView(),
-                        ),
-                      ],
+                          _buildTopActionRow(),
+                          Container(
+                            color: Colors.white,
+                            child: TabBar(
+                              controller: _tabController,
+                              onTap: (index) {
+                                if (!_help.isActive) return;
+                                final tabCtx = _tabKeys[index].currentContext;
+                                if (tabCtx != null) {
+                                  _help.showTarget(
+                                      _helpTargetForTab(index), tabCtx,
+                                      withHaptic: true);
+                                }
+                                WidgetsBinding.instance
+                                    .addPostFrameCallback((_) {
+                                  if (mounted) {
+                                    _tabController.animateTo(
+                                        _tabController.previousIndex);
+                                  }
+                                });
+                              },
+                              tabs: [
+                                Tab(
+                                  child: Text('Categories', key: _tabKeys[0]),
+                                ),
+                                Tab(
+                                  child: Text('Experiences', key: _tabKeys[1]),
+                                ),
+                              ],
+                              labelColor: Theme.of(context).primaryColor,
+                              unselectedLabelColor: Colors.grey,
+                              indicatorColor: Theme.of(context).primaryColor,
+                            ),
+                          ),
+                          Expanded(
+                            child: IgnorePointer(
+                              ignoring: _help.isActive,
+                              child: TabBarView(
+                                controller: _tabController,
+                                children: [
+                                  // Categories Tab
+                                  Container(
+                                    color: Colors.white,
+                                    child: Column(
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 7.0, vertical: 8.0),
+                                          child: Row(
+                                            children: [
+                                              const Expanded(child: SizedBox()),
+                                              Flexible(
+                                                child: Builder(
+                                                  builder: (context) {
+                                                    final IconData toggleIcon =
+                                                        _showingColorCategories
+                                                            ? Icons
+                                                                .category_outlined
+                                                            : Icons
+                                                                .color_lens_outlined;
+                                                    final String toggleLabel =
+                                                        _showingColorCategories
+                                                            ? 'Categories'
+                                                            : 'Color Categories';
+                                                    void onToggle() {
+                                                      setState(() {
+                                                        _showingColorCategories =
+                                                            !_showingColorCategories;
+                                                        _selectedCategory =
+                                                            null;
+                                                        _selectedColorCategory =
+                                                            null;
+                                                      });
+                                                    }
+
+                                                    return Align(
+                                                      alignment:
+                                                          Alignment.centerRight,
+                                                      child: FittedBox(
+                                                        fit: BoxFit.scaleDown,
+                                                        child: TextButton.icon(
+                                                          style: TextButton
+                                                              .styleFrom(
+                                                            visualDensity:
+                                                                const VisualDensity(
+                                                                    horizontal:
+                                                                        -2,
+                                                                    vertical:
+                                                                        -2),
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                                    horizontal:
+                                                                        8.0),
+                                                          ),
+                                                          icon:
+                                                              Icon(toggleIcon),
+                                                          label:
+                                                              Text(toggleLabel),
+                                                          onPressed: onToggle,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: _selectedCategory != null
+                                              ? _buildCategoryExperiencesView()
+                                              : _selectedColorCategory != null
+                                                  ? _buildColorCategoryExperiencesView()
+                                                  : _showingColorCategories
+                                                      ? _buildColorCategoriesList()
+                                                      : _buildCategoriesList(),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  // Experiences Tab
+                                  Container(
+                                    color: Colors.white,
+                                    child: _buildExperiencesListView(),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
             ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 
@@ -1371,7 +1489,8 @@ class _EventExperienceSelectorScreenState
                 const SizedBox(width: 12),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: withHeavyTap(() => _openExperienceContentPreview(experience)),
+                  onTap: withHeavyTap(
+                      () => _openExperienceContentPreview(experience)),
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [

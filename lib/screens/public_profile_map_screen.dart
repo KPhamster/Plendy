@@ -13,6 +13,9 @@ import '../services/google_maps_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../config/colors.dart';
 import 'experience_page_screen.dart';
+import '../config/public_profile_map_help_content.dart';
+import '../models/public_profile_map_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -49,7 +52,8 @@ class PublicProfileMapScreen extends StatefulWidget {
   State<PublicProfileMapScreen> createState() => _PublicProfileMapScreenState();
 }
 
-class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
+class _PublicProfileMapScreenState extends State<PublicProfileMapScreen>
+    with TickerProviderStateMixin {
   final Completer<GoogleMapController> _mapControllerCompleter = Completer();
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
@@ -66,11 +70,25 @@ class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
   UserCategory? _tappedCategory;
   Marker? _selectedMarker;
   bool _isLoadingMedia = false;
+  late final ScreenHelpController<PublicProfileMapHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<PublicProfileMapHelpTargetId>(
+      vsync: this,
+      content: publicProfileMapHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: PublicProfileMapHelpTargetId.helpButton,
+    );
     _buildMarkers();
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
   }
 
   Future<void> _buildMarkers() async {
@@ -103,11 +121,11 @@ class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
   /// within a reasonable zoom level (max ~50km / 0.5 degrees viewable area).
   LatLng _calculateDensestClusterBounds() {
     final experiences = widget.experiences;
-    
+
     if (experiences.isEmpty) {
       return const LatLng(37.7749, -122.4194);
     }
-    
+
     if (experiences.length == 1) {
       return LatLng(
         experiences.first.location.latitude,
@@ -147,9 +165,9 @@ class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
 
     // Get all experiences within the max view radius of the best center
     final bestCenter = experiences[bestCenterIndex].location;
-    
+
     _clusterExperienceIds.clear();
-    
+
     double clusterMinLat = bestCenter.latitude;
     double clusterMaxLat = bestCenter.latitude;
     double clusterMinLng = bestCenter.longitude;
@@ -332,8 +350,8 @@ class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-                content:
-                    Text('No saved content available yet for this experience.')),
+                content: Text(
+                    'No saved content available yet for this experience.')),
           );
         }
         return;
@@ -583,61 +601,89 @@ class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
         _tappedExperience != null ? _getMediaCount(_tappedExperience!) : 0;
     final bool canPreviewContent = selectedMediaCount > 0;
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      appBar: AppBar(
-        title: Text("${widget.userName}'s Experiences"),
-        backgroundColor: AppColors.backgroundColor,
-        foregroundColor: Colors.black,
-        elevation: 0,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : widget.experiences.isEmpty
-              ? const Center(
-                  child: Text('No experiences to display on the map.'),
-                )
-              : Stack(
-                  children: [
-                    // Map
-                    GoogleMap(
-                      initialCameraPosition: CameraPosition(
-                        target:
-                            _initialCenter ?? const LatLng(37.7749, -122.4194),
-                        zoom: 12.0,
-                      ),
-                      markers: allMarkers,
-                      myLocationEnabled: true,
-                      myLocationButtonEnabled: true,
-                      mapToolbarEnabled: false,
-                      zoomControlsEnabled: true,
-                      onMapCreated: (controller) {
-                        if (!_mapControllerCompleter.isCompleted) {
-                          _mapControllerCompleter.complete(controller);
-                        }
-                        _fitBoundsToMarkers(controller);
-                      },
-                      onTap: (_) => _clearSelection(),
-                    ),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.backgroundColor,
+          appBar: AppBar(
+            title: Text("${widget.userName}'s Experiences"),
+            backgroundColor: AppColors.backgroundColor,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            actions: [_help.buildIconButton(inactiveColor: Colors.black87)],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          body: Builder(
+            builder: (mapCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () =>
+                      _help.tryTap(PublicProfileMapHelpTargetId.mapArea, mapCtx)
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : widget.experiences.isEmpty
+                        ? const Center(
+                            child:
+                                Text('No experiences to display on the map.'),
+                          )
+                        : Stack(
+                            children: [
+                              // Map
+                              GoogleMap(
+                                initialCameraPosition: CameraPosition(
+                                  target: _initialCenter ??
+                                      const LatLng(37.7749, -122.4194),
+                                  zoom: 12.0,
+                                ),
+                                markers: allMarkers,
+                                myLocationEnabled: true,
+                                myLocationButtonEnabled: true,
+                                mapToolbarEnabled: false,
+                                zoomControlsEnabled: true,
+                                onMapCreated: (controller) {
+                                  if (!_mapControllerCompleter.isCompleted) {
+                                    _mapControllerCompleter
+                                        .complete(controller);
+                                  }
+                                  _fitBoundsToMarkers(controller);
+                                },
+                                onTap: (_) => _clearSelection(),
+                              ),
 
-                    // Bottom panel for tapped experience
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOutCubic,
-                      left: 0,
-                      right: 0,
-                      bottom: _tappedExperience != null ? 0 : -300,
-                      child: _tappedExperience != null
-                          ? _buildBottomPanel(
-                              selectedIcon,
-                              selectedName,
-                              selectedMediaCount,
-                              canPreviewContent,
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
-                ),
+                              // Bottom panel for tapped experience
+                              AnimatedPositioned(
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeOutCubic,
+                                left: 0,
+                                right: 0,
+                                bottom: _tappedExperience != null ? 0 : -300,
+                                child: _tappedExperience != null
+                                    ? _buildBottomPanel(
+                                        selectedIcon,
+                                        selectedName,
+                                        selectedMediaCount,
+                                        canPreviewContent,
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            ],
+                          ),
+              ),
+            ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 
@@ -1020,17 +1066,17 @@ class _PublicProfileMapScreenState extends State<PublicProfileMapScreen> {
       } catch (_) {}
     }
 
-    final List<ColorCategory> otherColorCategories = experience
-        .otherColorCategoryIds
-        .map((id) {
-          try {
-            return widget.colorCategories.firstWhere((cc) => cc.id == id);
-          } catch (_) {
-            return null;
-          }
-        })
-        .whereType<ColorCategory>()
-        .toList();
+    final List<ColorCategory> otherColorCategories =
+        experience.otherColorCategoryIds
+            .map((id) {
+              try {
+                return widget.colorCategories.firstWhere((cc) => cc.id == id);
+              } catch (_) {
+                return null;
+              }
+            })
+            .whereType<ColorCategory>()
+            .toList();
 
     if (primaryColorCategory == null && otherColorCategories.isEmpty) {
       return const SizedBox.shrink();

@@ -4,6 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 /// Data extracted from TikTok oEmbed API
 class TikTokOEmbedData {
@@ -39,6 +40,8 @@ class TikTokPreviewWidget extends StatefulWidget {
   final bool showControls;
   final Function(InAppWebViewController)? onWebViewCreated;
   final bool isDiscoveryMode;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const TikTokPreviewWidget({
     super.key,
@@ -50,6 +53,8 @@ class TikTokPreviewWidget extends StatefulWidget {
     this.showControls = true,
     this.onWebViewCreated,
     this.isDiscoveryMode = false,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -67,6 +72,11 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
 
   @override
   bool get wantKeepAlive => true;
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
+  }
 
   @override
   void initState() {
@@ -469,24 +479,30 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const SizedBox(width: 48),
-                IconButton(
+                Builder(builder: (ctx) => IconButton(
                   icon: const FaIcon(FontAwesomeIcons.tiktok),
                   color: Colors.black,
                   iconSize: 32,
                   tooltip: 'Open in TikTok',
                   constraints: const BoxConstraints(),
                   padding: EdgeInsets.zero,
-                  onPressed: () => widget.launchUrlCallback(widget.url),
-                ),
-                IconButton(
+                  onPressed: () {
+                    if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+                    widget.launchUrlCallback(widget.url);
+                  },
+                )),
+                Builder(builder: (ctx) => IconButton(
                   icon: const Icon(Icons.refresh),
                   iconSize: 24,
                   color: Colors.blue,
                   tooltip: 'Refresh',
                   constraints: const BoxConstraints(),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
-                  onPressed: refreshWebView,
-                ),
+                  onPressed: () {
+                    if (_helpTap(ReceiveShareHelpTargetId.previewRefreshButton, ctx)) return;
+                    refreshWebView();
+                  },
+                )),
               ],
             ),
           ),

@@ -37,6 +37,11 @@ import '../widgets/share_experience_bottom_sheet.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../models/map_help_target.dart';
+import '../config/map_help_content.dart';
+import '../widgets/help_bubble.dart';
+import '../widgets/help_spotlight_painter.dart';
+import '../services/help_mode_service.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -116,6 +121,16 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
   final Set<String> _mediaPrefetchInFlight = {};
 
+  // --- Help mode state ---
+  bool _isHelpMode = false;
+  MapHelpTargetId? _activeHelpTarget;
+  int _activeHelpStep = 0;
+  Rect? _activeTargetRect;
+  bool _isHelpTyping = false;
+  final GlobalKey _helpButtonKey = GlobalKey();
+  final GlobalKey<HelpBubbleState> _helpBubbleKey = GlobalKey();
+  late final AnimationController _spotlightController;
+
   // ADDED: State for selected filters
   Set<String> _selectedCategoryIds = {}; // Empty set means no filter
   Set<String> _selectedColorCategoryIds = {}; // Empty set means no filter
@@ -167,7 +182,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   bool _isSearching = false;
-  bool _isReturningFromNavigation = false; // Track navigation return to disable search
+  bool _isReturningFromNavigation =
+      false; // Track navigation return to disable search
   Timer? _debounce;
   GoogleMapController?
       _mapController; // To be initialized from _mapControllerCompleter
@@ -252,24 +268,35 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return Math.max(1, (finalSize * 0.55).round());
   }
 
+  /// Anchor for the selected experience marker (circle with padding for shadow).
+  /// The circle bottom is at (padding + markerSize) / totalSize of the image height.
+  static const Offset _selectedExperienceMarkerAnchor =
+      Offset(0.5, 1.36 / 1.72);
+
   Marker _buildSelectedMarker({
     required MarkerId markerId,
     required LatLng position,
     required String infoWindowTitle,
     required BitmapDescriptor icon,
+    Offset? anchor,
   }) {
     return Marker(
       markerId: markerId,
       position: position,
       infoWindow: _infoWindowForPlatform(infoWindowTitle),
       icon: icon,
-      zIndex: 1.0,
+      anchor: anchor ?? _selectedExperienceMarkerAnchor,
+      zIndex: 10000.0,
     );
   }
 
-  /// Animates the selected marker using vsync-aligned frames for smooth performance.
-  /// Uses keyframe-based animation with reduced intermediate frames to minimize
-  /// icon generation overhead while maintaining visual smoothness.
+  /// Animates the selected marker from [startSize] to [endSize], then
+  /// optionally pulses.
+  ///
+  /// NOTE: Rapidly updating a Marker's BitmapDescriptor in google_maps_flutter
+  /// inherently causes flickering on the native side. To completely eliminate
+  /// the flicker, we bypass the frame-by-frame animation and immediately set
+  /// the marker to its final size.
   Future<void> _animateSelectedMarkerSmooth({
     required int animationToken,
     required MarkerId markerId,
@@ -278,65 +305,27 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     required Future<BitmapDescriptor> Function(int size) iconBuilder,
     required int startSize,
     required int endSize,
-    Duration duration = const Duration(milliseconds: 260),
+    bool loopPulseAfterExpand = false,
+    Offset? anchor,
   }) async {
-    // Cancel any existing animation
     _markerAnimationController?.dispose();
+    _markerAnimationController = null;
 
-    // Create a new animation controller with vsync for smooth 60fps animation
-    final controller = AnimationController(
-      vsync: this,
-      duration: duration,
-    );
-    _markerAnimationController = controller;
+    // Immediately generate and set the final icon to avoid any native flickering
+    // from rapid BitmapDescriptor swaps.
+    final icon = await iconBuilder(endSize);
 
-    // Use easeOutCubic for natural deceleration
-    final animation = CurvedAnimation(
-      parent: controller,
-      curve: Curves.easeOutCubic,
-    );
+    if (!mounted || animationToken != _markerAnimationToken) return;
 
-    int lastSize = startSize;
-
-    // Use a listener that's called on each vsync frame
-    void onAnimationUpdate() {
-      if (!mounted || animationToken != _markerAnimationToken) {
-        controller.dispose();
-        return;
-      }
-
-      final int size =
-          (startSize + (endSize - startSize) * animation.value).round();
-
-      // Only update if size actually changed (reduces unnecessary work)
-      if (size != lastSize) {
-        lastSize = size;
-        // Build icon asynchronously and update marker
-        iconBuilder(size).then((icon) {
-          if (!mounted || animationToken != _markerAnimationToken) return;
-          setState(() {
-            _tappedLocationMarker = _buildSelectedMarker(
-              markerId: markerId,
-              position: position,
-              infoWindowTitle: infoWindowTitle,
-              icon: icon,
-            );
-          });
-        });
-      }
-    }
-
-    animation.addListener(onAnimationUpdate);
-
-    // Start the animation
-    await controller.forward();
-
-    // Clean up
-    animation.removeListener(onAnimationUpdate);
-    if (_markerAnimationController == controller) {
-      _markerAnimationController = null;
-    }
-    controller.dispose();
+    setState(() {
+      _tappedLocationMarker = _buildSelectedMarker(
+        markerId: markerId,
+        position: position,
+        infoWindowTitle: infoWindowTitle,
+        icon: icon,
+        anchor: anchor,
+      );
+    });
   }
 
   Future<void> _refreshBusinessStatus(
@@ -370,6 +359,11 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+
+    _spotlightController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
 
     if (widget.initialPublicExperience != null) {
       _publicExperienceDraft =
@@ -418,6 +412,12 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     _initializeFiltersAndData(); // Load saved filters and experiences
     _searchController.addListener(_onSearchChanged);
+    HelpModeService.listenable.addListener(_onGlobalHelpModeChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onGlobalHelpModeChanged();
+      }
+    });
 
     // Handle initial event if provided
     if (widget.initialEvent != null) {
@@ -501,11 +501,13 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    HelpModeService.listenable.removeListener(_onGlobalHelpModeChanged);
     _searchController
         .removeListener(_onSearchChanged); // ADDED: Remove listener here
     _searchController.dispose();
     _searchFocusNode.dispose();
     _debounce?.cancel();
+    _spotlightController.dispose();
     _markerAnimationController?.dispose();
     _markerAnimationController = null;
     super.dispose();
@@ -519,7 +521,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   /// Run the deferred data load if one was skipped during the share flow.
   Future<void> runDeferredLoadIfNeeded() async {
     if (_dataLoadDeferred) {
-      print("🗺️ MAP SCREEN: Running deferred data load after share flow ended.");
+      print(
+          "🗺️ MAP SCREEN: Running deferred data load after share flow ended.");
       await _loadDataAndGenerateMarkers(force: true);
     }
   }
@@ -1204,7 +1207,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       await _generateMarkersFromExperiences(_filterExperiences(_experiences));
 
       // Focus camera appropriately if no initial location/event was provided
-      if (widget.initialExperienceLocation == null && 
+      if (widget.initialExperienceLocation == null &&
           widget.initialEvent == null &&
           _markers.isNotEmpty) {
         if (_hasActiveFilters) {
@@ -1216,7 +1219,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               await _mapController!.animateCamera(
                 CameraUpdate.newLatLngBounds(clusterBounds, 80.0),
               );
-              print("🗺️ MAP SCREEN: Initial load with filters - focused on densest cluster");
+              print(
+                  "🗺️ MAP SCREEN: Initial load with filters - focused on densest cluster");
             }
           }());
         } else {
@@ -1526,7 +1530,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
       // Find all markers within the max view radius from user's location
       final positions = _markers.values.map((m) => m.position).toList();
-      
+
       double clusterMinLat = userLatLng.latitude;
       double clusterMaxLat = userLatLng.latitude;
       double clusterMinLng = userLatLng.longitude;
@@ -1546,14 +1550,19 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         }
       }
 
-      print("🗺️ MAP SCREEN: Found $markersInView markers within view radius of user");
+      print(
+          "🗺️ MAP SCREEN: Found $markersInView markers within view radius of user");
 
       if (markersInView > 0) {
         // Include user location in bounds
-        if (userLatLng.latitude < clusterMinLat) clusterMinLat = userLatLng.latitude;
-        if (userLatLng.latitude > clusterMaxLat) clusterMaxLat = userLatLng.latitude;
-        if (userLatLng.longitude < clusterMinLng) clusterMinLng = userLatLng.longitude;
-        if (userLatLng.longitude > clusterMaxLng) clusterMaxLng = userLatLng.longitude;
+        if (userLatLng.latitude < clusterMinLat)
+          clusterMinLat = userLatLng.latitude;
+        if (userLatLng.latitude > clusterMaxLat)
+          clusterMaxLat = userLatLng.latitude;
+        if (userLatLng.longitude < clusterMinLng)
+          clusterMinLng = userLatLng.longitude;
+        if (userLatLng.longitude > clusterMaxLng)
+          clusterMaxLng = userLatLng.longitude;
 
         final bounds = LatLngBounds(
           southwest: LatLng(clusterMinLat, clusterMinLng),
@@ -1563,7 +1572,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         await _mapController!.animateCamera(
           CameraUpdate.newLatLngBounds(bounds, 80.0),
         );
-        print("🗺️ MAP SCREEN: Camera fitted to $markersInView markers around user location");
+        print(
+            "🗺️ MAP SCREEN: Camera fitted to $markersInView markers around user location");
       } else {
         // No markers near user, just center on user with default zoom
         await _mapController!.animateCamera(
@@ -1583,7 +1593,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         });
       }
     } catch (e) {
-      print("🗺️ MAP SCREEN: Failed to focus on user location with markers: $e");
+      print(
+          "🗺️ MAP SCREEN: Failed to focus on user location with markers: $e");
       // Fallback to density-based approach if user location fails
       final clusterBounds = _findDensestMarkerClusterBounds(_markers);
       if (clusterBounds != null && _mapController != null) {
@@ -1660,6 +1671,117 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         await image.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) {
       throw Exception('Failed to convert image to byte data');
+    }
+
+    return BitmapDescriptor.fromBytes(byteData.buffer.asUint8List());
+  }
+
+  Future<BitmapDescriptor> _selectedExperienceMarkerIconFromText(
+    String text, {
+    required Color accentColor,
+    required int size,
+    Color textColor = Colors.black,
+    String? fontFamily,
+  }) async {
+    final int effectiveSize = _markerSizeForPlatform(size);
+    final String cacheKey =
+        'selected_${text}_${accentColor.toARGB32()}_${textColor.toARGB32()}_${fontFamily ?? ''}_$effectiveSize';
+    final BitmapDescriptor? cached = _categoryIconCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
+    final BitmapDescriptor generated =
+        await _bitmapDescriptorFromSelectedExperienceText(
+      text,
+      size: size,
+      accentColor: accentColor,
+      textColor: textColor,
+      fontFamily: fontFamily,
+    );
+    _categoryIconCache[cacheKey] = generated;
+    return generated;
+  }
+
+  Future<BitmapDescriptor> _bitmapDescriptorFromSelectedExperienceText(
+    String text, {
+    int size = 100,
+    required Color accentColor,
+    Color textColor = Colors.black,
+    String? fontFamily,
+  }) async {
+    final int effectiveSize = _markerSizeForPlatform(size);
+    final double markerSize = effectiveSize.toDouble();
+    final double blurRadius = markerSize * 0.12;
+    final double padding = blurRadius * 3;
+    final double totalSize = markerSize + 2 * padding;
+
+    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(pictureRecorder);
+    canvas.translate(padding, padding);
+
+    final Offset center = Offset(markerSize / 2, markerSize / 2);
+    final double outerRadius = markerSize / 2;
+    final double innerRadius = outerRadius * 0.77;
+    final double borderWidth = Math.max(2.0, markerSize * 0.033);
+    final Color innerFillColor = accentColor;
+
+    final Paint shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.25)
+      ..maskFilter = ui.MaskFilter.blur(
+        ui.BlurStyle.normal,
+        blurRadius,
+      );
+    canvas.drawCircle(
+      Offset(center.dx, center.dy + markerSize * 0.03),
+      outerRadius * 0.86,
+      shadowPaint,
+    );
+
+    canvas.drawCircle(center, outerRadius, Paint()..color = Colors.white);
+    canvas.drawCircle(
+      center,
+      outerRadius - borderWidth / 2,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = borderWidth
+        ..color = accentColor.withValues(alpha: 0.4),
+    );
+    canvas.drawCircle(
+      center,
+      innerRadius,
+      Paint()..color = innerFillColor,
+    );
+
+    final ui.ParagraphBuilder paragraphBuilder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        textAlign: TextAlign.center,
+        fontSize: markerSize * 0.4,
+        fontFamily: fontFamily,
+      ),
+    );
+    paragraphBuilder.pushStyle(ui.TextStyle(
+      color: textColor,
+      fontFamily: fontFamily,
+      fontSize: markerSize * 0.4,
+    ));
+    paragraphBuilder.addText(text);
+    paragraphBuilder.pop();
+
+    final ui.Paragraph paragraph = paragraphBuilder.build();
+    paragraph.layout(ui.ParagraphConstraints(width: markerSize));
+    final double textX = (markerSize - paragraph.width) / 2;
+    final double textY = (markerSize - paragraph.height) / 2;
+    canvas.drawParagraph(paragraph, Offset(textX, textY));
+
+    final ui.Image image = await pictureRecorder
+        .endRecording()
+        .toImage(totalSize.round(), totalSize.round());
+    final ByteData? byteData =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      throw Exception(
+          'Failed to convert selected experience marker to byte data');
     }
 
     return BitmapDescriptor.fromBytes(byteData.buffer.asUint8List());
@@ -1888,18 +2010,16 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           final int startSize = _markerStartSize(finalSize);
           Future<BitmapDescriptor> iconBuilder(int size) {
             if (tappedCategoryIcon != null && tappedCategoryIcon.isNotEmpty) {
-              return _bitmapDescriptorFromText(
+              return _selectedExperienceMarkerIconFromText(
                 tappedCategoryIcon,
+                accentColor: Colors.black,
                 size: size,
-                backgroundColor: Colors.black,
-                backgroundOpacity: 1.0,
               );
             }
-            return _bitmapDescriptorFromText(
+            return _selectedExperienceMarkerIconFromText(
               String.fromCharCode(Icons.public.codePoint),
+              accentColor: Colors.black,
               size: size,
-              backgroundColor: Colors.black,
-              backgroundOpacity: 1.0,
               textColor: Colors.white,
               fontFamily: Icons.public.fontFamily,
             );
@@ -1947,6 +2067,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             iconBuilder: iconBuilder,
             startSize: startSize,
             endSize: finalSize,
+            loopPulseAfterExpand: true,
           ));
           _showMarkerInfoWindow(tappedMarkerId);
         }),
@@ -2247,6 +2368,179 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         final theme = Theme.of(dialogContext);
         final isDark = theme.brightness == Brightness.dark;
         final ScrollController scrollController = ScrollController();
+        final GlobalKey dialogOverlayKey = GlobalKey();
+        final GlobalKey dialogCreateNewButtonKey = GlobalKey();
+        final GlobalKey dialogHelpButtonKey = GlobalKey();
+        final GlobalKey dialogCloseButtonKey = GlobalKey();
+        final GlobalKey<HelpBubbleState> dialogHelpBubbleKey = GlobalKey();
+
+        bool isDialogHelpMode = false;
+        MapHelpTargetId? activeDialogHelpTarget;
+        int activeDialogHelpStep = 0;
+        Rect? activeDialogTargetRect;
+        bool isDialogHelpTyping = false;
+
+        void dismissDialogHelp(void Function(VoidCallback fn) setDialogState) {
+          setDialogState(() {
+            activeDialogHelpTarget = null;
+            activeDialogHelpStep = 0;
+            activeDialogTargetRect = null;
+            isDialogHelpTyping = false;
+          });
+        }
+
+        void showDialogHelpForTarget(
+          MapHelpTargetId id,
+          BuildContext targetCtx,
+          void Function(VoidCallback fn) setDialogState,
+        ) {
+          final RenderBox? box = targetCtx.findRenderObject() as RenderBox?;
+          final RenderBox? overlayBox =
+              dialogOverlayKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box == null || !box.hasSize || overlayBox == null) return;
+          final pos = overlayBox.globalToLocal(box.localToGlobal(Offset.zero));
+          final size = box.size;
+          setDialogState(() {
+            activeDialogHelpTarget = id;
+            activeDialogHelpStep = 0;
+            activeDialogTargetRect =
+                Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+            isDialogHelpTyping = true;
+          });
+        }
+
+        void advanceDialogHelpStep(
+            void Function(VoidCallback fn) setDialogState) {
+          if (activeDialogHelpTarget == null) return;
+          final spec = mapHelpContent[activeDialogHelpTarget!];
+          final steps = spec?.steps ?? [];
+          if (activeDialogHelpStep < steps.length - 1) {
+            setDialogState(() {
+              activeDialogHelpStep++;
+              isDialogHelpTyping = true;
+            });
+          } else {
+            dismissDialogHelp(setDialogState);
+          }
+        }
+
+        void onDialogHelpBarrierTap(
+            void Function(VoidCallback fn) setDialogState) {
+          if (activeDialogHelpTarget == null) return;
+          if (isDialogHelpTyping) {
+            dialogHelpBubbleKey.currentState?.skipTypewriter();
+          } else {
+            advanceDialogHelpStep(setDialogState);
+          }
+        }
+
+        bool tryDialogHelpTap(
+          MapHelpTargetId id,
+          BuildContext targetCtx,
+          void Function(VoidCallback fn) setDialogState,
+        ) {
+          if (!isDialogHelpMode) return false;
+          triggerHeavyHaptic();
+          showDialogHelpForTarget(id, targetCtx, setDialogState);
+          return true;
+        }
+
+        void toggleDialogHelpMode(
+          void Function(VoidCallback fn) setDialogState, {
+          BuildContext? preferredTargetContext,
+        }) {
+          triggerHeavyHaptic();
+          if (isDialogHelpMode) {
+            setDialogState(() {
+              isDialogHelpMode = false;
+              activeDialogHelpTarget = null;
+              activeDialogHelpStep = 0;
+              activeDialogTargetRect = null;
+              isDialogHelpTyping = false;
+            });
+            return;
+          }
+
+          setDialogState(() {
+            isDialogHelpMode = true;
+          });
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!dialogContext.mounted) return;
+            final targetContext =
+                preferredTargetContext ?? dialogHelpButtonKey.currentContext;
+            if (targetContext == null) return;
+            showDialogHelpForTarget(
+              MapHelpTargetId.eventsDialogHelpButton,
+              targetContext,
+              setDialogState,
+            );
+          });
+        }
+
+        Widget buildDialogHelpOverlay(
+            void Function(VoidCallback fn) setDialogState) {
+          final spec = activeDialogHelpTarget != null
+              ? mapHelpContent[activeDialogHelpTarget!]
+              : null;
+          final step =
+              (spec != null && activeDialogHelpStep < spec.steps.length)
+                  ? spec.steps[activeDialogHelpStep]
+                  : null;
+          final isLastStep =
+              spec == null || activeDialogHelpStep >= spec.steps.length - 1;
+
+          return Positioned.fill(
+            child: AnimatedOpacity(
+              opacity: activeDialogHelpTarget != null ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => onDialogHelpBarrierTap(setDialogState),
+                child: Stack(
+                  children: [
+                    if (activeDialogTargetRect != null)
+                      Positioned.fill(
+                        child: AnimatedBuilder(
+                          animation: _spotlightController,
+                          builder: (context, _) => CustomPaint(
+                            painter: HelpSpotlightPainter(
+                              targetRect: activeDialogTargetRect!,
+                              glowProgress: _spotlightController.value,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (activeDialogHelpTarget != null &&
+                        activeDialogTargetRect != null &&
+                        step != null)
+                      HelpBubble(
+                        key: dialogHelpBubbleKey,
+                        text: step.text,
+                        instruction: step.instruction,
+                        isLastStep: isLastStep,
+                        targetRect: activeDialogTargetRect!,
+                        onAdvance: () => advanceDialogHelpStep(setDialogState),
+                        onDismiss: () => dismissDialogHelp(setDialogState),
+                        onTypingStarted: () {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!dialogContext.mounted) return;
+                            setDialogState(() => isDialogHelpTyping = true);
+                          });
+                        },
+                        onTypingFinished: () {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!dialogContext.mounted) return;
+                            setDialogState(() => isDialogHelpTyping = false);
+                          });
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
 
         // Scroll to anchor - first jump to estimated position, then refine with ensureVisible
         void scrollToAnchor() {
@@ -2318,111 +2612,245 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           scrollToAnchor();
         });
 
-        return _wrapWebPointerInterceptor(Dialog(
-          backgroundColor: AppColors.backgroundColor,
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(dialogContext).size.width * 0.95,
-              maxHeight: MediaQuery.of(dialogContext).size.height * 0.7,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-                  child: Row(
-                    children: [
-                      Text(
-                        'Select an Event',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'Google Sans',
+        return StatefulBuilder(
+          builder: (_, setDialogState) {
+            return _wrapWebPointerInterceptor(
+              Stack(
+                key: dialogOverlayKey,
+                children: [
+                  Center(
+                    child: Dialog(
+                      backgroundColor: AppColors.backgroundColor,
+                      insetPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 24),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth:
+                              MediaQuery.of(dialogContext).size.width * 0.95,
+                          maxHeight:
+                              MediaQuery.of(dialogContext).size.height * 0.7,
                         ),
-                      ),
-                      const Spacer(),
-                      ElevatedButton(
-                        onPressed: () {
-                          triggerHeavyHaptic();
-                          scrollController.dispose();
-                          Navigator.of(dialogContext).pop();
-                          _enterSelectMode();
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.primaryColor,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          textStyle: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        child: const Text('Create New'),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          triggerHeavyHaptic();
-                          scrollController.dispose();
-                          Navigator.of(dialogContext).pop();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: events.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.event_outlined,
-                                size: 48,
-                                color: isDark ? Colors.white38 : Colors.black45,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Select an Event',
+                                    style:
+                                        theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      fontFamily: 'Google Sans',
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Builder(
+                                    builder: (createNewCtx) => ElevatedButton(
+                                      key: dialogCreateNewButtonKey,
+                                      onPressed: () {
+                                        if (tryDialogHelpTap(
+                                          MapHelpTargetId.eventsDialogCreateNew,
+                                          createNewCtx,
+                                          setDialogState,
+                                        )) {
+                                          return;
+                                        }
+                                        triggerHeavyHaptic();
+                                        scrollController.dispose();
+                                        Navigator.of(dialogContext).pop();
+                                        _enterSelectMode();
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: theme.primaryColor,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 8),
+                                        textStyle: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      child: const Text('Create New'),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Semantics(
+                                    label: isDialogHelpMode
+                                        ? 'Exit help mode'
+                                        : 'Enter help mode',
+                                    child: isDialogHelpMode
+                                        ? AnimatedBuilder(
+                                            animation: _spotlightController,
+                                            builder: (context, child) {
+                                              final scale = 1.0 +
+                                                  0.15 *
+                                                      _spotlightController
+                                                          .value;
+                                              return Transform.scale(
+                                                scale: scale,
+                                                child: child,
+                                              );
+                                            },
+                                            child: IconButton(
+                                              key: dialogHelpButtonKey,
+                                              icon: Icon(
+                                                Icons.help,
+                                                color: AppColors.teal,
+                                              ),
+                                              tooltip: 'Exit Help Mode',
+                                              onPressed: () =>
+                                                  toggleDialogHelpMode(
+                                                      setDialogState),
+                                            ),
+                                          )
+                                        : IconButton(
+                                            key: dialogHelpButtonKey,
+                                            icon:
+                                                const Icon(Icons.help_outline),
+                                            tooltip: 'Help',
+                                            onPressed: () =>
+                                                toggleDialogHelpMode(
+                                              setDialogState,
+                                              preferredTargetContext:
+                                                  dialogHelpButtonKey
+                                                      .currentContext,
+                                            ),
+                                          ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Builder(
+                                    builder: (closeCtx) => IconButton(
+                                      key: dialogCloseButtonKey,
+                                      icon: const Icon(Icons.close),
+                                      onPressed: () {
+                                        if (tryDialogHelpTap(
+                                          MapHelpTargetId.eventsDialogClose,
+                                          closeCtx,
+                                          setDialogState,
+                                        )) {
+                                          return;
+                                        }
+                                        triggerHeavyHaptic();
+                                        scrollController.dispose();
+                                        Navigator.of(dialogContext).pop();
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'No events yet',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color:
-                                      isDark ? Colors.white70 : Colors.black54,
+                            ),
+                            if (isDialogHelpMode)
+                              GestureDetector(
+                                onTap: () => toggleDialogHelpMode(
+                                  setDialogState,
+                                ),
+                                child: AnimatedBuilder(
+                                  animation: _spotlightController,
+                                  builder: (context, child) {
+                                    final opacity =
+                                        0.6 + 0.4 * _spotlightController.value;
+                                    return Opacity(
+                                        opacity: opacity, child: child);
+                                  },
+                                  child: Container(
+                                    width: double.infinity,
+                                    color:
+                                        AppColors.teal.withValues(alpha: 0.08),
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 6),
+                                    child: Text(
+                                      'Help mode is ON  •  Tap here to exit',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: AppColors.teal,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          controller: scrollController,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemCount: eventListItems.length,
-                          itemBuilder: (context, index) {
-                            final item = eventListItems[index];
-                            return Container(
-                              key: itemKeys[index],
-                              child: item.isHeader
-                                  ? _buildDateHeader(item.date!, theme, isDark)
-                                  : _buildMapEventCard(
-                                      item.event!,
-                                      theme,
-                                      isDark,
-                                      onTap: withHeavyTap(() => _showEventCardOptions(
-                                          item.event!, dialogContext)),
+                            const Divider(height: 1),
+                            Expanded(
+                              child: events.isEmpty
+                                  ? Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.event_outlined,
+                                            size: 48,
+                                            color: isDark
+                                                ? Colors.white38
+                                                : Colors.black45,
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            'No events yet',
+                                            style: theme.textTheme.bodyMedium
+                                                ?.copyWith(
+                                              color: isDark
+                                                  ? Colors.white70
+                                                  : Colors.black54,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      controller: scrollController,
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                      itemCount: eventListItems.length,
+                                      itemBuilder: (context, index) {
+                                        final item = eventListItems[index];
+                                        return Container(
+                                          key: itemKeys[index],
+                                          child: item.isHeader
+                                              ? _buildDateHeader(
+                                                  item.date!, theme, isDark)
+                                              : Builder(
+                                                  builder: (eventCardCtx) =>
+                                                      _buildMapEventCard(
+                                                    item.event!,
+                                                    theme,
+                                                    isDark,
+                                                    onTap: () {
+                                                      if (tryDialogHelpTap(
+                                                        MapHelpTargetId
+                                                            .eventsDialogEventCard,
+                                                        eventCardCtx,
+                                                        setDialogState,
+                                                      )) {
+                                                        return;
+                                                      }
+                                                      _showEventCardOptions(
+                                                        item.event!,
+                                                        dialogContext,
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                        );
+                                      },
                                     ),
-                            );
-                          },
+                            ),
+                          ],
                         ),
-                ),
-              ],
-            ),
-          ),
-        ));
+                      ),
+                    ),
+                  ),
+                  if (activeDialogHelpTarget != null)
+                    buildDialogHelpOverlay(setDialogState),
+                ],
+              ),
+            );
+          },
+        );
       },
     );
   }
@@ -2576,92 +3004,364 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ),
       builder: (sheetContext) {
         final theme = Theme.of(sheetContext);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Event title header
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 4,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: _getEventColor(event),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          event.title.isEmpty ? 'Untitled Event' : event.title,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
+        final GlobalKey sheetOverlayKey = GlobalKey();
+        final GlobalKey sheetHelpButtonKey = GlobalKey();
+        final GlobalKey<HelpBubbleState> sheetHelpBubbleKey = GlobalKey();
+
+        bool isSheetHelpMode = false;
+        MapHelpTargetId? activeSheetHelpTarget;
+        int activeSheetHelpStep = 0;
+        Rect? activeSheetTargetRect;
+        bool isSheetHelpTyping = false;
+
+        void dismissSheetHelp(void Function(VoidCallback fn) setSheetState) {
+          setSheetState(() {
+            activeSheetHelpTarget = null;
+            activeSheetHelpStep = 0;
+            activeSheetTargetRect = null;
+            isSheetHelpTyping = false;
+          });
+        }
+
+        void showSheetHelpForTarget(
+          MapHelpTargetId id,
+          BuildContext targetCtx,
+          void Function(VoidCallback fn) setSheetState,
+        ) {
+          final RenderBox? box = targetCtx.findRenderObject() as RenderBox?;
+          final RenderBox? overlayBox =
+              sheetOverlayKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box == null || !box.hasSize || overlayBox == null) return;
+          final pos = overlayBox.globalToLocal(box.localToGlobal(Offset.zero));
+          final size = box.size;
+          setSheetState(() {
+            activeSheetHelpTarget = id;
+            activeSheetHelpStep = 0;
+            activeSheetTargetRect =
+                Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+            isSheetHelpTyping = true;
+          });
+        }
+
+        void advanceSheetHelpStep(
+            void Function(VoidCallback fn) setSheetState) {
+          if (activeSheetHelpTarget == null) return;
+          final spec = mapHelpContent[activeSheetHelpTarget!];
+          final steps = spec?.steps ?? [];
+          if (activeSheetHelpStep < steps.length - 1) {
+            setSheetState(() {
+              activeSheetHelpStep++;
+              isSheetHelpTyping = true;
+            });
+          } else {
+            dismissSheetHelp(setSheetState);
+          }
+        }
+
+        void onSheetHelpBarrierTap(
+            void Function(VoidCallback fn) setSheetState) {
+          if (activeSheetHelpTarget == null) return;
+          if (isSheetHelpTyping) {
+            sheetHelpBubbleKey.currentState?.skipTypewriter();
+          } else {
+            advanceSheetHelpStep(setSheetState);
+          }
+        }
+
+        bool trySheetHelpTap(
+          MapHelpTargetId id,
+          BuildContext targetCtx,
+          void Function(VoidCallback fn) setSheetState,
+        ) {
+          if (!isSheetHelpMode) return false;
+          triggerHeavyHaptic();
+          showSheetHelpForTarget(id, targetCtx, setSheetState);
+          return true;
+        }
+
+        void toggleSheetHelpMode(
+          void Function(VoidCallback fn) setSheetState, {
+          BuildContext? preferredTargetContext,
+        }) {
+          triggerHeavyHaptic();
+          if (isSheetHelpMode) {
+            setSheetState(() {
+              isSheetHelpMode = false;
+              activeSheetHelpTarget = null;
+              activeSheetHelpStep = 0;
+              activeSheetTargetRect = null;
+              isSheetHelpTyping = false;
+            });
+            return;
+          }
+
+          setSheetState(() {
+            isSheetHelpMode = true;
+          });
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!sheetContext.mounted) return;
+            final targetContext =
+                preferredTargetContext ?? sheetHelpButtonKey.currentContext;
+            if (targetContext == null) return;
+            showSheetHelpForTarget(
+              MapHelpTargetId.eventOptionsHelpButton,
+              targetContext,
+              setSheetState,
+            );
+          });
+        }
+
+        Widget buildSheetHelpOverlay(
+            void Function(VoidCallback fn) setSheetState) {
+          final spec = activeSheetHelpTarget != null
+              ? mapHelpContent[activeSheetHelpTarget!]
+              : null;
+          final step = (spec != null && activeSheetHelpStep < spec.steps.length)
+              ? spec.steps[activeSheetHelpStep]
+              : null;
+          final isLastStep =
+              spec == null || activeSheetHelpStep >= spec.steps.length - 1;
+
+          return Positioned.fill(
+            child: AnimatedOpacity(
+              opacity: activeSheetHelpTarget != null ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => onSheetHelpBarrierTap(setSheetState),
+                child: Stack(
+                  children: [
+                    if (activeSheetTargetRect != null)
+                      Positioned.fill(
+                        child: AnimatedBuilder(
+                          animation: _spotlightController,
+                          builder: (context, _) => CustomPaint(
+                            painter: HelpSpotlightPainter(
+                              targetRect: activeSheetTargetRect!,
+                              glowProgress: _spotlightController.value,
+                            ),
                           ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    ],
-                  ),
+                    if (activeSheetHelpTarget != null &&
+                        activeSheetTargetRect != null &&
+                        step != null)
+                      HelpBubble(
+                        key: sheetHelpBubbleKey,
+                        text: step.text,
+                        instruction: step.instruction,
+                        isLastStep: isLastStep,
+                        targetRect: activeSheetTargetRect!,
+                        onAdvance: () => advanceSheetHelpStep(setSheetState),
+                        onDismiss: () => dismissSheetHelp(setSheetState),
+                        onTypingStarted: () {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!sheetContext.mounted) return;
+                            setSheetState(() => isSheetHelpTyping = true);
+                          });
+                        },
+                        onTypingFinished: () {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!sheetContext.mounted) return;
+                            setSheetState(() => isSheetHelpTyping = false);
+                          });
+                        },
+                      ),
+                  ],
                 ),
-                const Divider(height: 24),
-                // View event page option
-                ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: theme.primaryColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.event_note,
-                      color: theme.primaryColor,
-                    ),
-                  ),
-                  title: const Text('View event page'),
-                  subtitle: const Text('See full event details'),
-                  onTap: withHeavyTap(() {
-                    triggerHeavyHaptic();
-                    Navigator.of(sheetContext).pop();
-                    Navigator.of(dialogContext).pop();
-                    _openEventPage(event);
-                  }),
-                ),
-                // View event map option
-                ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.map,
-                      color: Colors.green,
-                    ),
-                  ),
-                  title: const Text('View event map'),
-                  subtitle: Text(
-                      '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''} on map'),
-                  onTap: withHeavyTap(() {
-                    triggerHeavyHaptic();
-                    Navigator.of(sheetContext).pop(); // Close bottom sheet
-                    Navigator.of(dialogContext).pop(); // Close events dialog
-                    _enterEventViewMode(event);
-                  }),
-                ),
-                const SizedBox(height: 8),
-              ],
+              ),
             ),
-          ),
+          );
+        }
+
+        return StatefulBuilder(
+          builder: (_, setSheetState) {
+            return _wrapWebPointerInterceptor(
+              Stack(
+                key: sheetOverlayKey,
+                children: [
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 8),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: _getEventColor(event),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    event.title.isEmpty
+                                        ? 'Untitled Event'
+                                        : event.title,
+                                    style:
+                                        theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Semantics(
+                                  label: isSheetHelpMode
+                                      ? 'Exit help mode'
+                                      : 'Enter help mode',
+                                  child: isSheetHelpMode
+                                      ? AnimatedBuilder(
+                                          animation: _spotlightController,
+                                          builder: (context, child) {
+                                            final scale = 1.0 +
+                                                0.15 *
+                                                    _spotlightController.value;
+                                            return Transform.scale(
+                                              scale: scale,
+                                              child: child,
+                                            );
+                                          },
+                                          child: IconButton(
+                                            key: sheetHelpButtonKey,
+                                            icon: Icon(
+                                              Icons.help,
+                                              color: AppColors.teal,
+                                            ),
+                                            tooltip: 'Exit Help Mode',
+                                            onPressed: () =>
+                                                toggleSheetHelpMode(
+                                                    setSheetState),
+                                          ),
+                                        )
+                                      : IconButton(
+                                          key: sheetHelpButtonKey,
+                                          icon: const Icon(Icons.help_outline),
+                                          tooltip: 'Help',
+                                          onPressed: () => toggleSheetHelpMode(
+                                            setSheetState,
+                                            preferredTargetContext:
+                                                sheetHelpButtonKey
+                                                    .currentContext,
+                                          ),
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (isSheetHelpMode)
+                            GestureDetector(
+                              onTap: () => toggleSheetHelpMode(
+                                setSheetState,
+                              ),
+                              child: AnimatedBuilder(
+                                animation: _spotlightController,
+                                builder: (context, child) {
+                                  final opacity =
+                                      0.6 + 0.4 * _spotlightController.value;
+                                  return Opacity(
+                                      opacity: opacity, child: child);
+                                },
+                                child: Container(
+                                  width: double.infinity,
+                                  color: AppColors.teal.withValues(alpha: 0.08),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 6),
+                                  child: Text(
+                                    'Help mode is ON  •  Tap here to exit',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: AppColors.teal,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          const Divider(height: 24),
+                          Builder(
+                            builder: (viewPageCtx) => ListTile(
+                              leading: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: theme.primaryColor.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.event_note,
+                                  color: theme.primaryColor,
+                                ),
+                              ),
+                              title: const Text('View event page'),
+                              subtitle: const Text('See full event details'),
+                              onTap: withHeavyTap(() {
+                                if (trySheetHelpTap(
+                                  MapHelpTargetId.eventOptionsViewPage,
+                                  viewPageCtx,
+                                  setSheetState,
+                                )) {
+                                  return;
+                                }
+                                triggerHeavyHaptic();
+                                Navigator.of(sheetContext).pop();
+                                Navigator.of(dialogContext).pop();
+                                _openEventPage(event);
+                              }),
+                            ),
+                          ),
+                          Builder(
+                            builder: (viewMapCtx) => ListTile(
+                              leading: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.map,
+                                  color: Colors.green,
+                                ),
+                              ),
+                              title: const Text('View event map'),
+                              subtitle: Text(
+                                  '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''} on map'),
+                              onTap: withHeavyTap(() {
+                                if (trySheetHelpTap(
+                                  MapHelpTargetId.eventOptionsViewMap,
+                                  viewMapCtx,
+                                  setSheetState,
+                                )) {
+                                  return;
+                                }
+                                triggerHeavyHaptic();
+                                Navigator.of(sheetContext).pop();
+                                Navigator.of(dialogContext).pop();
+                                _enterEventViewMode(event);
+                              }),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (activeSheetHelpTarget != null)
+                    buildSheetHelpOverlay(setSheetState),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -3276,6 +3976,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         position: LatLng(location.latitude, location.longitude),
         infoWindowTitle: '$selectedIconText ${experience.name}',
         icon: firstIcon,
+        anchor: const Offset(0.5, 1.0),
       );
     });
     unawaited(_animateSelectedMarkerSmooth(
@@ -3286,6 +3987,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       iconBuilder: iconBuilder,
       startSize: startSize,
       endSize: finalSize,
+      anchor: const Offset(0.5, 1.0),
     ));
 
     _showMarkerInfoWindow(tappedMarkerId);
@@ -3948,6 +4650,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           position: position,
           infoWindowTitle: '$selectedIconText ${experience.name}',
           icon: firstIcon,
+          anchor: const Offset(0.5, 1.0),
         );
       });
       unawaited(_animateSelectedMarkerSmooth(
@@ -3958,6 +4661,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         iconBuilder: iconBuilder,
         startSize: startSize,
         endSize: finalSize,
+        anchor: const Offset(0.5, 1.0),
       ));
 
       _showMarkerInfoWindow(tappedMarkerId);
@@ -5267,11 +5971,10 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final int startSize = _markerStartSize(finalSize);
 
     Future<BitmapDescriptor> iconBuilder(int size) {
-      return _bitmapDescriptorFromText(
+      return _selectedExperienceMarkerIconFromText(
         iconText,
-        backgroundColor: markerBackgroundColor,
+        accentColor: markerBackgroundColor,
         size: size,
-        backgroundOpacity: 1.0,
       );
     }
 
@@ -5311,6 +6014,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       iconBuilder: iconBuilder,
       startSize: startSize,
       endSize: finalSize,
+      loopPulseAfterExpand: true,
     ));
   }
 
@@ -5419,11 +6123,10 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ? experience.categoryIconDenorm!
           : _resolveCategoryForExperience(experience).icon;
       Future<BitmapDescriptor> iconBuilder(int size) {
-        return _bitmapDescriptorFromText(
+        return _selectedExperienceMarkerIconFromText(
           iconText,
-          backgroundColor: markerBackgroundColor,
+          accentColor: markerBackgroundColor,
           size: size,
-          backgroundOpacity: 1.0,
         );
       }
 
@@ -5479,6 +6182,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           iconBuilder: iconBuilder,
           startSize: startSize,
           endSize: finalSize,
+          loopPulseAfterExpand: true,
         ));
       }
       _showMarkerInfoWindow(tappedMarkerId);
@@ -6977,11 +7681,10 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           const int finalSize = 100;
           final int startSize = _markerStartSize(finalSize);
           Future<BitmapDescriptor> iconBuilder(int size) {
-            return _bitmapDescriptorFromText(
+            return _selectedExperienceMarkerIconFromText(
               selectedIconText,
-              backgroundColor: selectedMarkerBackgroundColor,
+              accentColor: selectedMarkerBackgroundColor,
               size: size, // 125% of 70
-              backgroundOpacity: 1.0, // Fully opaque
             );
           }
           // --- END ICON REGENERATION ---
@@ -7027,6 +7730,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             iconBuilder: iconBuilder,
             startSize: startSize,
             endSize: finalSize,
+            loopPulseAfterExpand: true,
           ));
           _showMarkerInfoWindow(tappedMarkerId);
           unawaited(_prefetchExperienceMedia(experience));
@@ -7622,11 +8326,10 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       const int finalSize = 88;
       final int startSize = _markerStartSize(finalSize);
       Future<BitmapDescriptor> iconBuilder(int size) {
-        return _bitmapDescriptorFromText(
+        return _selectedExperienceMarkerIconFromText(
           selectedIconText,
-          backgroundColor: markerBackgroundColor,
+          accentColor: markerBackgroundColor,
           size: size, // 125% of 70
-          backgroundOpacity: 1.0, // Fully opaque
         );
       }
       // --- END ICON REGENERATION ---
@@ -7679,6 +8382,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           iconBuilder: iconBuilder,
           startSize: startSize,
           endSize: finalSize,
+          loopPulseAfterExpand: true,
         ));
         _showMarkerInfoWindow(tappedMarkerId);
       }
@@ -8032,6 +8736,176 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return InfoWindow.noText;
   }
 
+  // ─────────────── Help mode helpers ───────────────
+  void _onGlobalHelpModeChanged() {
+    final bool shouldBeActive = HelpModeService.isActive;
+    if (shouldBeActive == _isHelpMode) {
+      return;
+    }
+    _setHelpMode(
+      shouldBeActive,
+      fromGlobal: true,
+      withHaptic: false,
+      showInitialTarget: false,
+    );
+  }
+
+  void _setHelpMode(
+    bool isActive, {
+    bool fromGlobal = false,
+    bool withHaptic = true,
+    bool showInitialTarget = true,
+  }) {
+    if (_isHelpMode == isActive) {
+      return;
+    }
+
+    if (withHaptic) {
+      triggerHeavyHaptic();
+    }
+
+    if (!isActive) {
+      setState(() {
+        _isHelpMode = false;
+        _activeHelpTarget = null;
+        _activeHelpStep = 0;
+        _activeTargetRect = null;
+        _isHelpTyping = false;
+      });
+    } else {
+      setState(() => _isHelpMode = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (showInitialTarget &&
+            mounted &&
+            _helpButtonKey.currentContext != null) {
+          _showHelpForTarget(
+              MapHelpTargetId.helpButton, _helpButtonKey.currentContext!);
+        }
+      });
+    }
+
+    if (!fromGlobal) {
+      HelpModeService.setActive(isActive);
+    }
+  }
+
+  void _toggleHelpMode() {
+    _setHelpMode(!_isHelpMode);
+  }
+
+  void _showHelpForTarget(MapHelpTargetId id, BuildContext targetCtx) {
+    final RenderBox? box = targetCtx.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    setState(() {
+      _activeHelpTarget = id;
+      _activeHelpStep = 0;
+      _activeTargetRect =
+          Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+      _isHelpTyping = true;
+    });
+  }
+
+  void _advanceHelpStep() {
+    if (_activeHelpTarget == null) return;
+    final spec = mapHelpContent[_activeHelpTarget!];
+    final steps = spec?.steps ?? [];
+    if (_activeHelpStep < steps.length - 1) {
+      setState(() {
+        _activeHelpStep++;
+        _isHelpTyping = true;
+      });
+    } else {
+      _dismissHelpBubble();
+    }
+  }
+
+  void _dismissHelpBubble() {
+    setState(() {
+      _activeHelpTarget = null;
+      _activeHelpStep = 0;
+      _activeTargetRect = null;
+      _isHelpTyping = false;
+    });
+  }
+
+  void _onHelpBarrierTap() {
+    if (_activeHelpTarget != null) {
+      if (_isHelpTyping) {
+        _helpBubbleKey.currentState?.skipTypewriter();
+      } else {
+        _advanceHelpStep();
+      }
+    }
+  }
+
+  bool _tryHelpTap(MapHelpTargetId id, BuildContext targetCtx) {
+    if (!_isHelpMode) return false;
+    triggerHeavyHaptic();
+    _showHelpForTarget(id, targetCtx);
+    return true;
+  }
+
+  Widget _buildHelpOverlay() {
+    final spec =
+        _activeHelpTarget != null ? mapHelpContent[_activeHelpTarget!] : null;
+    final step = (spec != null && _activeHelpStep < spec.steps.length)
+        ? spec.steps[_activeHelpStep]
+        : null;
+    final isLastStep = spec == null || _activeHelpStep >= spec.steps.length - 1;
+
+    return Positioned.fill(
+      child: AnimatedOpacity(
+        opacity: _activeHelpTarget != null ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 200),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _onHelpBarrierTap,
+          child: Stack(
+            children: [
+              if (_activeTargetRect != null)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _spotlightController,
+                    builder: (context, _) => CustomPaint(
+                      painter: HelpSpotlightPainter(
+                        targetRect: _activeTargetRect!,
+                        glowProgress: _spotlightController.value,
+                      ),
+                    ),
+                  ),
+                ),
+              if (_activeHelpTarget != null &&
+                  _activeTargetRect != null &&
+                  step != null)
+                HelpBubble(
+                  key: _helpBubbleKey,
+                  text: step.text,
+                  instruction: step.instruction,
+                  isLastStep: isLastStep,
+                  targetRect: _activeTargetRect!,
+                  onAdvance: _advanceHelpStep,
+                  onDismiss: _dismissHelpBubble,
+                  onTypingStarted: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = true);
+                    });
+                  },
+                  onTypingFinished: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = false);
+                    });
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  // ─────────────── End help mode helpers ───────────────
+
   @override
   Widget build(BuildContext context) {
     // If data load was deferred (share flow was active) and the share flow has
@@ -8122,17 +8996,17 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           "🗺️ MAP SCREEN: Added ${_selectModeEventOnlyMarkers.length} select mode event-only markers");
     }
 
-    // If an experience is currently tapped, remove its original marker from the map
-    // so it can be replaced by the styled _tappedLocationMarker.
-    if (_tappedExperience != null) {
+    // Only remove the original marker once the selected replacement is ready,
+    // otherwise the marker briefly vanishes between the two setState calls.
+    if (_tappedExperience != null && _tappedLocationMarker != null) {
       allMarkers.remove(_tappedExperience!.id);
       print(
           "🗺️ MAP SCREEN: Hiding original marker for '${_tappedExperience!.name}' to show selected marker.");
     }
 
-    // If a public experience is currently tapped, remove its original marker from the map
-    // so it can be replaced by the styled _tappedLocationMarker.
-    if (_publicReadOnlyExperienceId != null && _isGlobalToggleActive) {
+    if (_publicReadOnlyExperienceId != null &&
+        _isGlobalToggleActive &&
+        _tappedLocationMarker != null) {
       allMarkers.remove(_publicReadOnlyExperienceId);
       print(
           "🗺️ MAP SCREEN: Hiding original public marker for '${_publicReadOnlyExperience?.name}' to show selected marker.");
@@ -8158,1209 +9032,312 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final bool hasCustomLeading =
         (_isEventViewModeActive || _isAddToEventModeActive) &&
             widget.initialEvent != null;
-    final bool hasAutoImpliedLeading =
-        ModalRoute.of(context)?.canPop ?? false;
+    final bool hasAutoImpliedLeading = ModalRoute.of(context)?.canPop ?? false;
     final bool hasLeading = hasCustomLeading || hasAutoImpliedLeading;
 
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      backgroundColor: AppColors.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: AppColors.backgroundColor,
-        foregroundColor: Colors.black,
-        elevation: 0,
-        titleSpacing: 0,
-        leading: hasCustomLeading
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () async {
-                  triggerHeavyHaptic();
-                  // If in add-to-event mode with changes, return the updated event
-                  if (_isAddToEventModeActive &&
-                      _addToEventDraftItinerary.isNotEmpty &&
-                      _activeEventViewMode != null) {
-                    final updatedEvent = _activeEventViewMode!.copyWith(
-                      experiences: [
-                        ..._activeEventViewMode!.experiences,
-                        ..._addToEventDraftItinerary,
-                      ],
-                      updatedAt: DateTime.now(),
-                    );
-                    Navigator.of(context).pop(updatedEvent);
-                  } else if (_activeEventViewMode != null) {
-                    // Return the current event (might have been modified via remove)
-                    Navigator.of(context).pop(_activeEventViewMode);
-                  } else {
-                    Navigator.of(context).pop();
-                  }
-                },
-              )
-            : null,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Add leading padding when there's no back button (e.g., from nav bar tab)
-            if (!hasLeading) const SizedBox(width: 16),
-            Image.asset(
-              'assets/icon/icon-cropped.png',
-              height: 28,
-            ),
-            const SizedBox(width: 8),
-            const Text('Plendy Map'),
-            const SizedBox(width: 8),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeIn,
-              transitionBuilder: (child, animation) => FadeTransition(
-                opacity: animation,
-                child: child,
-              ),
-              child: ((_isLoading ||
-                          _isSharedLoading ||
-                          _isGlobeLoading ||
-                          _isCalendarDialogLoading) &&
-                      !_isSearching)
-                  ? SizedBox(
-                      key: const ValueKey('appbar_spinner'),
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Theme.of(context).primaryColor,
-                      ),
-                    )
-                  : const SizedBox(
-                      key: ValueKey('appbar_empty'),
-                      width: 0,
-                      height: 0,
-                    ),
-            ),
-          ],
-        ),
-        actions: [
-          Container(
-            color: AppColors.backgroundColor,
-            child: IconButton(
-              icon: Icon(
-                Icons.event_outlined,
-                color: Colors.black,
-              ),
-              tooltip: 'Toggle calendar view',
-              onPressed: () {
-                triggerHeavyHaptic();
-                _handleCalendarToggle();
-              },
-            ),
-          ),
-          Container(
-            color: AppColors.backgroundColor,
-            child: IconButton(
-              icon: Icon(
-                Icons.public,
-                color: _isGlobalToggleActive ? Colors.black : Colors.grey,
-              ),
-              tooltip: 'Toggle global view',
-              onPressed: () {
-                triggerHeavyHaptic();
-                _handleGlobeToggle();
-              },
-            ),
-          ),
-          if (showFilterButton)
-            Container(
-              color: AppColors.backgroundColor,
-              child: IconButton(
-                icon: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    const Icon(Icons.filter_list),
-                    if (_hasActiveFilters)
-                      Positioned(
-                        right: 4,
-                        bottom: 4,
-                        child: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: AppColors.backgroundColor,
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                tooltip: 'Filter Experiences',
-                onPressed: () {
-                  triggerHeavyHaptic();
-                  print("🗺️ MAP SCREEN: Filter button pressed!");
-                  setState(() {
-                    _tappedLocationMarker = null;
-                    _tappedLocationDetails = null;
-                    _tappedExperience =
-                        null; // ADDED: Clear associated experience
-                    _tappedExperienceCategory =
-                        null; // ADDED: Clear associated category
-                    _tappedLocationBusinessStatus =
-                        null; // ADDED: Clear business status
-                    _tappedLocationOpenNow =
-                        null; // ADDED: Clear open-now status
-                    _searchController.clear();
-                    _searchResults = [];
-                    _showSearchResults = false;
-                    _searchFocusNode.unfocus();
-                  });
-                  _showFilterDialog();
-                },
-              ),
-            ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // --- Search bar ---
-            Container(
-              color: AppColors.backgroundColor,
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Card(
-                  color: AppColors.backgroundColorDark,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(25.0),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: TextField(
-                      controller: _searchController,
-                      focusNode: _searchFocusNode,
-                      enabled: !_isReturningFromNavigation,
-                      decoration: InputDecoration(
-                        hintText: 'Search for a place or address',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(25.0),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(25.0),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(25.0),
-                          borderSide: BorderSide.none,
-                        ),
-                        filled: true,
-                        fillColor: AppColors.backgroundColorDark,
-                        prefixIcon: Icon(Icons.search,
-                            color: Theme.of(context).primaryColor),
-                        suffixIcon:
-                            _isSearching // Show loading indicator in search bar
-                                ? SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(4.0),
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    ),
-                                  )
-                                : _searchController.text.isNotEmpty
-                                    ? IconButton(
-                                        icon: Icon(Icons.clear),
-                                        onPressed: () {
-                                          triggerHeavyHaptic();
-                                          setState(() {
-                                            _searchController.clear();
-                                            _searchResults = [];
-                                            _showSearchResults = false;
-                                            // Clear tapped location when search is cleared
-                                            _tappedLocationDetails = null;
-                                            _tappedLocationMarker = null;
-                                            _tappedExperience = null;
-                                            _tappedExperienceCategory = null;
-                                            _tappedLocationBusinessStatus =
-                                                null;
-                                            _tappedLocationOpenNow = null;
-                                          });
-                                        },
-                                      )
-                                    : null,
-                      ),
-                      onTap: withHeavyTap(() {
-                        triggerHeavyHaptic();
-                        // When search bar is tapped, clear any existing map-tapped location
-                        // to avoid confusion if the user then selects from search results.
-                        // However, don't clear if a search result was *just* selected.
-                        // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
-                      }),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // --- END Search bar ---
-
-            // --- ADDED: Search results (from LocationPickerScreen) ---
-            if (_showSearchResults)
-              Container(
-                constraints: BoxConstraints(
-                  // Adjust max height based on keyboard visibility
-                  maxHeight: isKeyboardVisible
-                      ? MediaQuery.of(context).size.height *
-                          0.35 // More space when keyboard is up
-                      : MediaQuery.of(context).size.height *
-                          0.3, // Less space otherwise
-                ),
-                margin: EdgeInsets.symmetric(horizontal: 8.0),
-                decoration: BoxDecoration(
-                  color: AppColors.backgroundColor,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  itemCount: _searchResults.length,
-                  separatorBuilder: (context, index) => Divider(
-                    height: 1,
-                    indent: 56,
-                    endIndent: 16,
-                    color: AppColors.backgroundColorMid,
-                  ),
-                  itemBuilder: (context, index) {
-                    final result = _searchResults[index];
-                    final bool isUserExperience =
-                        result['type'] == 'experience';
-                    final bool hasRating = result['rating'] != null;
-                    final double rating =
-                        hasRating ? (result['rating'] as double) : 0.0;
-                    final String? address = result['address'] ??
-                        (result['structured_formatting'] != null
-                            ? result['structured_formatting']['secondary_text']
-                            : null);
-
-                    return Material(
-                      color: AppColors.backgroundColor,
-                      child: InkWell(
-                        onTap: withHeavyTap(() {
-                          triggerHeavyHaptic();
-                          _selectSearchResult(result);
-                        }),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: ListTile(
-                            tileColor: AppColors.backgroundColor,
-                            leading: CircleAvatar(
-                              backgroundColor: isUserExperience
-                                  ? Colors.green.withOpacity(0.1)
-                                  : Theme.of(context)
-                                      .primaryColor
-                                      .withOpacity(0.1),
-                              child: isUserExperience
-                                  ? Icon(
-                                      Icons.bookmark,
-                                      color: Colors.green,
-                                      size: 18,
-                                    )
-                                  : Text(
-                                      '${index + 1}',
-                                      style: TextStyle(
-                                        color: Theme.of(context).primaryColor,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                            ),
-                            title: Row(
-                              children: [
-                                if (isUserExperience) ...[
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(
-                                          color: Colors.green.withOpacity(0.3)),
-                                    ),
-                                    child: Text(
-                                      'Saved',
-                                      style: TextStyle(
-                                        color: Colors.green[700],
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(width: 8),
-                                ],
-                                Expanded(
-                                  child: Text(
-                                    result['description'] ?? 'Unknown Place',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 15,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (address != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4.0),
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.location_on,
-                                            size: 14, color: Colors.grey[600]),
-                                        SizedBox(width: 4),
-                                        Expanded(
-                                          child: Text(
-                                            address,
-                                            style: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 13,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                if (hasRating)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4.0),
-                                    child: Row(
-                                      children: [
-                                        ...List.generate(
-                                            5,
-                                            (i) => Icon(
-                                                  i < rating.floor()
-                                                      ? Icons.star
-                                                      : (i < rating)
-                                                          ? Icons.star_half
-                                                          : Icons.star_border,
-                                                  size: 14,
-                                                  color: Colors.amber,
-                                                )),
-                                        SizedBox(width: 4),
-                                        if (result['userRatingCount'] != null)
-                                          Text(
-                                            '(${result['userRatingCount']})',
-                                            style: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            // --- END Search results ---
-
-            // --- MODIFIED: Map now takes remaining space ---
-            Expanded(
-              child: Stack(
-                children: [
-                  GoogleMapsWidget(
-                    initialLocation:
-                        _mapWidgetInitialLocation, // Use the dynamic initial location
-                    showUserLocation: true,
-                    allowSelection: true,
-                    onLocationSelected: _handleLocationSelected,
-                    showControls: true,
-                    mapToolbarEnabled: !_canOpenSelectedExperience &&
-                        !_isEventViewModeActive &&
-                        !_isAddToEventModeActive,
-                    additionalMarkers: allMarkers,
-                    onMapControllerCreated: _onMapWidgetCreated,
-                  ),
-                  // ADDED: Event view mode overlay
-                  if (_isEventViewModeActive && _activeEventViewMode != null)
-                    Positioned(
-                      top: 16,
-                      left: 16,
-                      right: 16,
-                      child: _wrapWebPointerInterceptor(
-                        GestureDetector(
-                          onTap: withHeavyTap(() async {
-                            triggerHeavyHaptic();
-                            // Fit camera to show all itinerary experiences
-                            final positions = _eventViewMarkers.values
-                                .map((marker) => marker.position)
-                                .toList();
-                            if (positions.isNotEmpty) {
-                              await _fitCameraToBounds(positions);
-                            }
-                          }),
-                          child: Container(
-                            constraints: _isEventOverlayExpanded
-                                ? BoxConstraints(
-                                    maxHeight:
-                                        MediaQuery.of(context).size.height *
-                                            0.6,
-                                  )
-                                : const BoxConstraints(),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.15),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Header row
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 12),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 4,
-                                        height: 40,
-                                        decoration: BoxDecoration(
-                                          color: _getEventColor(
-                                              _activeEventViewMode!),
-                                          borderRadius:
-                                              BorderRadius.circular(2),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              _activeEventViewMode!
-                                                      .title.isEmpty
-                                                  ? 'Untitled Event'
-                                                  : _activeEventViewMode!.title,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                                fontSize: 16,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              _isAddToEventModeActive
-                                                  ? (() {
-                                                      final existingCount =
-                                                          _activeEventViewMode!
-                                                              .experiences
-                                                              .length;
-                                                      final newCount =
-                                                          _addToEventDraftItinerary
-                                                              .length;
-                                                      final totalCount =
-                                                          existingCount +
-                                                              newCount;
-                                                      if (newCount == 0) {
-                                                        return '$existingCount item${existingCount != 1 ? 's' : ''} • Tap to add more';
-                                                      } else {
-                                                        return '$totalCount item${totalCount != 1 ? 's' : ''} (+$newCount new)';
-                                                      }
-                                                    })()
-                                                  : '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color: Colors.grey[600],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      // List icon button
-                                      Stack(
-                                        clipBehavior: Clip.none,
-                                        children: [
-                                          Material(
-                                            color: Colors.transparent,
-                                            child: InkWell(
-                                              onTap: withHeavyTap(() {
-                                                triggerHeavyHaptic();
-                                                setState(() {
-                                                  _isEventOverlayExpanded =
-                                                      !_isEventOverlayExpanded;
-                                                });
-                                              }),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                              child: Container(
-                                                padding:
-                                                    const EdgeInsets.all(8),
-                                                decoration: BoxDecoration(
-                                                  color: _getEventColor(
-                                                    _activeEventViewMode!,
-                                                  ).withOpacity(
-                                                    _isEventOverlayExpanded
-                                                        ? 0.8
-                                                        : 0.6,
-                                                  ),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: const Icon(
-                                                  Icons.list,
-                                                  size: 20,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          Positioned(
-                                            right: -4,
-                                            bottom: -4,
-                                            child: Container(
-                                              padding: const EdgeInsets.all(4),
-                                              decoration: BoxDecoration(
-                                                color: _getEventColor(
-                                                    _activeEventViewMode!),
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: Text(
-                                                _isAddToEventModeActive
-                                                    ? '${_activeEventViewMode!.experiences.length + _addToEventDraftItinerary.length}'
-                                                    : '${_activeEventViewMode!.experiences.length}',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      // Add experiences button (or finish button when in add mode)
-                                      // Only show if user can edit the event
-                                      if (_canEditEvent(
-                                          _activeEventViewMode!)) ...[
-                                        const SizedBox(width: 4),
-                                        Stack(
-                                          clipBehavior: Clip.none,
-                                          children: [
-                                            Material(
-                                              color: Colors.transparent,
-                                              child: InkWell(
-                                                onTap: withHeavyTap(() {
-                                                  triggerHeavyHaptic();
-                                                  if (_isAddToEventModeActive) {
-                                                    _finishAddToEvent();
-                                                  } else {
-                                                    _enterAddToEventMode();
-                                                  }
-                                                }),
-                                                borderRadius:
-                                                    BorderRadius.circular(20),
-                                                child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(8),
-                                                  decoration: BoxDecoration(
-                                                    color:
-                                                        _isAddToEventModeActive
-                                                            ? Colors.green
-                                                            : Theme.of(context)
-                                                                .primaryColor,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: Icon(
-                                                    _isAddToEventModeActive
-                                                        ? Icons.check
-                                                        : Icons.add,
-                                                    size: 20,
-                                                    color: Colors.white,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                            if (_isAddToEventModeActive)
-                                              Positioned(
-                                                right: -4,
-                                                bottom: -4,
-                                                child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(4),
-                                                  decoration: BoxDecoration(
-                                                    color: _addToEventDraftItinerary
-                                                            .isNotEmpty
-                                                        ? Colors.red
-                                                        : _getEventColor(
-                                                            _activeEventViewMode!),
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: Text(
-                                                    '${_addToEventDraftItinerary.length}',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 10,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                        const SizedBox(width: 4),
-                                      ],
-                                      const SizedBox(width: 4),
-                                      // Close button
-                                      Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: withHeavyTap(() {
-                                            triggerHeavyHaptic();
-                                            _confirmExitEventViewMode();
-                                          }),
-                                          borderRadius:
-                                              BorderRadius.circular(20),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey[100],
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(
-                                              Icons.close,
-                                              size: 20,
-                                              color: Colors.black54,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                // Expanded itinerary list
-                                if (_isEventOverlayExpanded)
-                                  Divider(height: 1, thickness: 1),
-                                if (_isEventOverlayExpanded)
-                                  Flexible(
-                                    child: _buildEventItineraryList(),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  // ADDED: Select mode overlay (for creating new events)
-                  if (_isSelectModeActive)
-                    Positioned(
-                      top: 16,
-                      left: 16,
-                      right: 16,
-                      child: _wrapWebPointerInterceptor(
-                        Container(
-                          constraints: _isSelectModeOverlayExpanded
-                              ? BoxConstraints(
-                                  maxHeight:
-                                      MediaQuery.of(context).size.height * 0.6,
-                                )
-                              : const BoxConstraints(),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.15),
-                                blurRadius: 10,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Header row
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 12),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 4,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: _selectModeColor,
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Text(
-                                            'Select experiences',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 16,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            _selectModeDraftItinerary.isEmpty
-                                                ? 'Tap locations to add them'
-                                                : '${_selectModeDraftItinerary.length} item${_selectModeDraftItinerary.length != 1 ? 's' : ''} selected',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              color: Colors.grey[600],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    // List icon button
-                                    Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        Material(
-                                          color: Colors.transparent,
-                                          child: InkWell(
-                                            onTap: withHeavyTap(() {
-                                              triggerHeavyHaptic();
-                                              setState(() {
-                                                _isSelectModeOverlayExpanded =
-                                                    !_isSelectModeOverlayExpanded;
-                                              });
-                                            }),
-                                            borderRadius:
-                                                BorderRadius.circular(20),
-                                            child: Container(
-                                              padding: const EdgeInsets.all(8),
-                                              decoration: BoxDecoration(
-                                                color: _selectModeColor.withOpacity(
-                                                    _isSelectModeOverlayExpanded
-                                                        ? 0.8
-                                                        : 0.6),
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: const Icon(
-                                                Icons.list,
-                                                size: 20,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned(
-                                          right: -4,
-                                          bottom: -4,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(4),
-                                            decoration: BoxDecoration(
-                                              color: _selectModeColor,
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Text(
-                                              '${_selectModeDraftItinerary.length}',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(width: 4),
-                                    // Checkmark button
-                                    Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        Material(
-                                          color: Colors.transparent,
-                                          child: InkWell(
-                                            onTap: withHeavyTap(() {
-                                              triggerHeavyHaptic();
-                                              _finishSelectModeAndOpenEditor();
-                                            }),
-                                            borderRadius:
-                                                BorderRadius.circular(20),
-                                            child: Container(
-                                              padding: const EdgeInsets.all(8),
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context)
-                                                    .primaryColor,
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: const Icon(
-                                                Icons.check,
-                                                size: 20,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned(
-                                          right: -4,
-                                          bottom: -4,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(4),
-                                            decoration: BoxDecoration(
-                                              color: _selectModeDraftItinerary
-                                                      .isNotEmpty
-                                                  ? Colors.red
-                                                  : _selectModeColor,
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Text(
-                                              '${_selectModeDraftItinerary.length}',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(width: 4),
-                                    // Close button
-                                    Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: withHeavyTap(() {
-                                          triggerHeavyHaptic();
-                                          _confirmExitSelectMode();
-                                        }),
-                                        borderRadius: BorderRadius.circular(20),
-                                        child: Container(
-                                          padding: const EdgeInsets.all(8),
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey[100],
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.close,
-                                            size: 20,
-                                            color: Colors.black54,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              // Expanded itinerary list
-                              if (_isSelectModeOverlayExpanded)
-                                const Divider(height: 1, thickness: 1),
-                              if (_isSelectModeOverlayExpanded)
-                                Flexible(
-                                  child: _buildSelectModeItineraryList(),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
-                  // Wrapped in RepaintBoundary to isolate animation from rest of widget tree
-                  RepaintBoundary(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 420),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        final offsetAnimation = Tween<Offset>(
-                          begin: const Offset(0, 0.35),
-                          end: Offset.zero,
-                        ).animate(animation);
-                        return SlideTransition(
-                          position: offsetAnimation,
-                          child:
-                              FadeTransition(opacity: animation, child: child),
+    return Stack(
+      children: [
+        Scaffold(
+          resizeToAvoidBottomInset: true,
+          backgroundColor: AppColors.backgroundColor,
+          appBar: AppBar(
+            backgroundColor: AppColors.backgroundColor,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            titleSpacing: 0,
+            leading: hasCustomLeading
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () async {
+                      triggerHeavyHaptic();
+                      // If in add-to-event mode with changes, return the updated event
+                      if (_isAddToEventModeActive &&
+                          _addToEventDraftItinerary.isNotEmpty &&
+                          _activeEventViewMode != null) {
+                        final updatedEvent = _activeEventViewMode!.copyWith(
+                          experiences: [
+                            ..._activeEventViewMode!.experiences,
+                            ..._addToEventDraftItinerary,
+                          ],
+                          updatedAt: DateTime.now(),
                         );
-                      },
-                      child: (_tappedLocationDetails != null &&
-                              !isKeyboardVisible)
-                          ? Align(
-                              key: ValueKey(
-                                _tappedExperience?.id ??
-                                    _tappedLocationDetails?.placeId ??
-                                    selectedTitle,
-                              ),
-                              alignment: Alignment.bottomCenter,
-                              child: _wrapWebPointerInterceptor(
-                                ConstrainedBox(
-                                  constraints: kIsWeb
-                                      ? const BoxConstraints(maxWidth: 480)
-                                      : const BoxConstraints(),
-                                  child: Container(
-                                    padding: EdgeInsets.fromLTRB(
-                                      16,
-                                      16,
-                                      16,
-                                      2 +
-                                          MediaQuery.of(context)
-                                                  .padding
-                                                  .bottom /
-                                              2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.backgroundColor,
-                                      borderRadius: const BorderRadius.only(
-                                        topLeft: Radius.circular(28),
-                                        topRight: Radius.circular(28),
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.1),
-                                          blurRadius: 8,
-                                          offset: Offset(0,
-                                              -3), // Shadow upwards as it's at the bottom of content
+                        Navigator.of(context).pop(updatedEvent);
+                      } else if (_activeEventViewMode != null) {
+                        // Return the current event (might have been modified via remove)
+                        Navigator.of(context).pop(_activeEventViewMode);
+                      } else {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                  )
+                : null,
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Add leading padding when there's no back button (e.g., from nav bar tab)
+                if (!hasLeading) const SizedBox(width: 16),
+                Image.asset(
+                  'assets/icon/icon-cropped.png',
+                  height: 28,
+                ),
+                const SizedBox(width: 8),
+                const Text('Plendy Map'),
+                const SizedBox(width: 8),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: child,
+                  ),
+                  child: ((_isLoading ||
+                              _isSharedLoading ||
+                              _isGlobeLoading ||
+                              _isCalendarDialogLoading) &&
+                          !_isSearching)
+                      ? SizedBox(
+                          key: const ValueKey('appbar_spinner'),
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        )
+                      : const SizedBox(
+                          key: ValueKey('appbar_empty'),
+                          width: 0,
+                          height: 0,
+                        ),
+                ),
+              ],
+            ),
+            actions: [
+              // Calendar toggle
+              Builder(
+                  builder: (calCtx) => Container(
+                        color: AppColors.backgroundColor,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.event_outlined,
+                            color: Colors.black,
+                          ),
+                          tooltip: 'Toggle calendar view',
+                          onPressed: () {
+                            if (_tryHelpTap(
+                                MapHelpTargetId.calendarToggle, calCtx)) return;
+                            triggerHeavyHaptic();
+                            _handleCalendarToggle();
+                          },
+                        ),
+                      )),
+              Builder(
+                  builder: (globeCtx) => Container(
+                        color: AppColors.backgroundColor,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.public,
+                            color: _isGlobalToggleActive
+                                ? Colors.black
+                                : Colors.grey,
+                          ),
+                          tooltip: 'Toggle global view',
+                          onPressed: () {
+                            if (_tryHelpTap(
+                                MapHelpTargetId.globeToggle, globeCtx)) return;
+                            triggerHeavyHaptic();
+                            _handleGlobeToggle();
+                          },
+                        ),
+                      )),
+              if (showFilterButton)
+                Builder(
+                    builder: (filterCtx) => Container(
+                          color: AppColors.backgroundColor,
+                          child: IconButton(
+                            icon: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                const Icon(Icons.filter_list),
+                                if (_hasActiveFilters)
+                                  Positioned(
+                                    right: 4,
+                                    bottom: 4,
+                                    child: Container(
+                                      width: 10,
+                                      height: 10,
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context).primaryColor,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: AppColors.backgroundColor,
+                                          width: 1.5,
                                         ),
-                                      ],
+                                      ),
                                     ),
-                                    child: Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        // ADDED: Positioned "Tap to view" text at the very top
-                                        if (showExperiencePrompt)
-                                          Positioned(
-                                            top:
-                                                -12, // Move it further up, closer to the edge
-                                            left: 0,
-                                            right: 0,
-                                            child: Center(
-                                              child: Text(
-                                                'Tap to view experience details',
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey[500],
-                                                  fontStyle: FontStyle.italic,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        GestureDetector(
-                                          onTap: withHeavyTap(showExperiencePrompt
-                                              ? () {
-                                                  triggerHeavyHaptic();
-                                                  _handleTappedLocationNavigation();
-                                                }
-                                              : null),
-                                          behavior: HitTestBehavior.translucent,
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              // ADDED: Add space at the top for the positioned text
-                                              if (showExperiencePrompt)
-                                                SizedBox(height: 12),
-                                              // Only show "Selected Location" for non-experience locations
-                                              if (!showExperiencePrompt) ...[
-                                                Text(
-                                                  'Selected Location',
-                                                  style: TextStyle(
-                                                    fontWeight:
-                                                        FontWeight.normal,
-                                                    fontSize: 14,
-                                                    color: Colors.grey[800],
-                                                  ),
-                                                ),
-                                                SizedBox(height: 12),
-                                              ],
-                                              Row(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Expanded(
+                                  ),
+                              ],
+                            ),
+                            tooltip: 'Filter Experiences',
+                            onPressed: () {
+                              if (_tryHelpTap(
+                                  MapHelpTargetId.filterButton, filterCtx))
+                                return;
+                              triggerHeavyHaptic();
+                              print("🗺️ MAP SCREEN: Filter button pressed!");
+                              setState(() {
+                                _tappedLocationMarker = null;
+                                _tappedLocationDetails = null;
+                                _tappedExperience = null;
+                                _tappedExperienceCategory = null;
+                                _tappedLocationBusinessStatus = null;
+                                _tappedLocationOpenNow = null;
+                                _searchController.clear();
+                                _searchResults = [];
+                                _showSearchResults = false;
+                                _searchFocusNode.unfocus();
+                              });
+                              _showFilterDialog();
+                            },
+                          ),
+                        )),
+              // Help button (far right)
+              Semantics(
+                label: _isHelpMode ? 'Exit help mode' : 'Enter help mode',
+                child: _isHelpMode
+                    ? AnimatedBuilder(
+                        animation: _spotlightController,
+                        builder: (context, child) {
+                          final scale = 1.0 + 0.15 * _spotlightController.value;
+                          return Transform.scale(scale: scale, child: child);
+                        },
+                        child: IconButton(
+                          key: _helpButtonKey,
+                          icon: Icon(Icons.help, color: AppColors.teal),
+                          tooltip: 'Exit Help Mode',
+                          onPressed: _toggleHelpMode,
+                        ),
+                      )
+                    : IconButton(
+                        key: _helpButtonKey,
+                        icon: const Icon(Icons.help_outline),
+                        tooltip: 'Help',
+                        onPressed: _toggleHelpMode,
+                      ),
+              ),
+            ],
+          ),
+          body: SafeArea(
+            child: Column(
+              children: [
+                if (_isHelpMode)
+                  GestureDetector(
+                    onTap: _toggleHelpMode,
+                    child: AnimatedBuilder(
+                      animation: _spotlightController,
+                      builder: (context, child) {
+                        final opacity = 0.6 + 0.4 * _spotlightController.value;
+                        return Opacity(opacity: opacity, child: child);
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        color: AppColors.teal.withValues(alpha: 0.08),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Text(
+                          'Help mode is ON  \u2022  Tap here to exit',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.teal,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // --- Search bar ---
+                Builder(
+                    builder: (searchCtx) => GestureDetector(
+                          behavior: _isHelpMode
+                              ? HitTestBehavior.opaque
+                              : HitTestBehavior.deferToChild,
+                          onTap: _isHelpMode
+                              ? () => _tryHelpTap(
+                                  MapHelpTargetId.searchBar, searchCtx)
+                              : null,
+                          child: IgnorePointer(
+                            ignoring: _isHelpMode,
+                            child: Container(
+                              color: AppColors.backgroundColor,
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Card(
+                                  color: AppColors.backgroundColorDark,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(25.0),
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8.0),
+                                    child: TextField(
+                                      controller: _searchController,
+                                      focusNode: _searchFocusNode,
+                                      enabled: !_isReturningFromNavigation,
+                                      decoration: InputDecoration(
+                                        hintText:
+                                            'Search for a place or address',
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(25.0),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(25.0),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(25.0),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        filled: true,
+                                        fillColor:
+                                            AppColors.backgroundColorDark,
+                                        prefixIcon: Icon(Icons.search,
+                                            color:
+                                                Theme.of(context).primaryColor),
+                                        suffixIcon:
+                                            _isSearching // Show loading indicator in search bar
+                                                ? SizedBox(
+                                                    width: 24,
+                                                    height: 24,
                                                     child: Padding(
                                                       padding:
-                                                          const EdgeInsets.only(
-                                                              top: 4.0),
-                                                      child: Row(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          if (selectedIcon !=
-                                                                  null &&
-                                                              selectedIcon
-                                                                  .isNotEmpty &&
-                                                              selectedIcon !=
-                                                                  '*') ...[
-                                                            SizedBox(
-                                                              width: 24,
-                                                              child: Center(
-                                                                child: Text(
-                                                                  selectedIcon,
-                                                                  style:
-                                                                      const TextStyle(
-                                                                    fontSize:
-                                                                        16,
-                                                                  ),
-                                                                  textAlign:
-                                                                      TextAlign
-                                                                          .center,
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            const SizedBox(
-                                                                width: 4),
-                                                          ],
-                                                          Expanded(
-                                                            child: Text(
-                                                              selectedName,
-                                                              style:
-                                                                  const TextStyle(
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w500,
-                                                                fontSize: 16,
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        ],
-                                                      ),
+                                                          const EdgeInsets.all(
+                                                              4.0),
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                              strokeWidth: 2),
                                                     ),
-                                                  ),
-                                                  Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      // Share button - only show when experience is selected
-                                                      if (_tappedExperience !=
-                                                          null) ...[
-                                                        const SizedBox(
-                                                            width: 8),
-                                                        IconButton(
-                                                          onPressed: () {
-                                                            triggerHeavyHaptic();
-                                                            _shareSelectedExperience();
-                                                          },
-                                                          icon: const Icon(
-                                                              Icons
-                                                                  .share_outlined,
-                                                              color: AppColors
-                                                                  .teal,
-                                                              size: 28),
-                                                          tooltip: 'Share',
-                                                          padding:
-                                                              EdgeInsets.zero,
-                                                          constraints:
-                                                              const BoxConstraints(),
-                                                          style: IconButton
-                                                              .styleFrom(
-                                                            minimumSize:
-                                                                Size.zero,
-                                                            tapTargetSize:
-                                                                MaterialTapTargetSize
-                                                                    .shrinkWrap,
-                                                          ),
-                                                        ),
-                                                        const SizedBox(
-                                                            width: 12),
-                                                      ],
-                                                      IconButton(
-                                                        onPressed: () {
-                                                          triggerHeavyHaptic();
-                                                          if (_tappedLocationDetails !=
-                                                              null) {
-                                                            _launchMapLocation(
-                                                                _tappedLocationDetails!);
-                                                          }
-                                                        },
-                                                        icon: Image.asset(
-                                                          'assets/icon/misc/googlemaps_logo.png',
-                                                          height: 25,
-                                                        ),
-                                                        tooltip:
-                                                            'Open in map app',
-                                                        padding:
-                                                            EdgeInsets.zero,
-                                                        constraints:
-                                                            const BoxConstraints(),
-                                                        style: IconButton
-                                                            .styleFrom(
-                                                          minimumSize:
-                                                              Size.zero,
-                                                          tapTargetSize:
-                                                              MaterialTapTargetSize
-                                                                  .shrinkWrap,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 12),
-                                                      IconButton(
-                                                        onPressed: () {
-                                                          triggerHeavyHaptic();
-                                                          if (_tappedLocationDetails !=
-                                                              null) {
-                                                            _openDirectionsForLocation(
-                                                                _tappedLocationDetails!);
-                                                          }
-                                                        },
-                                                        icon: Icon(
-                                                            Icons.directions,
-                                                            color:
-                                                                AppColors.sage,
-                                                            size: 28),
-                                                        tooltip:
-                                                            'Get Directions',
-                                                        padding:
-                                                            EdgeInsets.zero,
-                                                        constraints:
-                                                            const BoxConstraints(),
-                                                        style: IconButton
-                                                            .styleFrom(
-                                                          minimumSize:
-                                                              Size.zero,
-                                                          tapTargetSize:
-                                                              MaterialTapTargetSize
-                                                                  .shrinkWrap,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 12),
-                                                      IconButton(
+                                                  )
+                                                : _searchController
+                                                        .text.isNotEmpty
+                                                    ? IconButton(
+                                                        icon: Icon(Icons.clear),
                                                         onPressed: () {
                                                           triggerHeavyHaptic();
                                                           setState(() {
-                                                            _tappedLocationMarker =
-                                                                null;
+                                                            _searchController
+                                                                .clear();
+                                                            _searchResults = [];
+                                                            _showSearchResults =
+                                                                false;
+                                                            // Clear tapped location when search is cleared
                                                             _tappedLocationDetails =
+                                                                null;
+                                                            _tappedLocationMarker =
                                                                 null;
                                                             _tappedExperience =
                                                                 null;
@@ -9372,480 +9349,1540 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                                 null;
                                                           });
                                                         },
-                                                        icon: Icon(Icons.close,
+                                                      )
+                                                    : null,
+                                      ),
+                                      onTap: withHeavyTap(() {
+                                        triggerHeavyHaptic();
+                                        // When search bar is tapped, clear any existing map-tapped location
+                                        // to avoid confusion if the user then selects from search results.
+                                        // However, don't clear if a search result was *just* selected.
+                                        // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
+                                      }),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )),
+                // --- END Search bar ---
+
+                // --- ADDED: Search results (from LocationPickerScreen) ---
+                if (_showSearchResults)
+                  Container(
+                    constraints: BoxConstraints(
+                      // Adjust max height based on keyboard visibility
+                      maxHeight: isKeyboardVisible
+                          ? MediaQuery.of(context).size.height *
+                              0.35 // More space when keyboard is up
+                          : MediaQuery.of(context).size.height *
+                              0.3, // Less space otherwise
+                    ),
+                    margin: EdgeInsets.symmetric(horizontal: 8.0),
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundColor,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 8,
+                          offset: Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      itemCount: _searchResults.length,
+                      separatorBuilder: (context, index) => Divider(
+                        height: 1,
+                        indent: 56,
+                        endIndent: 16,
+                        color: AppColors.backgroundColorMid,
+                      ),
+                      itemBuilder: (context, index) {
+                        final result = _searchResults[index];
+                        final bool isUserExperience =
+                            result['type'] == 'experience';
+                        final bool hasRating = result['rating'] != null;
+                        final double rating =
+                            hasRating ? (result['rating'] as double) : 0.0;
+                        final String? address = result['address'] ??
+                            (result['structured_formatting'] != null
+                                ? result['structured_formatting']
+                                    ['secondary_text']
+                                : null);
+
+                        return Material(
+                          color: AppColors.backgroundColor,
+                          child: InkWell(
+                            onTap: withHeavyTap(() {
+                              triggerHeavyHaptic();
+                              _selectSearchResult(result);
+                            }),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 4.0),
+                              child: ListTile(
+                                tileColor: AppColors.backgroundColor,
+                                leading: CircleAvatar(
+                                  backgroundColor: isUserExperience
+                                      ? Colors.green.withOpacity(0.1)
+                                      : Theme.of(context)
+                                          .primaryColor
+                                          .withOpacity(0.1),
+                                  child: isUserExperience
+                                      ? Icon(
+                                          Icons.bookmark,
+                                          color: Colors.green,
+                                          size: 18,
+                                        )
+                                      : Text(
+                                          '${index + 1}',
+                                          style: TextStyle(
+                                            color:
+                                                Theme.of(context).primaryColor,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                ),
+                                title: Row(
+                                  children: [
+                                    if (isUserExperience) ...[
+                                      Container(
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withOpacity(0.1),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          border: Border.all(
+                                              color: Colors.green
+                                                  .withOpacity(0.3)),
+                                        ),
+                                        child: Text(
+                                          'Saved',
+                                          style: TextStyle(
+                                            color: Colors.green[700],
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(width: 8),
+                                    ],
+                                    Expanded(
+                                      child: Text(
+                                        result['description'] ??
+                                            'Unknown Place',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          fontSize: 15,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (address != null)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(top: 4.0),
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.location_on,
+                                                size: 14,
+                                                color: Colors.grey[600]),
+                                            SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                address,
+                                                style: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 13,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    if (hasRating)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(top: 4.0),
+                                        child: Row(
+                                          children: [
+                                            ...List.generate(
+                                                5,
+                                                (i) => Icon(
+                                                      i < rating.floor()
+                                                          ? Icons.star
+                                                          : (i < rating)
+                                                              ? Icons.star_half
+                                                              : Icons
+                                                                  .star_border,
+                                                      size: 14,
+                                                      color: Colors.amber,
+                                                    )),
+                                            SizedBox(width: 4),
+                                            if (result['userRatingCount'] !=
+                                                null)
+                                              Text(
+                                                '(${result['userRatingCount']})',
+                                                style: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                // --- END Search results ---
+
+                // --- MODIFIED: Map now takes remaining space ---
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Builder(
+                          builder: (mapCtx) => GestureDetector(
+                                behavior: _isHelpMode
+                                    ? HitTestBehavior.opaque
+                                    : HitTestBehavior.deferToChild,
+                                onTap: _isHelpMode
+                                    ? () => _tryHelpTap(
+                                        MapHelpTargetId.mapArea, mapCtx)
+                                    : null,
+                                child: IgnorePointer(
+                                  ignoring: _isHelpMode,
+                                  child: GoogleMapsWidget(
+                                    initialLocation: _mapWidgetInitialLocation,
+                                    showUserLocation: true,
+                                    allowSelection: true,
+                                    onLocationSelected: _handleLocationSelected,
+                                    showControls: true,
+                                    mapToolbarEnabled:
+                                        !_canOpenSelectedExperience &&
+                                            !_isEventViewModeActive &&
+                                            !_isAddToEventModeActive,
+                                    additionalMarkers: allMarkers,
+                                    onMapControllerCreated: _onMapWidgetCreated,
+                                  ),
+                                ),
+                              )),
+                      // ADDED: Event view mode overlay
+                      if (_isEventViewModeActive &&
+                          _activeEventViewMode != null)
+                        Positioned(
+                          top: 16,
+                          left: 16,
+                          right: 16,
+                          child: _wrapWebPointerInterceptor(
+                            Builder(
+                                builder: (evHeaderCtx) => GestureDetector(
+                                      onTap: withHeavyTap(() async {
+                                        if (_tryHelpTap(
+                                            MapHelpTargetId.eventViewHeader,
+                                            evHeaderCtx)) return;
+                                        triggerHeavyHaptic();
+                                        final positions = _eventViewMarkers
+                                            .values
+                                            .map((marker) => marker.position)
+                                            .toList();
+                                        if (positions.isNotEmpty) {
+                                          await _fitCameraToBounds(positions);
+                                        }
+                                      }),
+                                      child: Container(
+                                        constraints: _isEventOverlayExpanded
+                                            ? BoxConstraints(
+                                                maxHeight:
+                                                    MediaQuery.of(context)
+                                                            .size
+                                                            .height *
+                                                        0.6,
+                                              )
+                                            : const BoxConstraints(),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.15),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            // Header row
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                      vertical: 12),
+                                              child: Row(
+                                                children: [
+                                                  Container(
+                                                    width: 4,
+                                                    height: 40,
+                                                    decoration: BoxDecoration(
+                                                      color: _getEventColor(
+                                                          _activeEventViewMode!),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              2),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 12),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        Text(
+                                                          _activeEventViewMode!
+                                                                  .title.isEmpty
+                                                              ? 'Untitled Event'
+                                                              : _activeEventViewMode!
+                                                                  .title,
+                                                          style:
+                                                              const TextStyle(
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                            fontSize: 16,
+                                                          ),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                        const SizedBox(
+                                                            height: 2),
+                                                        Text(
+                                                          _isAddToEventModeActive
+                                                              ? (() {
+                                                                  final existingCount =
+                                                                      _activeEventViewMode!
+                                                                          .experiences
+                                                                          .length;
+                                                                  final newCount =
+                                                                      _addToEventDraftItinerary
+                                                                          .length;
+                                                                  final totalCount =
+                                                                      existingCount +
+                                                                          newCount;
+                                                                  if (newCount ==
+                                                                      0) {
+                                                                    return '$existingCount item${existingCount != 1 ? 's' : ''} • Tap to add more';
+                                                                  } else {
+                                                                    return '$totalCount item${totalCount != 1 ? 's' : ''} (+$newCount new)';
+                                                                  }
+                                                                })()
+                                                              : '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
+                                                          style: TextStyle(
+                                                            fontSize: 13,
                                                             color: Colors
                                                                 .grey[600],
-                                                            size: 28),
-                                                        tooltip: 'Close',
-                                                        padding:
-                                                            EdgeInsets.zero,
-                                                        constraints:
-                                                            const BoxConstraints(),
-                                                        style: IconButton
-                                                            .styleFrom(
-                                                          minimumSize:
-                                                              Size.zero,
-                                                          tapTargetSize:
-                                                              MaterialTapTargetSize
-                                                                  .shrinkWrap,
+                                                          ),
                                                         ),
-                                                      ),
-                                                      if (kIsWeb)
-                                                        const SizedBox(
-                                                            width: 8),
-                                                    ],
-                                                  ),
-                                                ],
-                                              ),
-                                              if (_tappedExperience !=
-                                                  null) ...[
-                                                if (_tappedExperience!
-                                                    .otherCategories
-                                                    .isNotEmpty) ...[
-                                                  _buildOtherCategoriesWidget(),
-                                                ],
-                                                Align(
-                                                  alignment:
-                                                      Alignment.centerLeft,
-                                                  child:
-                                                      _buildColorCategoryWidget(),
-                                                ),
-                                              ],
-                                              const SizedBox(
-                                                  height:
-                                                      0), // Removed top padding
-                                              if (_tappedLocationDetails!
-                                                          .address !=
-                                                      null &&
-                                                  _tappedLocationDetails!
-                                                      .address!.isNotEmpty) ...[
-                                                Row(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.center,
-                                                  children: [
-                                                    Expanded(
-                                                      child: Text(
-                                                        _tappedLocationDetails!
-                                                            .address!,
-                                                        style: TextStyle(
-                                                            color: Colors
-                                                                .grey[700]),
-                                                      ),
+                                                      ],
                                                     ),
-                                                    if (_tappedExperience !=
-                                                            null ||
-                                                        hasPublicFallback) ...[
-                                                      const SizedBox(width: 12),
-                                                      SizedBox(
-                                                        width: 48,
-                                                        height: 48,
-                                                        child: OverflowBox(
-                                                          minHeight: 48,
-                                                          maxHeight: 48,
-                                                          alignment:
-                                                              Alignment.center,
-                                                          child:
-                                                              GestureDetector(
-                                                            onTap: withHeavyTap(() {
-                                                              triggerHeavyHaptic();
-                                                              _onPlayExperienceContent();
-                                                            }),
-                                                            child:
-                                                                AnimatedOpacity(
-                                                              duration:
-                                                                  const Duration(
-                                                                      milliseconds:
-                                                                          200),
-                                                              opacity:
-                                                                  canPreviewContent
-                                                                      ? 1.0
-                                                                      : 0.45,
-                                                              child: Stack(
-                                                                clipBehavior:
-                                                                    Clip.none,
-                                                                children: [
-                                                                  Container(
-                                                                    width: 48,
-                                                                    height: 48,
-                                                                    decoration:
-                                                                        BoxDecoration(
-                                                                      color: Theme.of(
-                                                                              context)
-                                                                          .primaryColor,
-                                                                      shape: BoxShape
-                                                                          .circle,
-                                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  // List icon button
+                                                  Stack(
+                                                    clipBehavior: Clip.none,
+                                                    children: [
+                                                      Builder(
+                                                          builder:
+                                                              (evListCtx) =>
+                                                                  Material(
+                                                                    color: Colors
+                                                                        .transparent,
                                                                     child:
-                                                                        const Icon(
-                                                                      Icons
-                                                                          .play_arrow,
-                                                                      color: Colors
-                                                                          .white,
-                                                                      size: 24,
-                                                                    ),
-                                                                  ),
-                                                                  Positioned(
-                                                                    bottom: -2,
-                                                                    right: -2,
-                                                                    child:
-                                                                        Container(
-                                                                      width: 22,
-                                                                      height:
-                                                                          22,
-                                                                      decoration:
-                                                                          BoxDecoration(
-                                                                        color: Colors
-                                                                            .white,
-                                                                        shape: BoxShape
-                                                                            .circle,
-                                                                        border:
-                                                                            Border.all(
-                                                                          color:
-                                                                              Theme.of(context).primaryColor,
-                                                                          width:
-                                                                              2,
-                                                                        ),
-                                                                      ),
+                                                                        InkWell(
+                                                                      onTap:
+                                                                          withHeavyTap(
+                                                                              () {
+                                                                        if (_tryHelpTap(
+                                                                            MapHelpTargetId
+                                                                                .eventViewListToggle,
+                                                                            evListCtx))
+                                                                          return;
+                                                                        triggerHeavyHaptic();
+                                                                        setState(
+                                                                            () {
+                                                                          _isEventOverlayExpanded =
+                                                                              !_isEventOverlayExpanded;
+                                                                        });
+                                                                      }),
+                                                                      borderRadius:
+                                                                          BorderRadius.circular(
+                                                                              20),
                                                                       child:
-                                                                          Center(
-                                                                        child:
-                                                                            Text(
-                                                                          selectedMediaCount
-                                                                              .toString(),
-                                                                          style:
-                                                                              TextStyle(
-                                                                            color:
-                                                                                Theme.of(context).primaryColor,
-                                                                            fontSize:
-                                                                                12,
-                                                                            fontWeight:
-                                                                                FontWeight.w600,
+                                                                          Container(
+                                                                        padding: const EdgeInsets
+                                                                            .all(
+                                                                            8),
+                                                                        decoration:
+                                                                            BoxDecoration(
+                                                                          color:
+                                                                              _getEventColor(
+                                                                            _activeEventViewMode!,
+                                                                          ).withOpacity(
+                                                                            _isEventOverlayExpanded
+                                                                                ? 0.8
+                                                                                : 0.6,
                                                                           ),
+                                                                          shape:
+                                                                              BoxShape.circle,
+                                                                        ),
+                                                                        child:
+                                                                            const Icon(
+                                                                          Icons
+                                                                              .list,
+                                                                          size:
+                                                                              20,
+                                                                          color:
+                                                                              Colors.white,
                                                                         ),
                                                                       ),
                                                                     ),
-                                                                  ),
-                                                                ],
-                                                              ),
+                                                                  )),
+                                                      Positioned(
+                                                        right: -4,
+                                                        bottom: -4,
+                                                        child: Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .all(4),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: _getEventColor(
+                                                                _activeEventViewMode!),
+                                                            shape:
+                                                                BoxShape.circle,
+                                                          ),
+                                                          child: Text(
+                                                            _isAddToEventModeActive
+                                                                ? '${_activeEventViewMode!.experiences.length + _addToEventDraftItinerary.length}'
+                                                                : '${_activeEventViewMode!.experiences.length}',
+                                                            style:
+                                                                const TextStyle(
+                                                              color:
+                                                                  Colors.white,
+                                                              fontSize: 10,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
                                                             ),
                                                           ),
                                                         ),
                                                       ),
                                                     ],
-                                                  ],
-                                                ),
-                                                const SizedBox(height: 0),
-                                              ],
-                                              if (selectedAdditionalNotes !=
-                                                  null) ...[
-                                                Row(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.notes,
-                                                      size: 18,
-                                                      color: Colors.grey[700],
+                                                  ),
+                                                  // Add experiences button (or finish button when in add mode)
+                                                  if (_canEditEvent(
+                                                      _activeEventViewMode!)) ...[
+                                                    const SizedBox(width: 4),
+                                                    Stack(
+                                                      clipBehavior: Clip.none,
+                                                      children: [
+                                                        Builder(
+                                                            builder:
+                                                                (evAddCtx) =>
+                                                                    Material(
+                                                                      color: Colors
+                                                                          .transparent,
+                                                                      child:
+                                                                          InkWell(
+                                                                        onTap: withHeavyTap(
+                                                                            () {
+                                                                          if (_tryHelpTap(
+                                                                              MapHelpTargetId
+                                                                                  .eventViewAddExperiences,
+                                                                              evAddCtx))
+                                                                            return;
+                                                                          triggerHeavyHaptic();
+                                                                          if (_isAddToEventModeActive) {
+                                                                            _finishAddToEvent();
+                                                                          } else {
+                                                                            _enterAddToEventMode();
+                                                                          }
+                                                                        }),
+                                                                        borderRadius:
+                                                                            BorderRadius.circular(20),
+                                                                        child:
+                                                                            Container(
+                                                                          padding: const EdgeInsets
+                                                                              .all(
+                                                                              8),
+                                                                          decoration:
+                                                                              BoxDecoration(
+                                                                            color: _isAddToEventModeActive
+                                                                                ? Colors.green
+                                                                                : Theme.of(context).primaryColor,
+                                                                            shape:
+                                                                                BoxShape.circle,
+                                                                          ),
+                                                                          child:
+                                                                              Icon(
+                                                                            _isAddToEventModeActive
+                                                                                ? Icons.check
+                                                                                : Icons.add,
+                                                                            size:
+                                                                                20,
+                                                                            color:
+                                                                                Colors.white,
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                    )),
+                                                        if (_isAddToEventModeActive)
+                                                          Positioned(
+                                                            right: -4,
+                                                            bottom: -4,
+                                                            child: Container(
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .all(4),
+                                                              decoration:
+                                                                  BoxDecoration(
+                                                                color: _addToEventDraftItinerary
+                                                                        .isNotEmpty
+                                                                    ? Colors.red
+                                                                    : _getEventColor(
+                                                                        _activeEventViewMode!),
+                                                                shape: BoxShape
+                                                                    .circle,
+                                                              ),
+                                                              child: Text(
+                                                                '${_addToEventDraftItinerary.length}',
+                                                                style:
+                                                                    const TextStyle(
+                                                                  color: Colors
+                                                                      .white,
+                                                                  fontSize: 10,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
                                                     ),
-                                                    const SizedBox(width: 8),
-                                                    Expanded(
-                                                      child: Text(
-                                                        selectedAdditionalNotes,
-                                                        style: TextStyle(
-                                                          color:
-                                                              Colors.grey[800],
-                                                          fontStyle:
-                                                              FontStyle.italic,
-                                                        ),
-                                                        maxLines: 3,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                      ),
-                                                    ),
+                                                    const SizedBox(width: 4),
                                                   ],
-                                                ),
-                                                const SizedBox(height: 8),
-                                              ],
-                                              // ADDED: Star Rating
-                                              if (_tappedLocationDetails!
-                                                      .rating !=
-                                                  null) ...[
-                                                Row(
-                                                  children: [
-                                                    ...List.generate(5, (i) {
-                                                      final ratingValue =
-                                                          _tappedLocationDetails!
-                                                              .rating!;
-                                                      return Icon(
-                                                        i < ratingValue.floor()
-                                                            ? Icons.star
-                                                            : (i < ratingValue)
-                                                                ? Icons
-                                                                    .star_half
-                                                                : Icons
-                                                                    .star_border,
-                                                        size: 18,
-                                                        color: Colors.amber,
-                                                      );
-                                                    }),
-                                                    SizedBox(width: 8),
-                                                    if (_tappedLocationDetails!
-                                                                .userRatingCount !=
-                                                            null &&
-                                                        _tappedLocationDetails!
-                                                                .userRatingCount! >
-                                                            0)
-                                                      Text(
-                                                        '(${_tappedLocationDetails!.userRatingCount})',
-                                                        style: TextStyle(
-                                                          color:
-                                                              Colors.grey[600],
-                                                          fontSize: 13,
-                                                        ),
-                                                      ),
-                                                  ],
-                                                ),
-                                                SizedBox(
-                                                    height:
-                                                        8), // Added SizedBox after rating like in location_picker_screen
-                                              ],
-
-                                              // ADDED: Business Status row below star rating
-                                              Row(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.center,
-                                                children: [
-                                                  Expanded(
-                                                      child:
-                                                          _buildBusinessStatusWidget()),
+                                                  const SizedBox(width: 4),
+                                                  // Close button
+                                                  Builder(
+                                                      builder: (evCloseCtx) =>
+                                                          Material(
+                                                            color: Colors
+                                                                .transparent,
+                                                            child: InkWell(
+                                                              onTap:
+                                                                  withHeavyTap(
+                                                                      () {
+                                                                if (_tryHelpTap(
+                                                                    MapHelpTargetId
+                                                                        .detailsClose,
+                                                                    evCloseCtx))
+                                                                  return;
+                                                                triggerHeavyHaptic();
+                                                                _confirmExitEventViewMode();
+                                                              }),
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          20),
+                                                              child: Container(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .all(8),
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  color: Colors
+                                                                          .grey[
+                                                                      100],
+                                                                  shape: BoxShape
+                                                                      .circle,
+                                                                ),
+                                                                child:
+                                                                    const Icon(
+                                                                  Icons.close,
+                                                                  size: 20,
+                                                                  color: Colors
+                                                                      .black54,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          )),
                                                 ],
                                               ),
-
-                                              // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
-                                              // Only show for add-to-event mode if user can edit the event
-                                              if ((_isSelectModeActive ||
-                                                      (_isAddToEventModeActive &&
-                                                          _activeEventViewMode !=
-                                                              null &&
-                                                          _canEditEvent(
-                                                              _activeEventViewMode!))) &&
-                                                  _tappedLocationDetails !=
-                                                      null) ...[
-                                                const SizedBox(height: 12),
-                                                SizedBox(
-                                                  width: double.infinity,
-                                                  child: (() {
-                                                    // Check if item is in itinerary (existing event or draft)
-                                                    final bool
-                                                        isInExistingEvent =
-                                                        _isAddToEventModeActive &&
-                                                            _isTappedItemInExistingEventItinerary();
-                                                    final bool isInDraft =
-                                                        _isTappedItemInDraftItinerary();
-                                                    final bool isInItinerary =
-                                                        isInExistingEvent ||
-                                                            isInDraft;
-
-                                                    return isInItinerary
-                                                        ? ElevatedButton.icon(
-                                                            onPressed: () {
-                                                              triggerHeavyHaptic();
-                                                              if (isInDraft) {
-                                                                // Remove from draft
-                                                                _removeTappedItemFromDraftItinerary();
-                                                                ScaffoldMessenger.of(
-                                                                        context)
-                                                                    .showSnackBar(
-                                                                  const SnackBar(
-                                                                    content: Text(
-                                                                        'Removed from itinerary'),
-                                                                    duration: Duration(
-                                                                        seconds:
-                                                                            1),
-                                                                  ),
-                                                                );
-                                                              } else if (isInExistingEvent) {
-                                                                // Remove from existing event
-                                                                _removeTappedItemFromEvent();
-                                                              }
-                                                            },
-                                                            icon: const Icon(
-                                                                Icons
-                                                                    .remove_circle_outline,
-                                                                size: 20),
-                                                            label: const Text(
-                                                                'Remove from event'),
-                                                            style:
-                                                                ElevatedButton
-                                                                    .styleFrom(
-                                                              backgroundColor:
-                                                                  Colors.red
-                                                                      .shade600,
-                                                              foregroundColor:
-                                                                  Colors.white,
-                                                              padding:
-                                                                  const EdgeInsets
-                                                                      .symmetric(
-                                                                      vertical:
-                                                                          12),
-                                                              shape:
-                                                                  RoundedRectangleBorder(
-                                                                borderRadius:
-                                                                    BorderRadius
-                                                                        .circular(
-                                                                            8),
-                                                              ),
-                                                            ),
-                                                          )
-                                                        : ElevatedButton.icon(
-                                                            onPressed: () {
-                                                              triggerHeavyHaptic();
-                                                              _handleSelectForEvent();
-                                                            },
-                                                            icon: const Icon(
-                                                                Icons
-                                                                    .add_circle_outline,
-                                                                size: 20),
-                                                            label: const Text(
-                                                                'Add to Event'),
-                                                            style:
-                                                                ElevatedButton
-                                                                    .styleFrom(
-                                                              backgroundColor: _isAddToEventModeActive &&
-                                                                      _activeEventViewMode !=
-                                                                          null
-                                                                  ? _getEventColor(
-                                                                      _activeEventViewMode!)
-                                                                  : _selectModeColor,
-                                                              foregroundColor:
-                                                                  Colors.white,
-                                                              padding:
-                                                                  const EdgeInsets
-                                                                      .symmetric(
-                                                                      vertical:
-                                                                          12),
-                                                              shape:
-                                                                  RoundedRectangleBorder(
-                                                                borderRadius:
-                                                                    BorderRadius
-                                                                        .circular(
-                                                                            8),
-                                                              ),
-                                                            ),
-                                                          );
-                                                  })(),
+                                            ),
+                                            // Expanded itinerary list
+                                            if (_isEventOverlayExpanded)
+                                              Divider(height: 1, thickness: 1),
+                                            if (_isEventOverlayExpanded)
+                                              Flexible(
+                                                child:
+                                                    _buildEventItineraryList(),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    )),
+                          ),
+                        ),
+                      // ADDED: Select mode overlay (for creating new events)
+                      if (_isSelectModeActive)
+                        Positioned(
+                          top: 16,
+                          left: 16,
+                          right: 16,
+                          child: _wrapWebPointerInterceptor(
+                            Container(
+                              constraints: _isSelectModeOverlayExpanded
+                                  ? BoxConstraints(
+                                      maxHeight:
+                                          MediaQuery.of(context).size.height *
+                                              0.6,
+                                    )
+                                  : const BoxConstraints(),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.15),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Header row
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 12),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 4,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: _selectModeColor,
+                                            borderRadius:
+                                                BorderRadius.circular(2),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Text(
+                                                'Select experiences',
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 16,
                                                 ),
-                                              ],
-
-                                              // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
-                                              // Only show if user can edit the event
-                                              if (_isEventViewModeActive &&
-                                                  !_isAddToEventModeActive &&
-                                                  !_isSelectModeActive &&
-                                                  _tappedLocationDetails !=
-                                                      null &&
-                                                  _activeEventViewMode !=
-                                                      null &&
-                                                  _canEditEvent(
-                                                      _activeEventViewMode!)) ...[
-                                                const SizedBox(height: 12),
-                                                SizedBox(
-                                                  width: double.infinity,
-                                                  child:
-                                                      _isTappedItemInEventItinerary()
-                                                          ? ElevatedButton.icon(
-                                                              onPressed: () {
-                                                                triggerHeavyHaptic();
-                                                                _removeTappedItemFromEvent();
-                                                              },
-                                                              icon: const Icon(
-                                                                  Icons
-                                                                      .remove_circle_outline,
-                                                                  size: 20),
-                                                              label: const Text(
-                                                                  'Remove from event'),
-                                                              style:
-                                                                  ElevatedButton
-                                                                      .styleFrom(
-                                                                backgroundColor:
-                                                                    Colors.red
-                                                                        .shade600,
-                                                                foregroundColor:
-                                                                    Colors
-                                                                        .white,
-                                                                padding:
-                                                                    const EdgeInsets
-                                                                        .symmetric(
-                                                                        vertical:
-                                                                            12),
-                                                                shape:
-                                                                    RoundedRectangleBorder(
-                                                                  borderRadius:
-                                                                      BorderRadius
-                                                                          .circular(
-                                                                              8),
-                                                                ),
-                                                              ),
-                                                            )
-                                                          : ElevatedButton.icon(
-                                                              onPressed: () {
-                                                                triggerHeavyHaptic();
-                                                                _addTappedItemToEvent();
-                                                              },
-                                                              icon: const Icon(
-                                                                  Icons
-                                                                      .add_circle_outline,
-                                                                  size: 20),
-                                                              label: const Text(
-                                                                  'Add to event'),
-                                                              style:
-                                                                  ElevatedButton
-                                                                      .styleFrom(
-                                                                backgroundColor:
-                                                                    _getEventColor(
-                                                                        _activeEventViewMode!),
-                                                                foregroundColor:
-                                                                    Colors
-                                                                        .white,
-                                                                padding:
-                                                                    const EdgeInsets
-                                                                        .symmetric(
-                                                                        vertical:
-                                                                            12),
-                                                                shape:
-                                                                    RoundedRectangleBorder(
-                                                                  borderRadius:
-                                                                      BorderRadius
-                                                                          .circular(
-                                                                              8),
-                                                                ),
-                                                              ),
-                                                            ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                _selectModeDraftItinerary
+                                                        .isEmpty
+                                                    ? 'Tap locations to add them'
+                                                    : '${_selectModeDraftItinerary.length} item${_selectModeDraftItinerary.length != 1 ? 's' : ''} selected',
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  color: Colors.grey[600],
                                                 ),
-                                              ],
-
-                                              const SizedBox(height: 0),
+                                              ),
                                             ],
                                           ),
                                         ),
+                                        const SizedBox(width: 8),
+                                        // List icon button
+                                        Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            Builder(
+                                                builder: (selListCtx) =>
+                                                    Material(
+                                                      color: Colors.transparent,
+                                                      child: InkWell(
+                                                        onTap: withHeavyTap(() {
+                                                          if (_tryHelpTap(
+                                                              MapHelpTargetId
+                                                                  .selectModeListToggle,
+                                                              selListCtx))
+                                                            return;
+                                                          triggerHeavyHaptic();
+                                                          setState(() {
+                                                            _isSelectModeOverlayExpanded =
+                                                                !_isSelectModeOverlayExpanded;
+                                                          });
+                                                        }),
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(20),
+                                                        child: Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .all(8),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: _selectModeColor
+                                                                .withOpacity(
+                                                                    _isSelectModeOverlayExpanded
+                                                                        ? 0.8
+                                                                        : 0.6),
+                                                            shape:
+                                                                BoxShape.circle,
+                                                          ),
+                                                          child: const Icon(
+                                                            Icons.list,
+                                                            size: 20,
+                                                            color: Colors.white,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    )),
+                                            Positioned(
+                                              right: -4,
+                                              bottom: -4,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.all(4),
+                                                decoration: BoxDecoration(
+                                                  color: _selectModeColor,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Text(
+                                                  '${_selectModeDraftItinerary.length}',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(width: 4),
+                                        // Checkmark button
+                                        Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            Builder(
+                                                builder: (selFinishCtx) =>
+                                                    Material(
+                                                      color: Colors.transparent,
+                                                      child: InkWell(
+                                                        onTap: withHeavyTap(() {
+                                                          if (_tryHelpTap(
+                                                              MapHelpTargetId
+                                                                  .selectModeFinish,
+                                                              selFinishCtx))
+                                                            return;
+                                                          triggerHeavyHaptic();
+                                                          _finishSelectModeAndOpenEditor();
+                                                        }),
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(20),
+                                                        child: Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .all(8),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Theme.of(
+                                                                    context)
+                                                                .primaryColor,
+                                                            shape:
+                                                                BoxShape.circle,
+                                                          ),
+                                                          child: const Icon(
+                                                            Icons.check,
+                                                            size: 20,
+                                                            color: Colors.white,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    )),
+                                            Positioned(
+                                              right: -4,
+                                              bottom: -4,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.all(4),
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      _selectModeDraftItinerary
+                                                              .isNotEmpty
+                                                          ? Colors.red
+                                                          : _selectModeColor,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Text(
+                                                  '${_selectModeDraftItinerary.length}',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(width: 4),
+                                        // Close button
+                                        Builder(
+                                            builder: (selCloseCtx) => Material(
+                                                  color: Colors.transparent,
+                                                  child: InkWell(
+                                                    onTap: withHeavyTap(() {
+                                                      if (_tryHelpTap(
+                                                          MapHelpTargetId
+                                                              .selectModeClose,
+                                                          selCloseCtx)) return;
+                                                      triggerHeavyHaptic();
+                                                      _confirmExitSelectMode();
+                                                    }),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            20),
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                              8),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.grey[100],
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons.close,
+                                                        size: 20,
+                                                        color: Colors.black54,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                )),
                                       ],
                                     ),
                                   ),
-                                ),
+                                  // Expanded itinerary list
+                                  if (_isSelectModeOverlayExpanded)
+                                    const Divider(height: 1, thickness: 1),
+                                  if (_isSelectModeOverlayExpanded)
+                                    Flexible(
+                                      child: _buildSelectModeItineraryList(),
+                                    ),
+                                ],
                               ),
-                            )
-                          : const SizedBox.shrink(
-                              key: ValueKey('selected_location_sheet_empty'),
                             ),
-                    ),
+                          ),
+                        ),
+                      // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
+                      // Wrapped in RepaintBoundary to isolate animation from rest of widget tree
+                      RepaintBoundary(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 420),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            final offsetAnimation = Tween<Offset>(
+                              begin: const Offset(0, 0.35),
+                              end: Offset.zero,
+                            ).animate(animation);
+                            return SlideTransition(
+                              position: offsetAnimation,
+                              child: FadeTransition(
+                                  opacity: animation, child: child),
+                            );
+                          },
+                          child:
+                              (_tappedLocationDetails != null &&
+                                      !isKeyboardVisible)
+                                  ? Align(
+                                      key: ValueKey(
+                                        _tappedExperience?.id ??
+                                            _tappedLocationDetails?.placeId ??
+                                            selectedTitle,
+                                      ),
+                                      alignment: Alignment.bottomCenter,
+                                      child: _wrapWebPointerInterceptor(
+                                        ConstrainedBox(
+                                          constraints: kIsWeb
+                                              ? const BoxConstraints(
+                                                  maxWidth: 480)
+                                              : const BoxConstraints(),
+                                          child: Container(
+                                            padding: EdgeInsets.fromLTRB(
+                                              16,
+                                              16,
+                                              16,
+                                              2 +
+                                                  MediaQuery.of(context)
+                                                          .padding
+                                                          .bottom /
+                                                      2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.backgroundColor,
+                                              borderRadius:
+                                                  const BorderRadius.only(
+                                                topLeft: Radius.circular(28),
+                                                topRight: Radius.circular(28),
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withOpacity(0.1),
+                                                  blurRadius: 8,
+                                                  offset: Offset(0,
+                                                      -3), // Shadow upwards as it's at the bottom of content
+                                                ),
+                                              ],
+                                            ),
+                                            child: Stack(
+                                              clipBehavior: Clip.none,
+                                              children: [
+                                                // ADDED: Positioned "Tap to view" text at the very top
+                                                if (showExperiencePrompt)
+                                                  Positioned(
+                                                    top:
+                                                        -12, // Move it further up, closer to the edge
+                                                    left: 0,
+                                                    right: 0,
+                                                    child: Center(
+                                                      child: Text(
+                                                        'Tap to view experience details',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color:
+                                                              Colors.grey[500],
+                                                          fontStyle:
+                                                              FontStyle.italic,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                Builder(
+                                                    builder:
+                                                        (detailsPanelCtx) =>
+                                                            GestureDetector(
+                                                              onTap: withHeavyTap(
+                                                                  _isHelpMode
+                                                                      ? () {
+                                                                          _tryHelpTap(
+                                                                              MapHelpTargetId.detailsPanel,
+                                                                              detailsPanelCtx);
+                                                                        }
+                                                                      : showExperiencePrompt
+                                                                          ? () {
+                                                                              triggerHeavyHaptic();
+                                                                              _handleTappedLocationNavigation();
+                                                                            }
+                                                                          : null),
+                                                              behavior:
+                                                                  HitTestBehavior
+                                                                      .translucent,
+                                                              child: Column(
+                                                                crossAxisAlignment:
+                                                                    CrossAxisAlignment
+                                                                        .start,
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  // ADDED: Add space at the top for the positioned text
+                                                                  if (showExperiencePrompt)
+                                                                    SizedBox(
+                                                                        height:
+                                                                            12),
+                                                                  // Only show "Selected Location" for non-experience locations
+                                                                  if (!showExperiencePrompt) ...[
+                                                                    Text(
+                                                                      'Selected Location',
+                                                                      style:
+                                                                          TextStyle(
+                                                                        fontWeight:
+                                                                            FontWeight.normal,
+                                                                        fontSize:
+                                                                            14,
+                                                                        color: Colors
+                                                                            .grey[800],
+                                                                      ),
+                                                                    ),
+                                                                    SizedBox(
+                                                                        height:
+                                                                            12),
+                                                                  ],
+                                                                  Row(
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .start,
+                                                                    children: [
+                                                                      Expanded(
+                                                                        child:
+                                                                            Padding(
+                                                                          padding: const EdgeInsets
+                                                                              .only(
+                                                                              top: 4.0),
+                                                                          child:
+                                                                              Row(
+                                                                            crossAxisAlignment:
+                                                                                CrossAxisAlignment.start,
+                                                                            children: [
+                                                                              if (selectedIcon != null && selectedIcon.isNotEmpty && selectedIcon != '*') ...[
+                                                                                SizedBox(
+                                                                                  width: 24,
+                                                                                  child: Center(
+                                                                                    child: Text(
+                                                                                      selectedIcon,
+                                                                                      style: const TextStyle(
+                                                                                        fontSize: 16,
+                                                                                      ),
+                                                                                      textAlign: TextAlign.center,
+                                                                                    ),
+                                                                                  ),
+                                                                                ),
+                                                                                const SizedBox(width: 4),
+                                                                              ],
+                                                                              Expanded(
+                                                                                child: Text(
+                                                                                  selectedName,
+                                                                                  style: const TextStyle(
+                                                                                    fontWeight: FontWeight.w500,
+                                                                                    fontSize: 16,
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ],
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                      Row(
+                                                                        mainAxisSize:
+                                                                            MainAxisSize.min,
+                                                                        children: [
+                                                                          // Share button - only show when experience is selected
+                                                                          if (_tappedExperience !=
+                                                                              null) ...[
+                                                                            const SizedBox(width: 8),
+                                                                            Builder(
+                                                                                builder: (shareCtx) => IconButton(
+                                                                                      onPressed: () {
+                                                                                        if (_tryHelpTap(MapHelpTargetId.detailsShare, shareCtx)) return;
+                                                                                        triggerHeavyHaptic();
+                                                                                        _shareSelectedExperience();
+                                                                                      },
+                                                                                      icon: const Icon(Icons.share_outlined, color: AppColors.teal, size: 28),
+                                                                                      tooltip: 'Share',
+                                                                                      padding: EdgeInsets.zero,
+                                                                                      constraints: const BoxConstraints(),
+                                                                                      style: IconButton.styleFrom(
+                                                                                        minimumSize: Size.zero,
+                                                                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                                                      ),
+                                                                                    )),
+                                                                            const SizedBox(width: 12),
+                                                                          ],
+                                                                          Builder(
+                                                                              builder: (gmapCtx) => IconButton(
+                                                                                    onPressed: () {
+                                                                                      if (_tryHelpTap(MapHelpTargetId.detailsGoogleMaps, gmapCtx)) return;
+                                                                                      triggerHeavyHaptic();
+                                                                                      if (_tappedLocationDetails != null) {
+                                                                                        _launchMapLocation(_tappedLocationDetails!);
+                                                                                      }
+                                                                                    },
+                                                                                    icon: Image.asset(
+                                                                                      'assets/icon/misc/googlemaps_logo.png',
+                                                                                      height: 25,
+                                                                                    ),
+                                                                                    tooltip: 'Open in map app',
+                                                                                    padding: EdgeInsets.zero,
+                                                                                    constraints: const BoxConstraints(),
+                                                                                    style: IconButton.styleFrom(
+                                                                                      minimumSize: Size.zero,
+                                                                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                                                    ),
+                                                                                  )),
+                                                                          const SizedBox(
+                                                                              width: 12),
+                                                                          Builder(
+                                                                              builder: (dirCtx) => IconButton(
+                                                                                    onPressed: () {
+                                                                                      if (_tryHelpTap(MapHelpTargetId.detailsDirections, dirCtx)) return;
+                                                                                      triggerHeavyHaptic();
+                                                                                      if (_tappedLocationDetails != null) {
+                                                                                        _openDirectionsForLocation(_tappedLocationDetails!);
+                                                                                      }
+                                                                                    },
+                                                                                    icon: Icon(Icons.directions, color: AppColors.sage, size: 28),
+                                                                                    tooltip: 'Get Directions',
+                                                                                    padding: EdgeInsets.zero,
+                                                                                    constraints: const BoxConstraints(),
+                                                                                    style: IconButton.styleFrom(
+                                                                                      minimumSize: Size.zero,
+                                                                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                                                    ),
+                                                                                  )),
+                                                                          const SizedBox(
+                                                                              width: 12),
+                                                                          Builder(
+                                                                              builder: (closeCtx) => IconButton(
+                                                                                    onPressed: () {
+                                                                                      if (_tryHelpTap(MapHelpTargetId.detailsClose, closeCtx)) return;
+                                                                                      triggerHeavyHaptic();
+                                                                                      setState(() {
+                                                                                        _tappedLocationMarker = null;
+                                                                                        _tappedLocationDetails = null;
+                                                                                        _tappedExperience = null;
+                                                                                        _tappedExperienceCategory = null;
+                                                                                        _tappedLocationBusinessStatus = null;
+                                                                                        _tappedLocationOpenNow = null;
+                                                                                      });
+                                                                                    },
+                                                                                    icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
+                                                                                    tooltip: 'Close',
+                                                                                    padding: EdgeInsets.zero,
+                                                                                    constraints: const BoxConstraints(),
+                                                                                    style: IconButton.styleFrom(
+                                                                                      minimumSize: Size.zero,
+                                                                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                                                    ),
+                                                                                  )),
+                                                                          if (kIsWeb)
+                                                                            const SizedBox(width: 8),
+                                                                        ],
+                                                                      ),
+                                                                    ],
+                                                                  ),
+                                                                  if (_tappedExperience !=
+                                                                      null) ...[
+                                                                    if (_tappedExperience!
+                                                                        .otherCategories
+                                                                        .isNotEmpty) ...[
+                                                                      _buildOtherCategoriesWidget(),
+                                                                    ],
+                                                                    Align(
+                                                                      alignment:
+                                                                          Alignment
+                                                                              .centerLeft,
+                                                                      child:
+                                                                          _buildColorCategoryWidget(),
+                                                                    ),
+                                                                  ],
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          0), // Removed top padding
+                                                                  if (_tappedLocationDetails!
+                                                                              .address !=
+                                                                          null &&
+                                                                      _tappedLocationDetails!
+                                                                          .address!
+                                                                          .isNotEmpty) ...[
+                                                                    Row(
+                                                                      crossAxisAlignment:
+                                                                          CrossAxisAlignment
+                                                                              .center,
+                                                                      children: [
+                                                                        Expanded(
+                                                                          child:
+                                                                              Text(
+                                                                            _tappedLocationDetails!.address!,
+                                                                            style:
+                                                                                TextStyle(color: Colors.grey[700]),
+                                                                          ),
+                                                                        ),
+                                                                        if (_tappedExperience !=
+                                                                                null ||
+                                                                            hasPublicFallback) ...[
+                                                                          const SizedBox(
+                                                                              width: 12),
+                                                                          SizedBox(
+                                                                            width:
+                                                                                48,
+                                                                            height:
+                                                                                48,
+                                                                            child:
+                                                                                OverflowBox(
+                                                                              minHeight: 48,
+                                                                              maxHeight: 48,
+                                                                              alignment: Alignment.center,
+                                                                              child: Builder(
+                                                                                builder: (playCtx) => GestureDetector(
+                                                                                  onTap: withHeavyTap(() {
+                                                                                    if (_tryHelpTap(MapHelpTargetId.detailsPlayContent, playCtx)) return;
+                                                                                    triggerHeavyHaptic();
+                                                                                    _onPlayExperienceContent();
+                                                                                  }),
+                                                                                  child: AnimatedOpacity(
+                                                                                    duration: const Duration(milliseconds: 200),
+                                                                                    opacity: canPreviewContent ? 1.0 : 0.45,
+                                                                                    child: Stack(
+                                                                                      clipBehavior: Clip.none,
+                                                                                      children: [
+                                                                                        Container(
+                                                                                          width: 48,
+                                                                                          height: 48,
+                                                                                          decoration: BoxDecoration(
+                                                                                            color: Theme.of(context).primaryColor,
+                                                                                            shape: BoxShape.circle,
+                                                                                          ),
+                                                                                          child: const Icon(
+                                                                                            Icons.play_arrow,
+                                                                                            color: Colors.white,
+                                                                                            size: 24,
+                                                                                          ),
+                                                                                        ),
+                                                                                        Positioned(
+                                                                                          bottom: -2,
+                                                                                          right: -2,
+                                                                                          child: Container(
+                                                                                            width: 22,
+                                                                                            height: 22,
+                                                                                            decoration: BoxDecoration(
+                                                                                              color: Colors.white,
+                                                                                              shape: BoxShape.circle,
+                                                                                              border: Border.all(
+                                                                                                color: Theme.of(context).primaryColor,
+                                                                                                width: 2,
+                                                                                              ),
+                                                                                            ),
+                                                                                            child: Center(
+                                                                                              child: Text(
+                                                                                                selectedMediaCount.toString(),
+                                                                                                style: TextStyle(
+                                                                                                  color: Theme.of(context).primaryColor,
+                                                                                                  fontSize: 12,
+                                                                                                  fontWeight: FontWeight.w600,
+                                                                                                ),
+                                                                                              ),
+                                                                                            ),
+                                                                                          ),
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                          ),
+                                                                        ],
+                                                                      ],
+                                                                    ),
+                                                                    const SizedBox(
+                                                                        height:
+                                                                            0),
+                                                                  ],
+                                                                  if (selectedAdditionalNotes !=
+                                                                      null) ...[
+                                                                    Row(
+                                                                      crossAxisAlignment:
+                                                                          CrossAxisAlignment
+                                                                              .start,
+                                                                      children: [
+                                                                        Icon(
+                                                                          Icons
+                                                                              .notes,
+                                                                          size:
+                                                                              18,
+                                                                          color:
+                                                                              Colors.grey[700],
+                                                                        ),
+                                                                        const SizedBox(
+                                                                            width:
+                                                                                8),
+                                                                        Expanded(
+                                                                          child:
+                                                                              Text(
+                                                                            selectedAdditionalNotes,
+                                                                            style:
+                                                                                TextStyle(
+                                                                              color: Colors.grey[800],
+                                                                              fontStyle: FontStyle.italic,
+                                                                            ),
+                                                                            maxLines:
+                                                                                3,
+                                                                            overflow:
+                                                                                TextOverflow.ellipsis,
+                                                                          ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                    const SizedBox(
+                                                                        height:
+                                                                            8),
+                                                                  ],
+                                                                  // ADDED: Star Rating
+                                                                  if (_tappedLocationDetails!
+                                                                          .rating !=
+                                                                      null) ...[
+                                                                    Row(
+                                                                      children: [
+                                                                        ...List.generate(
+                                                                            5,
+                                                                            (i) {
+                                                                          final ratingValue =
+                                                                              _tappedLocationDetails!.rating!;
+                                                                          return Icon(
+                                                                            i < ratingValue.floor()
+                                                                                ? Icons.star
+                                                                                : (i < ratingValue)
+                                                                                    ? Icons.star_half
+                                                                                    : Icons.star_border,
+                                                                            size:
+                                                                                18,
+                                                                            color:
+                                                                                Colors.amber,
+                                                                          );
+                                                                        }),
+                                                                        SizedBox(
+                                                                            width:
+                                                                                8),
+                                                                        if (_tappedLocationDetails!.userRatingCount !=
+                                                                                null &&
+                                                                            _tappedLocationDetails!.userRatingCount! >
+                                                                                0)
+                                                                          Text(
+                                                                            '(${_tappedLocationDetails!.userRatingCount})',
+                                                                            style:
+                                                                                TextStyle(
+                                                                              color: Colors.grey[600],
+                                                                              fontSize: 13,
+                                                                            ),
+                                                                          ),
+                                                                      ],
+                                                                    ),
+                                                                    SizedBox(
+                                                                        height:
+                                                                            8), // Added SizedBox after rating like in location_picker_screen
+                                                                  ],
+
+                                                                  // ADDED: Business Status row below star rating
+                                                                  Row(
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .center,
+                                                                    children: [
+                                                                      Expanded(
+                                                                          child:
+                                                                              _buildBusinessStatusWidget()),
+                                                                    ],
+                                                                  ),
+
+                                                                  // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
+                                                                  // Only show for add-to-event mode if user can edit the event
+                                                                  if ((_isSelectModeActive ||
+                                                                          (_isAddToEventModeActive &&
+                                                                              _activeEventViewMode !=
+                                                                                  null &&
+                                                                              _canEditEvent(
+                                                                                  _activeEventViewMode!))) &&
+                                                                      _tappedLocationDetails !=
+                                                                          null) ...[
+                                                                    const SizedBox(
+                                                                        height:
+                                                                            12),
+                                                                    SizedBox(
+                                                                      width: double
+                                                                          .infinity,
+                                                                      child:
+                                                                          (() {
+                                                                        // Check if item is in itinerary (existing event or draft)
+                                                                        final bool
+                                                                            isInExistingEvent =
+                                                                            _isAddToEventModeActive &&
+                                                                                _isTappedItemInExistingEventItinerary();
+                                                                        final bool
+                                                                            isInDraft =
+                                                                            _isTappedItemInDraftItinerary();
+                                                                        final bool
+                                                                            isInItinerary =
+                                                                            isInExistingEvent ||
+                                                                                isInDraft;
+
+                                                                        return isInItinerary
+                                                                            ? Builder(
+                                                                                builder: (removeCtx) => ElevatedButton.icon(
+                                                                                  onPressed: () {
+                                                                                    if (_tryHelpTap(MapHelpTargetId.detailsRemoveFromEvent, removeCtx)) return;
+                                                                                    triggerHeavyHaptic();
+                                                                                    if (isInDraft) {
+                                                                                      // Remove from draft
+                                                                                      _removeTappedItemFromDraftItinerary();
+                                                                                      ScaffoldMessenger.of(context).showSnackBar(
+                                                                                        const SnackBar(
+                                                                                          content: Text('Removed from itinerary'),
+                                                                                          duration: Duration(seconds: 1),
+                                                                                        ),
+                                                                                      );
+                                                                                    } else if (isInExistingEvent) {
+                                                                                      // Remove from existing event
+                                                                                      _removeTappedItemFromEvent();
+                                                                                    }
+                                                                                  },
+                                                                                  icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                                                                  label: const Text('Remove from event'),
+                                                                                  style: ElevatedButton.styleFrom(
+                                                                                    backgroundColor: Colors.red.shade600,
+                                                                                    foregroundColor: Colors.white,
+                                                                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                                                                    shape: RoundedRectangleBorder(
+                                                                                      borderRadius: BorderRadius.circular(8),
+                                                                                    ),
+                                                                                  ),
+                                                                                ),
+                                                                              )
+                                                                            : Builder(
+                                                                                builder: (addCtx) => ElevatedButton.icon(
+                                                                                  onPressed: () {
+                                                                                    if (_tryHelpTap(MapHelpTargetId.detailsAddToEvent, addCtx)) return;
+                                                                                    triggerHeavyHaptic();
+                                                                                    _handleSelectForEvent();
+                                                                                  },
+                                                                                  icon: const Icon(Icons.add_circle_outline, size: 20),
+                                                                                  label: const Text('Add to Event'),
+                                                                                  style: ElevatedButton.styleFrom(
+                                                                                    backgroundColor: _isAddToEventModeActive && _activeEventViewMode != null ? _getEventColor(_activeEventViewMode!) : _selectModeColor,
+                                                                                    foregroundColor: Colors.white,
+                                                                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                                                                    shape: RoundedRectangleBorder(
+                                                                                      borderRadius: BorderRadius.circular(8),
+                                                                                    ),
+                                                                                  ),
+                                                                                ),
+                                                                              );
+                                                                      })(),
+                                                                    ),
+                                                                  ],
+
+                                                                  // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
+                                                                  // Only show if user can edit the event
+                                                                  if (_isEventViewModeActive &&
+                                                                      !_isAddToEventModeActive &&
+                                                                      !_isSelectModeActive &&
+                                                                      _tappedLocationDetails !=
+                                                                          null &&
+                                                                      _activeEventViewMode !=
+                                                                          null &&
+                                                                      _canEditEvent(
+                                                                          _activeEventViewMode!)) ...[
+                                                                    const SizedBox(
+                                                                        height:
+                                                                            12),
+                                                                    SizedBox(
+                                                                      width: double
+                                                                          .infinity,
+                                                                      child: _isTappedItemInEventItinerary()
+                                                                          ? Builder(
+                                                                              builder: (removeCtx) => ElevatedButton.icon(
+                                                                                onPressed: () {
+                                                                                  if (_tryHelpTap(MapHelpTargetId.detailsRemoveFromEvent, removeCtx)) return;
+                                                                                  triggerHeavyHaptic();
+                                                                                  _removeTappedItemFromEvent();
+                                                                                },
+                                                                                icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                                                                label: const Text('Remove from event'),
+                                                                                style: ElevatedButton.styleFrom(
+                                                                                  backgroundColor: Colors.red.shade600,
+                                                                                  foregroundColor: Colors.white,
+                                                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                                                  shape: RoundedRectangleBorder(
+                                                                                    borderRadius: BorderRadius.circular(8),
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            )
+                                                                          : Builder(
+                                                                              builder: (addCtx) => ElevatedButton.icon(
+                                                                                onPressed: () {
+                                                                                  if (_tryHelpTap(MapHelpTargetId.detailsAddToEvent, addCtx)) return;
+                                                                                  triggerHeavyHaptic();
+                                                                                  _addTappedItemToEvent();
+                                                                                },
+                                                                                icon: const Icon(Icons.add_circle_outline, size: 20),
+                                                                                label: const Text('Add to event'),
+                                                                                style: ElevatedButton.styleFrom(
+                                                                                  backgroundColor: _getEventColor(_activeEventViewMode!),
+                                                                                  foregroundColor: Colors.white,
+                                                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                                                  shape: RoundedRectangleBorder(
+                                                                                    borderRadius: BorderRadius.circular(8),
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                    ),
+                                                                  ],
+
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          0),
+                                                                ],
+                                                              ),
+                                                            )),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(
+                                      key: ValueKey(
+                                          'selected_location_sheet_empty'),
+                                    ),
+                        ),
+                      ),
+                      // --- END Tapped Location Details ---
+                    ],
                   ),
-                  // --- END Tapped Location Details ---
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
+        if (_isHelpMode && _activeHelpTarget != null) _buildHelpOverlay(),
+      ],
     );
   }
 }

@@ -9,6 +9,9 @@ import '../services/message_service.dart';
 import '../services/user_service.dart';
 import '../widgets/cached_profile_avatar.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/new_message_thread_help_content.dart';
+import '../models/new_message_thread_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class NewMessageThreadScreen extends StatefulWidget {
   const NewMessageThreadScreen({
@@ -22,7 +25,8 @@ class NewMessageThreadScreen extends StatefulWidget {
   State<NewMessageThreadScreen> createState() => _NewMessageThreadScreenState();
 }
 
-class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
+class _NewMessageThreadScreenState extends State<NewMessageThreadScreen>
+    with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final UserService _userService = UserService();
   final Map<String, UserProfile> _selectedProfiles = {};
@@ -33,16 +37,25 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
   bool _creatingChat = false;
   bool _isLoadingFriends = false;
   String? _friendsError;
+  late final ScreenHelpController<NewMessageThreadHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<NewMessageThreadHelpTargetId>(
+      vsync: this,
+      content: newMessageThreadHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: NewMessageThreadHelpTargetId.helpButton,
+    );
     _searchController.addListener(_onSearchChanged);
     _loadFriends();
   }
 
   @override
   void dispose() {
+    _help.dispose();
     _debounce?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
@@ -67,10 +80,8 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
       if (!mounted) return;
 
       profiles.sort((a, b) {
-        final nameA =
-            (a.displayName ?? a.username ?? '').toLowerCase().trim();
-        final nameB =
-            (b.displayName ?? b.username ?? '').toLowerCase().trim();
+        final nameA = (a.displayName ?? a.username ?? '').toLowerCase().trim();
+        final nameB = (b.displayName ?? b.username ?? '').toLowerCase().trim();
         return nameA.compareTo(nameB);
       });
 
@@ -198,110 +209,163 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
         : '';
     final canCreate = _selectedProfiles.isNotEmpty && !_creatingChat;
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        title: const Text('New Message'),
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              style: ButtonStyle(
-                backgroundColor:
-                    WidgetStateProperty.resolveWith<Color?>((states) {
-                  if (states.contains(WidgetState.disabled)) {
-                    return null; // Use default disabled color
-                  }
-                  return Theme.of(context).primaryColor;
-                }),
-                foregroundColor:
-                    WidgetStateProperty.resolveWith<Color?>((states) {
-                  if (states.contains(WidgetState.disabled)) {
-                    return null; // Use default disabled color
-                  }
-                  return Colors.white;
-                }),
-              ),
-              onPressed: canCreate ? _createChat : null,
-              child: _creatingChat
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Text('Start chat$selectionSuffix'),
-            ),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            title: const Text('New Message'),
+            actions: [_help.buildIconButton(inactiveColor: Colors.black87)],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
           ),
-        ),
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search by username or name',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() {
-                            _searchResults = [];
-                          });
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+          bottomNavigationBar: SafeArea(
+            child: Builder(
+              builder: (buttonCtx) => Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ButtonStyle(
+                      backgroundColor:
+                          WidgetStateProperty.resolveWith<Color?>((states) {
+                        if (states.contains(WidgetState.disabled)) {
+                          return null; // Use default disabled color
+                        }
+                        return Theme.of(context).primaryColor;
+                      }),
+                      foregroundColor:
+                          WidgetStateProperty.resolveWith<Color?>((states) {
+                        if (states.contains(WidgetState.disabled)) {
+                          return null; // Use default disabled color
+                        }
+                        return Colors.white;
+                      }),
+                    ),
+                    onPressed: _help.isActive
+                        ? () => _help.tryTap(
+                              NewMessageThreadHelpTargetId.messageComposer,
+                              buttonCtx,
+                            )
+                        : (canCreate ? _createChat : null),
+                    child: _creatingChat
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : Text('Start chat$selectionSuffix'),
+                  ),
                 ),
               ),
             ),
           ),
-          if (_selectedProfiles.isNotEmpty)
-            SizedBox(
-              height: 72,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: _selectedProfiles.values.map((profile) {
-                  final name =
-                      profile.displayName ?? profile.username ?? 'Friend';
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: Chip(
-                      label: Text(name),
-                      avatar: CachedProfileAvatar(
-                        photoUrl: profile.photoURL,
-                        radius: 12,
-                        fallbackText: name.isNotEmpty ? name[0].toUpperCase() : null,
+          body: Builder(
+            builder: (viewCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(
+                        NewMessageThreadHelpTargetId.messageComposer,
+                        viewCtx,
+                      )
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Builder(
+                        builder: (searchCtx) => GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                    NewMessageThreadHelpTargetId
+                                        .recipientsField,
+                                    searchCtx,
+                                  )
+                              : null,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: TextField(
+                              controller: _searchController,
+                              decoration: InputDecoration(
+                                hintText: 'Search by username or name',
+                                prefixIcon: const Icon(Icons.search),
+                                suffixIcon: _searchController.text.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () {
+                                          _searchController.clear();
+                                          setState(() {
+                                            _searchResults = [];
+                                          });
+                                        },
+                                      )
+                                    : null,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                      deleteIcon: const Icon(Icons.close),
-                      onDeleted: () {
-                        setState(() {
-                          _selectedProfiles.remove(profile.id);
-                        });
-                      },
                     ),
-                  );
-                }).toList(),
+                    if (_selectedProfiles.isNotEmpty)
+                      SizedBox(
+                        height: 72,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          children: _selectedProfiles.values.map((profile) {
+                            final name = profile.displayName ??
+                                profile.username ??
+                                'Friend';
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: Chip(
+                                label: Text(name),
+                                avatar: CachedProfileAvatar(
+                                  photoUrl: profile.photoURL,
+                                  radius: 12,
+                                  fallbackText: name.isNotEmpty
+                                      ? name[0].toUpperCase()
+                                      : null,
+                                ),
+                                deleteIcon: const Icon(Icons.close),
+                                onDeleted: () {
+                                  setState(() {
+                                    _selectedProfiles.remove(profile.id);
+                                  });
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    Expanded(
+                      child: _isSearching
+                          ? const Center(child: CircularProgressIndicator())
+                          : _buildResultsList(),
+                    ),
+                  ],
+                ),
               ),
             ),
-          Expanded(
-            child: _isSearching
-                ? const Center(child: CircularProgressIndicator())
-                : _buildResultsList(),
           ),
-        ],
-      ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 

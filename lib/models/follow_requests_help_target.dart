@@ -1,0 +1,4 @@
+enum FollowRequestsHelpTargetId {
+  helpButton,
+  requestsList,
+}

@@ -9,7 +9,9 @@ import 'package:share_plus/share_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../config/colors.dart';
+import '../config/event_editor_help_content.dart';
 import '../models/event.dart';
+import '../models/event_editor_help_target.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
 import '../models/user_category.dart';
@@ -31,6 +33,7 @@ import '../screens/auth_screen.dart';
 import '../screens/main_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
+import 'screen_help_controller.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
 
 class EventEditorResult {
@@ -68,13 +71,15 @@ class EventEditorModal extends StatefulWidget {
   State<EventEditorModal> createState() => _EventEditorModalState();
 }
 
-class _EventEditorModalState extends State<EventEditorModal> {
+class _EventEditorModalState extends State<EventEditorModal>
+    with TickerProviderStateMixin {
   final _eventService = EventService();
   final _experienceService = ExperienceService();
   final _authService = AuthService();
   final _eventNotificationQueueService = EventNotificationQueueService();
   final _googleMapsService = GoogleMapsService();
   final _messageService = MessageService();
+  late final ScreenHelpController<EventEditorHelpTargetId> _help;
 
   late Event _currentEvent;
   List<Experience> _availableExperiences = [];
@@ -91,7 +96,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
   bool _isUploadingCoverImage = false;
   bool _hasUnsavedChanges = false;
   bool _isEditModeEnabled = false;
+  bool _isSyncingControllers = false;
   bool _attemptedAnonymousSignIn = false;
+  Event? _editModeSnapshot;
+  Set<String> _editModeScheduleSnapshot = {};
 
   bool get _isReadOnly => widget.isReadOnly && !_isEditModeEnabled;
 
@@ -102,17 +110,59 @@ class _EventEditorModalState extends State<EventEditorModal> {
         _currentEvent.collaboratorIds.contains(userId);
   }
 
+  bool _helpTap(EventEditorHelpTargetId id, BuildContext ctx) {
+    return _help.tryTap(id, ctx);
+  }
+
+  Widget _helpTapRegion({
+    required EventEditorHelpTargetId target,
+    required Widget child,
+    HitTestBehavior behavior = HitTestBehavior.opaque,
+  }) {
+    return Builder(
+      builder: (targetCtx) => GestureDetector(
+        behavior: behavior,
+        onTap: _help.isActive ? () => _helpTap(target, targetCtx) : null,
+        child: IgnorePointer(
+          ignoring: _help.isActive,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _helpSectionTapRegion({
+    required EventEditorHelpTargetId target,
+    required Widget child,
+    HitTestBehavior behavior = HitTestBehavior.translucent,
+  }) {
+    return Builder(
+      builder: (targetCtx) => GestureDetector(
+        behavior: behavior,
+        onTap: _help.isActive ? () => _helpTap(target, targetCtx) : null,
+        child: child,
+      ),
+    );
+  }
+
   // User profiles cache
   final Map<String, UserProfile> _userProfiles = {};
   final Set<String> _manuallyEditedScheduleIds = {};
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
-  
+
   // Track initial invited users to detect newly added viewers
   late Set<String> _initialInvitedUserIds;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<EventEditorHelpTargetId>(
+      vsync: this,
+      content: eventEditorHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: EventEditorHelpTargetId.helpButton,
+    );
     // Pre-populate _manuallyEditedScheduleIds with entries that already have scheduled times
     // This preserves previously saved times and prevents auto-setting from overwriting them
     for (final entry in widget.event.experiences) {
@@ -146,6 +196,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   @override
   void dispose() {
+    _help.dispose();
     _titleController.dispose();
     _descriptionController.dispose();
     _coverImageUrlController.dispose();
@@ -155,11 +206,80 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   void _markUnsavedChanges() {
+    if (_isSyncingControllers) return;
     if (!_hasUnsavedChanges) {
       setState(() {
         _hasUnsavedChanges = true;
       });
     }
+  }
+
+  void _syncControllersFromEvent(Event event) {
+    _isSyncingControllers = true;
+    _titleController.text = event.title;
+    _descriptionController.text = event.description;
+    _coverImageUrlController.text = event.coverImageUrl ?? '';
+    _capacityController.text = event.capacity?.toString() ?? '';
+    _isSyncingControllers = false;
+  }
+
+  void _enterEditMode() {
+    setState(() {
+      _editModeSnapshot = _synchronizeCurrentEventFromControllers();
+      _editModeScheduleSnapshot = Set<String>.from(_manuallyEditedScheduleIds);
+      _isEditModeEnabled = true;
+      _hasUnsavedChanges = false;
+    });
+  }
+
+  void _exitEditModeWithSavedEvent(Event savedEvent) {
+    _syncControllersFromEvent(savedEvent);
+    setState(() {
+      _currentEvent = savedEvent;
+      _isEditModeEnabled = false;
+      _hasUnsavedChanges = false;
+      _editModeSnapshot = null;
+      _editModeScheduleSnapshot = {};
+    });
+  }
+
+  void _discardChangesAndReturnToViewMode() {
+    final Event restoredEvent = _editModeSnapshot ?? _currentEvent;
+    _syncControllersFromEvent(restoredEvent);
+    setState(() {
+      _currentEvent = restoredEvent;
+      _manuallyEditedScheduleIds
+        ..clear()
+        ..addAll(_editModeScheduleSnapshot);
+      _isEditModeEnabled = false;
+      _hasUnsavedChanges = false;
+      _editModeSnapshot = null;
+      _editModeScheduleSnapshot = {};
+    });
+  }
+
+  Future<bool> _showDiscardChangesDialog() async {
+    final bool? shouldDiscard = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.backgroundColor,
+        title: const Text('Discard changes?'),
+        content: const Text(
+          'You have unsaved changes. If you go back now, those changes will be lost.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep Editing'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    return shouldDiscard ?? false;
   }
 
   Future<void> _ensureUserProfileLoaded(String userId) async {
@@ -236,10 +356,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
       final newlyInvitedUserIds = savedEvent.invitedUserIds
           .where((id) => !_initialInvitedUserIds.contains(id))
           .toSet();
-      
+
       if (newlyInvitedUserIds.isNotEmpty) {
-        debugPrint('EventEditorModal: ${newlyInvitedUserIds.length} newly invited users detected');
-        debugPrint('EventEditorModal: Cloud Functions will send invite notifications to: $newlyInvitedUserIds');
+        debugPrint(
+            'EventEditorModal: ${newlyInvitedUserIds.length} newly invited users detected');
+        debugPrint(
+            'EventEditorModal: Cloud Functions will send invite notifications to: $newlyInvitedUserIds');
         // Note: Invite notifications will be sent by Cloud Functions when they detect
         // the change to invitedUserIds in Firestore (onCreate or onUpdate triggers)
       }
@@ -247,24 +369,34 @@ class _EventEditorModalState extends State<EventEditorModal> {
       try {
         // Queue reminder notifications for all attendees (including newly invited viewers)
         // Only queue if notification type is not 'none' and the notification time is in the future
-        if (savedEvent.notificationPreference.type != EventNotificationType.none) {
-          final notificationDuration = savedEvent.notificationPreference.type == EventNotificationType.fiveMinutes
+        if (savedEvent.notificationPreference.type !=
+            EventNotificationType.none) {
+          final notificationDuration = savedEvent.notificationPreference.type ==
+                  EventNotificationType.fiveMinutes
               ? const Duration(minutes: 5)
-              : savedEvent.notificationPreference.type == EventNotificationType.fifteenMinutes
+              : savedEvent.notificationPreference.type ==
+                      EventNotificationType.fifteenMinutes
                   ? const Duration(minutes: 15)
-                  : savedEvent.notificationPreference.type == EventNotificationType.thirtyMinutes
+                  : savedEvent.notificationPreference.type ==
+                          EventNotificationType.thirtyMinutes
                       ? const Duration(minutes: 30)
-                      : savedEvent.notificationPreference.type == EventNotificationType.oneHour
+                      : savedEvent.notificationPreference.type ==
+                              EventNotificationType.oneHour
                           ? const Duration(hours: 1)
-                          : savedEvent.notificationPreference.type == EventNotificationType.oneDay
+                          : savedEvent.notificationPreference.type ==
+                                  EventNotificationType.oneDay
                               ? const Duration(days: 1)
-                              : savedEvent.notificationPreference.customDuration ?? const Duration(minutes: 30);
-          
-          final notificationTime = savedEvent.startDateTime.subtract(notificationDuration);
-          
+                              : savedEvent
+                                      .notificationPreference.customDuration ??
+                                  const Duration(minutes: 30);
+
+          final notificationTime =
+              savedEvent.startDateTime.subtract(notificationDuration);
+
           // Only queue if the notification time hasn't passed yet
           if (notificationTime.isAfter(DateTime.now())) {
-            await _eventNotificationQueueService.queueEventNotifications(savedEvent);
+            await _eventNotificationQueueService
+                .queueEventNotifications(savedEvent);
           }
         }
       } catch (e) {
@@ -281,6 +413,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Event saved')),
         );
+
+        if (widget.isReadOnly) {
+          _exitEditModeWithSavedEvent(savedEvent);
+          return;
+        }
 
         // Pop the modal with result
         Navigator.of(context).pop(
@@ -437,6 +574,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Future<bool> _handleBackNavigation() async {
+    if (widget.isReadOnly && _isEditModeEnabled) {
+      final bool shouldDiscard = await _showDiscardChangesDialog();
+      if (shouldDiscard) {
+        _discardChangesAndReturnToViewMode();
+      }
+      return false;
+    }
+
     if (Navigator.of(context).canPop()) {
       _popWithDraftResult();
     } else {
@@ -531,7 +676,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         );
         _commentController.text = text;
       });
-      
+
       String errorMessage = 'Failed to post comment';
       if (e is FirebaseException) {
         if (e.code == 'permission-denied') {
@@ -546,15 +691,16 @@ class _EventEditorModalState extends State<EventEditorModal> {
       } else if (e.toString().isNotEmpty) {
         errorMessage = 'Failed to post comment: $e';
       }
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(errorMessage)),
       );
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isPostingComment = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isPostingComment = false;
+        });
+      }
     }
   }
 
@@ -567,183 +713,240 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Color eventColor = _getEventColor(_currentEvent);
     final bool isDarkColor = _isDarkColor(eventColor);
     final Color foregroundColor = isDarkColor ? Colors.white : Colors.black;
-    final bool showCapacitySection =
-        _capacityController.text.trim().isNotEmpty;
-    final bool isAnonymousViewer =
-        _authService.currentUser != null && _authService.currentUser!.isAnonymous;
+    final bool showCapacitySection = _capacityController.text.trim().isNotEmpty;
+    final bool isAnonymousViewer = _authService.currentUser != null &&
+        _authService.currentUser!.isAnonymous;
 
     return WillPopScope(
       onWillPop: _handleBackNavigation,
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        appBar: AppBar(
-          backgroundColor: eventColor,
-          foregroundColor: foregroundColor,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => _handleBackNavigation(),
-          ),
-          title: _isReadOnly
-              ? Text(
-                  _currentEvent.title.isEmpty ? 'Untitled Event' : _currentEvent.title,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: foregroundColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                )
-              : TextField(
-            controller: _titleController,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.bold,
-            ),
-            decoration: InputDecoration(
-              hintText: 'Untitled Event',
-              hintStyle: TextStyle(
-                color: foregroundColor.withOpacity(0.6),
-              ),
-              border: InputBorder.none,
-            ),
-          ),
-          actions: [
-            if (_isReadOnly &&
-                !_canCurrentUserEdit &&
-                (_authService.currentUser == null || isAnonymousViewer))
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: TextButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => AuthScreen(),
-                      ),
-                    );
-                  },
-                  child: Text(
-                    'Sign In',
-                    style: TextStyle(
-                      color: foregroundColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+      child: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: Colors.white,
+            appBar: AppBar(
+              backgroundColor: eventColor,
+              foregroundColor: foregroundColor,
+              elevation: 0,
+              leading: Builder(
+                builder: (backCtx) => IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _help.isActive
+                      ? () =>
+                          _helpTap(EventEditorHelpTargetId.backButton, backCtx)
+                      : () => _handleBackNavigation(),
                 ),
               ),
-            if (_isReadOnly && _canCurrentUserEdit)
-              IconButton(
-                icon: const Icon(Icons.edit),
-                tooltip: 'Edit',
-                onPressed: () {
-                  setState(() {
-                    _isEditModeEnabled = true;
-                  });
-                },
-              ),
-            if (!_isReadOnly)
-              if (_isSaving)
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(foregroundColor),
-                    ),
-                  ),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isTimeRangeValid
-                          ? (isDarkColor 
-                              ? Colors.white.withOpacity(0.2)
-                              : Colors.black.withOpacity(0.1))
-                          : foregroundColor.withOpacity(0.3),
-                      foregroundColor: foregroundColor,
-                      elevation: 0,
-                      padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        side: BorderSide(
-                          color: foregroundColor.withOpacity(0.3),
-                          width: 1,
+              title: _isReadOnly
+                  ? _helpTapRegion(
+                      target: EventEditorHelpTargetId.viewMode,
+                      behavior: HitTestBehavior.translucent,
+                      child: Text(
+                        _currentEvent.title.isEmpty
+                            ? 'Untitled Event'
+                            : _currentEvent.title,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: foregroundColor,
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                    )
+                  : _helpTapRegion(
+                      target: EventEditorHelpTargetId.editMode,
+                      behavior: HitTestBehavior.translucent,
+                      child: TextField(
+                        controller: _titleController,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: foregroundColor,
+                              fontWeight: FontWeight.bold,
+                            ),
+                        decoration: InputDecoration(
+                          hintText: 'Untitled Event',
+                          hintStyle: TextStyle(
+                            color: foregroundColor.withOpacity(0.6),
+                          ),
+                          border: InputBorder.none,
                         ),
                       ),
                     ),
-                    onPressed: isTimeRangeValid ? _saveEvent : null,
-                    child: const Text('Save'),
+              actions: [
+                if (_isReadOnly &&
+                    !_canCurrentUserEdit &&
+                    (_authService.currentUser == null || isAnonymousViewer))
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Builder(
+                      builder: (signInCtx) => TextButton(
+                        onPressed: _help.isActive
+                            ? () => _helpTap(
+                                  EventEditorHelpTargetId.signInButton,
+                                  signInCtx,
+                                )
+                            : () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (context) => AuthScreen(),
+                                  ),
+                                );
+                              },
+                        child: Text(
+                          'Sign In',
+                          style: TextStyle(
+                            color: foregroundColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
+                if (_isReadOnly && _canCurrentUserEdit)
+                  Builder(
+                    builder: (editCtx) => IconButton(
+                      icon: const Icon(Icons.edit),
+                      tooltip: 'Edit',
+                      onPressed: _help.isActive
+                          ? () => _help.tryTap(
+                                EventEditorHelpTargetId.editButton,
+                                editCtx,
+                              )
+                          : () {
+                              _enterEditMode();
+                            },
+                    ),
+                  ),
+                if (!_isReadOnly)
+                  if (_isSaving)
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(foregroundColor),
+                        ),
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Builder(
+                        builder: (saveCtx) => ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isTimeRangeValid
+                                ? (isDarkColor
+                                    ? Colors.white.withOpacity(0.2)
+                                    : Colors.black.withOpacity(0.1))
+                                : foregroundColor.withOpacity(0.3),
+                            foregroundColor: foregroundColor,
+                            elevation: 0,
+                            padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              side: BorderSide(
+                                color: foregroundColor.withOpacity(0.3),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+                          onPressed: _help.isActive
+                              ? () => _help.tryTap(
+                                    EventEditorHelpTargetId.saveButton,
+                                    saveCtx,
+                                  )
+                              : (isTimeRangeValid ? _saveEvent : null),
+                          child: const Text('Save'),
+                        ),
+                      ),
+                    ),
+                _help.buildIconButton(
+                  inactiveColor: foregroundColor,
+                  activeColor: foregroundColor,
                 ),
-          ],
-        ),
-        body: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: withHeavyTap(() => FocusScope.of(context).unfocus()),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Hero / Cover Image
-                _buildCoverImageSection(),
-
-                Container(
-                  color: AppColors.backgroundColor,
+              ],
+              bottom: _help.isActive
+                  ? PreferredSize(
+                      preferredSize: const Size.fromHeight(24),
+                      child: _help.buildExitBanner(
+                        backgroundColor: AppColors.backgroundColor,
+                      ),
+                    )
+                  : null,
+            ),
+            body: Builder(
+              builder: (_) => GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _help.isActive
+                    ? null
+                    : withHeavyTap(() => FocusScope.of(context).unfocus()),
+                child: SingleChildScrollView(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Schedule Section
-                      _buildScheduleSection(durationText),
+                      // Hero / Cover Image
+                      _buildCoverImageSection(),
 
-                      const Divider(height: 1),
+                      Container(
+                        color: AppColors.backgroundColor,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Schedule Section
+                            _buildScheduleSection(durationText),
 
-                      // Itinerary Section
-                      _buildItinerarySection(),
+                            const Divider(height: 1),
 
-                      const Divider(height: 1),
+                            // Itinerary Section
+                            _buildItinerarySection(),
 
-                      // People Section
-                      _buildPeopleSection(),
+                            const Divider(height: 1),
 
-                      const Divider(height: 1),
+                            // People Section
+                            _buildPeopleSection(),
 
-                      // Visibility & Sharing
-                      _buildVisibilitySection(),
+                            const Divider(height: 1),
 
-                      const Divider(height: 1),
+                            // Visibility & Sharing
+                            _buildVisibilitySection(),
 
-                      // Capacity & RSVPs
-                      if (showCapacitySection) _buildCapacitySection(),
+                            const Divider(height: 1),
 
-                      if (showCapacitySection) const Divider(height: 1),
+                            // Capacity & RSVPs
+                            if (showCapacitySection) _buildCapacitySection(),
 
-                      // Notifications
-                      _buildNotificationsSection(),
+                            if (showCapacitySection) const Divider(height: 1),
 
-                      const Divider(height: 1),
+                            // Notifications
+                            _buildNotificationsSection(),
 
-                      // Description
-                      _buildDescriptionSection(),
+                            const Divider(height: 1),
 
-                      const Divider(height: 1),
+                            // Description
+                            _buildDescriptionSection(),
 
-                      // Comments
-                      _buildCommentsSection(),
+                            const Divider(height: 1),
 
-                      // Delete Event
-                      if (!_isReadOnly && _currentEvent.id.isNotEmpty && _canCurrentUserEdit)
-                        _buildDeleteSection(),
+                            // Comments
+                            _buildCommentsSection(),
 
-                      const SizedBox(height: 80),
+                            // Delete Event
+                            if (!_isReadOnly &&
+                                _currentEvent.id.isNotEmpty &&
+                                _canCurrentUserEdit)
+                              _buildDeleteSection(),
+
+                            const SizedBox(height: 80),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+          if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+        ],
       ),
     );
   }
@@ -753,108 +956,117 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ? null
         : _coverImageUrlController.text.trim();
 
-    return GestureDetector(
-      onTap: withHeavyTap(_isReadOnly ? null : () => _showCoverImageOptions()),
-      child: Container(
-        height: 250,
-        decoration: BoxDecoration(
-          color: Colors.grey[300],
-        ),
-        child: Stack(
-          children: [
-            if (imageUrl == null)
-              const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add_photo_alternate,
-                        size: 48, color: Colors.grey),
-                    SizedBox(height: 8),
-                    Text('Tap to add cover image',
-                        style: TextStyle(color: Colors.grey)),
-                  ],
-                ),
-              )
-            else
-              Positioned.fill(
-                child: Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
-                      color: Colors.grey[300],
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          value: loadingProgress.expectedTotalBytes != null
-                              ? loadingProgress.cumulativeBytesLoaded /
-                                  loadingProgress.expectedTotalBytes!
-                              : null,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Theme.of(context).primaryColor,
+    return Builder(
+      builder: (coverCtx) => GestureDetector(
+        onTap: withHeavyTap(() {
+          if (_helpTap(EventEditorHelpTargetId.coverImage, coverCtx)) return;
+          if (_isReadOnly) return;
+          _showCoverImageOptions();
+        }),
+        child: Container(
+          height: 250,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+          ),
+          child: Stack(
+            children: [
+              if (imageUrl == null)
+                const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.add_photo_alternate,
+                          size: 48, color: Colors.grey),
+                      SizedBox(height: 8),
+                      Text('Tap to add cover image',
+                          style: TextStyle(color: Colors.grey)),
+                    ],
+                  ),
+                )
+              else
+                Positioned.fill(
+                  child: Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Container(
+                        color: Colors.grey[300],
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            value: loadingProgress.expectedTotalBytes != null
+                                ? loadingProgress.cumulativeBytesLoaded /
+                                    loadingProgress.expectedTotalBytes!
+                                : null,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).primaryColor,
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    debugPrint('EventEditorModal: Error loading cover image: $error');
-                    debugPrint('EventEditorModal: Image URL: $imageUrl');
-                    return Container(
-                      color: Colors.grey[300],
-                      child: const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.broken_image_outlined,
-                                size: 48, color: Colors.grey),
-                            SizedBox(height: 8),
-                            Text('Failed to load image',
-                                style: TextStyle(color: Colors.grey)),
-                          ],
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      debugPrint(
+                          'EventEditorModal: Error loading cover image: $error');
+                      debugPrint('EventEditorModal: Image URL: $imageUrl');
+                      return Container(
+                        color: Colors.grey[300],
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image_outlined,
+                                  size: 48, color: Colors.grey),
+                              SizedBox(height: 8),
+                              Text('Failed to load image',
+                                  style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: _isReadOnly
+                    ? const SizedBox.shrink()
+                    : FloatingActionButton.small(
+                        onPressed:
+                            _help.isActive ? null : _showCoverImageOptions,
+                        backgroundColor: Colors.white,
+                        child: const Icon(Icons.edit, color: Colors.black),
+                      ),
               ),
-            Positioned(
-              bottom: 8,
-              right: 8,
-              child: _isReadOnly
-                  ? const SizedBox.shrink()
-                  : FloatingActionButton.small(
-                      onPressed: _showCoverImageOptions,
-                      backgroundColor: Colors.white,
-                      child: const Icon(Icons.edit, color: Colors.black),
-                    ),
-            ),
-            // Uploading overlay
-            if (_isUploadingCoverImage)
-              Positioned.fill(
-                child: Container(
-                  color: Colors.black.withOpacity(0.5),
-                  child: const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                        SizedBox(height: 16),
-                        Text(
-                          'Uploading image...',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w500,
+              // Uploading overlay
+              if (_isUploadingCoverImage)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withOpacity(0.5),
+                    child: const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
-                        ),
-                      ],
+                          SizedBox(height: 16),
+                          Text(
+                            'Uploading image...',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -974,7 +1186,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
       debugPrint('EventEditorModal: Using photoUrl: $photoUrl');
       return photoUrl;
     }
-    debugPrint('EventEditorModal: No photo available for experience ${experience.id}');
+    debugPrint(
+        'EventEditorModal: No photo available for experience ${experience.id}');
     return null;
   }
 
@@ -990,11 +1203,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (!hasNoCoverImage) return;
 
     // Check if top-most experience changed
-    final EventExperienceEntry? newTopEntry = updatedEntries.isNotEmpty
-        ? updatedEntries.first
-        : null;
+    final EventExperienceEntry? newTopEntry =
+        updatedEntries.isNotEmpty ? updatedEntries.first : null;
     final String? newTopExperienceId = newTopEntry?.experienceId;
-    final bool topExperienceChanged = previousTopExperienceId != newTopExperienceId;
+    final bool topExperienceChanged =
+        previousTopExperienceId != newTopExperienceId;
     if (!topExperienceChanged) return;
 
     // Find the first experience with a valid cover image
@@ -1051,18 +1264,16 @@ class _EventEditorModalState extends State<EventEditorModal> {
             theme.textTheme.bodySmall?.color?.withOpacity(0.7) ??
                 Colors.grey[600];
         final primaryColor = theme.primaryColor;
-        final itineraryExperiences = _currentEvent.experiences
-            .map((entry) {
-              if (entry.isEventOnly) {
-                return MapEntry(entry, null);
-              }
-              return MapEntry(
-                entry,
-                _availableExperiences
-                    .firstWhereOrNull((exp) => exp.id == entry.experienceId),
-              );
-            })
-            .toList();
+        final itineraryExperiences = _currentEvent.experiences.map((entry) {
+          if (entry.isEventOnly) {
+            return MapEntry(entry, null);
+          }
+          return MapEntry(
+            entry,
+            _availableExperiences
+                .firstWhereOrNull((exp) => exp.id == entry.experienceId),
+          );
+        }).toList();
 
         return SafeArea(
           child: SingleChildScrollView(
@@ -1108,18 +1319,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ...List.generate(itineraryExperiences.length, (index) {
                       final entry = itineraryExperiences[index].key;
                       final experience = itineraryExperiences[index].value;
-                      
+
                       final bool isEventOnly = entry.isEventOnly;
                       final String displayName = isEventOnly
                           ? (entry.inlineName ?? 'Untitled')
                           : (experience?.name ?? 'Unknown experience');
-                      
+
                       String? derivedUrl;
                       if (isEventOnly) {
-                        final photoResourceName = entry.inlineLocation?.photoResourceName;
+                        final photoResourceName =
+                            entry.inlineLocation?.photoResourceName;
                         final photoUrl = entry.inlineLocation?.photoUrl;
-                        if (photoResourceName != null && photoResourceName.isNotEmpty) {
-                          derivedUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+                        if (photoResourceName != null &&
+                            photoResourceName.isNotEmpty) {
+                          derivedUrl = GoogleMapsService
+                              .buildPlacePhotoUrlFromResourceName(
                             photoResourceName,
                             maxWidthPx: 800,
                             maxHeightPx: 600,
@@ -1128,9 +1342,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           derivedUrl = photoUrl;
                         }
                       } else if (experience != null) {
-                        derivedUrl = _buildCoverImageUrlFromExperience(experience);
+                        derivedUrl =
+                            _buildCoverImageUrlFromExperience(experience);
                       }
-                      
+
                       final hasDerivedImage = derivedUrl != null;
                       final subtitle = isEventOnly
                           ? entry.inlineLocation?.getPlaceName()
@@ -1148,7 +1363,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             if (isEventOnly)
                               Container(
                                 margin: const EdgeInsets.only(left: 4),
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 4, vertical: 2),
                                 decoration: BoxDecoration(
                                   color: Colors.grey.shade600,
                                   borderRadius: BorderRadius.circular(4),
@@ -1168,12 +1384,19 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         trailing: hasDerivedImage
                             ? const Icon(Icons.image, color: Colors.black54)
                             : (isEventOnly
-                                ? (entry.inlineLocation?.placeId != null && entry.inlineLocation!.placeId!.isNotEmpty
-                                    ? Icon(Icons.cloud_download_outlined, color: primaryColor)
-                                    : const Text('No image', style: TextStyle(color: Colors.grey)))
-                                : (experience?.location.placeId != null && experience!.location.placeId!.isNotEmpty
-                                    ? Icon(Icons.cloud_download_outlined, color: primaryColor)
-                                    : const Text('No image', style: TextStyle(color: Colors.grey)))),
+                                ? (entry.inlineLocation?.placeId != null &&
+                                        entry
+                                            .inlineLocation!.placeId!.isNotEmpty
+                                    ? Icon(Icons.cloud_download_outlined,
+                                        color: primaryColor)
+                                    : const Text('No image',
+                                        style: TextStyle(color: Colors.grey)))
+                                : (experience?.location.placeId != null &&
+                                        experience!.location.placeId!.isNotEmpty
+                                    ? Icon(Icons.cloud_download_outlined,
+                                        color: primaryColor)
+                                    : const Text('No image',
+                                        style: TextStyle(color: Colors.grey)))),
                         onTap: withHeavyTap(() async {
                           // If we already have a URL, use it
                           if (hasDerivedImage && derivedUrl != null) {
@@ -1185,7 +1408,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             });
                             return;
                           }
-                          
+
                           // Otherwise, try to fetch from API if we have a placeId
                           String? placeId;
                           if (isEventOnly) {
@@ -1193,7 +1416,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           } else if (experience != null) {
                             placeId = experience.location.placeId;
                           }
-                          
+
                           if (placeId == null || placeId.isEmpty) {
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -1205,11 +1428,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             );
                             return;
                           }
-                          
+
                           // Show loading indicator
                           if (!mounted) return;
                           Navigator.of(sheetContext).pop();
-                          
+
                           // Show a loading dialog while fetching
                           showDialog(
                             context: context,
@@ -1224,18 +1447,19 @@ class _EventEditorModalState extends State<EventEditorModal> {
                               );
                             },
                           );
-                          
+
                           try {
                             // Fetch photo URL from API
-                            final fetchedUrl = await _googleMapsService.getPlaceImageUrl(
+                            final fetchedUrl =
+                                await _googleMapsService.getPlaceImageUrl(
                               placeId,
                               maxWidth: 800,
                               maxHeight: 600,
                             );
-                            
+
                             if (!mounted) return;
                             Navigator.of(context).pop(); // Close loading dialog
-                            
+
                             if (fetchedUrl != null && fetchedUrl.isNotEmpty) {
                               setState(() {
                                 _coverImageUrlController.text = fetchedUrl;
@@ -1262,7 +1486,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           } catch (e) {
                             if (!mounted) return;
                             Navigator.of(context).pop(); // Close loading dialog
-                            debugPrint('EventEditorModal: Error fetching photo: $e');
+                            debugPrint(
+                                'EventEditorModal: Error fetching photo: $e');
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -1350,7 +1575,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
       // Synchronize controller values before passing event to selector
       final eventForSelector = _synchronizeCurrentEventFromControllers();
-      
+
       final selectedOrder = await Navigator.of(context).push<List<String>>(
         MaterialPageRoute(
           builder: (ctx) => EventExperienceSelectorScreen(
@@ -1377,24 +1602,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
 
       final updatedEntries = _rebuildEntriesFromSelection(selectedOrder);
-      
+
       // Track the previous top-most experience ID
-      final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
-          ? _currentEvent.experiences.first.experienceId
-          : null;
-      
+      final String? previousTopExperienceId =
+          _currentEvent.experiences.isNotEmpty
+              ? _currentEvent.experiences.first.experienceId
+              : null;
+
       setState(() {
-        var updatedEvent =
-            _currentEvent.copyWith(experiences: updatedEntries);
+        var updatedEvent = _currentEvent.copyWith(experiences: updatedEntries);
         updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
         _currentEvent = updatedEvent;
-        
+
         // Automatically update cover image from top-most experience if needed
         _updateCoverImageFromTopExperienceIfNeeded(
           previousTopExperienceId,
           updatedEvent.experiences,
         );
-        
+
         _markUnsavedChanges();
       });
     } catch (e) {
@@ -1424,10 +1649,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final ColorCategory? selectedColorCategory = widget.colorCategories.firstWhereOrNull(
+            final ColorCategory? selectedColorCategory =
+                widget.colorCategories.firstWhereOrNull(
               (color) => color.id == selectedColorCategoryId,
             );
-            
+
             // Determine the display color (from category or custom)
             Color? displayColor;
             if (selectedColorCategory != null) {
@@ -1474,114 +1700,118 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             border: OutlineInputBorder(),
                           ),
                         ),
-                      const SizedBox(height: 16),
-                      // Description field
-                      TextField(
-                        controller: descriptionController,
-                        decoration: const InputDecoration(
-                          labelText: 'Description',
-                          hintText: 'Optional details',
-                          border: OutlineInputBorder(),
+                        const SizedBox(height: 16),
+                        // Description field
+                        TextField(
+                          controller: descriptionController,
+                          decoration: const InputDecoration(
+                            labelText: 'Description',
+                            hintText: 'Optional details',
+                            border: OutlineInputBorder(),
+                          ),
+                          minLines: 2,
+                          maxLines: 4,
                         ),
-                        minLines: 2,
-                        maxLines: 4,
-                      ),
-                      const SizedBox(height: 16),
-                      // Location selection
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.location_on),
-                        label: Text(selectedLocation != null
-                            ? selectedLocation!.getPlaceName()
-                            : 'Select Location (Optional)'),
-                        onPressed: () async {
-                          final location = await _pickLocation();
-                          if (location != null) {
-                            setDialogState(() {
-                              selectedLocation = location;
-                            });
-                          }
-                        },
-                      ),
-                      if (selectedLocation != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          selectedLocation!.address ?? 'Location selected',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.grey[600],
-                              ),
+                        const SizedBox(height: 16),
+                        // Location selection
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.location_on),
+                          label: Text(selectedLocation != null
+                              ? selectedLocation!.getPlaceName()
+                              : 'Select Location (Optional)'),
+                          onPressed: () async {
+                            final location = await _pickLocation();
+                            if (location != null) {
+                              setDialogState(() {
+                                selectedLocation = location;
+                              });
+                            }
+                          },
+                        ),
+                        if (selectedLocation != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            selectedLocation!.address ?? 'Location selected',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        // Icon selection
+                        OutlinedButton.icon(
+                          icon: Icon(
+                            Icons.category,
+                            color: selectedIcon != null
+                                ? Theme.of(context).primaryColor
+                                : null,
+                          ),
+                          label: Text(selectedIcon != null
+                              ? selectedIcon!
+                              : 'Select Icon (Optional)'),
+                          onPressed: () async {
+                            final icon = await _pickCategory();
+                            if (icon != null) {
+                              setDialogState(() {
+                                selectedIcon = icon;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        // Color category selection
+                        OutlinedButton.icon(
+                          icon: Icon(
+                            Icons.palette,
+                            color: displayColor,
+                          ),
+                          label: Text(selectedColorCategory != null
+                              ? selectedColorCategory.name
+                              : customColorHex != null
+                                  ? 'Custom Color'
+                                  : 'Select Color (Optional)'),
+                          onPressed: () async {
+                            final colorResult = await _pickColorCategory(
+                              initialColorCategoryId: selectedColorCategoryId ??
+                                  (customColorHex != null
+                                      ? 'custom:$customColorHex'
+                                      : null),
+                            );
+                            if (colorResult != null) {
+                              setDialogState(() {
+                                if (colorResult.startsWith('custom:')) {
+                                  // Custom color selected
+                                  selectedColorCategoryId = null;
+                                  customColorHex = colorResult
+                                      .substring(7); // Remove "custom:" prefix
+                                } else {
+                                  // Category selected
+                                  selectedColorCategoryId = colorResult;
+                                  customColorHex = null;
+                                }
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        // Notes field
+                        TextField(
+                          controller: notesController,
+                          decoration: const InputDecoration(
+                            labelText: 'Notes (optional)',
+                            hintText: 'Add notes and details about this stop!',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.notes),
+                          ),
+                          minLines: 3,
+                          maxLines: null,
                         ),
                       ],
-                      const SizedBox(height: 16),
-                      // Icon selection
-                      OutlinedButton.icon(
-                        icon: Icon(
-                          Icons.category,
-                          color: selectedIcon != null
-                              ? Theme.of(context).primaryColor
-                              : null,
-                        ),
-                        label: Text(selectedIcon != null
-                            ? selectedIcon!
-                            : 'Select Icon (Optional)'),
-                        onPressed: () async {
-                          final icon = await _pickCategory();
-                          if (icon != null) {
-                            setDialogState(() {
-                              selectedIcon = icon;
-                            });
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      // Color category selection
-                      OutlinedButton.icon(
-                        icon: Icon(
-                          Icons.palette,
-                          color: displayColor,
-                        ),
-                        label: Text(selectedColorCategory != null
-                            ? selectedColorCategory.name
-                            : customColorHex != null
-                                ? 'Custom Color'
-                                : 'Select Color (Optional)'),
-                        onPressed: () async {
-                          final colorResult = await _pickColorCategory(
-                            initialColorCategoryId: selectedColorCategoryId ?? 
-                                (customColorHex != null ? 'custom:$customColorHex' : null),
-                          );
-                          if (colorResult != null) {
-                            setDialogState(() {
-                              if (colorResult.startsWith('custom:')) {
-                                // Custom color selected
-                                selectedColorCategoryId = null;
-                                customColorHex = colorResult.substring(7); // Remove "custom:" prefix
-                              } else {
-                                // Category selected
-                                selectedColorCategoryId = colorResult;
-                                customColorHex = null;
-                              }
-                            });
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      // Notes field
-                      TextField(
-                        controller: notesController,
-                        decoration: const InputDecoration(
-                          labelText: 'Notes (optional)',
-                          hintText: 'Add notes and details about this stop!',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.notes),
-                        ),
-                        minLines: 3,
-                        maxLines: null,
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-                ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
@@ -1600,9 +1830,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     final entry = EventExperienceEntry(
                       experienceId: '', // Empty for event-only
                       inlineName: name,
-                      inlineDescription: descriptionController.text.trim().isEmpty
-                          ? null
-                          : descriptionController.text.trim(),
+                      inlineDescription:
+                          descriptionController.text.trim().isEmpty
+                              ? null
+                              : descriptionController.text.trim(),
                       inlineLocation: selectedLocation,
                       inlineCategoryId: null, // No category ID for event-only
                       inlineColorCategoryId: selectedColorCategoryId,
@@ -1629,11 +1860,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (result != null && mounted) {
       setState(() {
         // Track the previous top-most experience ID
-        final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
-            ? _currentEvent.experiences.first.experienceId
-            : null;
+        final String? previousTopExperienceId =
+            _currentEvent.experiences.isNotEmpty
+                ? _currentEvent.experiences.first.experienceId
+                : null;
 
-        final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+        final entries =
+            List<EventExperienceEntry>.from(_currentEvent.experiences);
         entries.add(result);
         var updatedEvent = _currentEvent.copyWith(experiences: entries);
         updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
@@ -1650,7 +1883,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
-  Future<void> _editEventOnlyExperience(EventExperienceEntry entry, int index) async {
+  Future<void> _editEventOnlyExperience(
+      EventExperienceEntry entry, int index) async {
     final TextEditingController nameController = TextEditingController(
       text: entry.inlineName ?? '',
     );
@@ -1667,10 +1901,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final ColorCategory? selectedColorCategory = widget.colorCategories.firstWhereOrNull(
+            final ColorCategory? selectedColorCategory =
+                widget.colorCategories.firstWhereOrNull(
               (color) => color.id == selectedColorCategoryId,
             );
-            
+
             // Determine the display color (from category or custom)
             Color? displayColor;
             if (selectedColorCategory != null) {
@@ -1717,102 +1952,107 @@ class _EventEditorModalState extends State<EventEditorModal> {
                             border: OutlineInputBorder(),
                           ),
                         ),
-                      const SizedBox(height: 16),
-                      // Notes field
-                      TextField(
-                        controller: notesController,
-                        decoration: const InputDecoration(
-                          labelText: 'Notes (optional)',
-                          hintText: 'Add notes and details about this stop!',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.notes),
+                        const SizedBox(height: 16),
+                        // Notes field
+                        TextField(
+                          controller: notesController,
+                          decoration: const InputDecoration(
+                            labelText: 'Notes (optional)',
+                            hintText: 'Add notes and details about this stop!',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.notes),
+                          ),
+                          minLines: 3,
+                          maxLines: null,
                         ),
-                        minLines: 3,
-                        maxLines: null,
-                      ),
-                      const SizedBox(height: 16),
-                      // Location selection
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.location_on),
-                        label: Text(selectedLocation != null
-                            ? selectedLocation!.getPlaceName()
-                            : 'Select Location (Optional)'),
-                        onPressed: () async {
-                          final location = await _pickLocation();
-                          if (location != null) {
-                            setDialogState(() {
-                              selectedLocation = location;
-                            });
-                          }
-                        },
-                      ),
-                      if (selectedLocation != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          selectedLocation!.address ?? 'Location selected',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.grey[600],
-                              ),
+                        const SizedBox(height: 16),
+                        // Location selection
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.location_on),
+                          label: Text(selectedLocation != null
+                              ? selectedLocation!.getPlaceName()
+                              : 'Select Location (Optional)'),
+                          onPressed: () async {
+                            final location = await _pickLocation();
+                            if (location != null) {
+                              setDialogState(() {
+                                selectedLocation = location;
+                              });
+                            }
+                          },
+                        ),
+                        if (selectedLocation != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            selectedLocation!.address ?? 'Location selected',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        // Icon selection
+                        OutlinedButton.icon(
+                          icon: Icon(
+                            Icons.category,
+                            color: selectedIcon != null
+                                ? Theme.of(context).primaryColor
+                                : null,
+                          ),
+                          label: Text(selectedIcon != null
+                              ? selectedIcon!
+                              : 'Select Icon (Optional)'),
+                          onPressed: () async {
+                            final icon =
+                                await _pickCategory(initialIcon: selectedIcon);
+                            if (icon != null) {
+                              setDialogState(() {
+                                selectedIcon = icon;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        // Color category selection
+                        OutlinedButton.icon(
+                          icon: Icon(
+                            Icons.palette,
+                            color: displayColor,
+                          ),
+                          label: Text(selectedColorCategory != null
+                              ? selectedColorCategory.name
+                              : customColorHex != null
+                                  ? 'Custom Color'
+                                  : 'Select Color (Optional)'),
+                          onPressed: () async {
+                            final colorResult = await _pickColorCategory(
+                              initialColorCategoryId: selectedColorCategoryId ??
+                                  (customColorHex != null
+                                      ? 'custom:$customColorHex'
+                                      : null),
+                            );
+                            if (colorResult != null) {
+                              setDialogState(() {
+                                if (colorResult.startsWith('custom:')) {
+                                  // Custom color selected
+                                  selectedColorCategoryId = null;
+                                  customColorHex = colorResult
+                                      .substring(7); // Remove "custom:" prefix
+                                } else {
+                                  // Category selected
+                                  selectedColorCategoryId = colorResult;
+                                  customColorHex = null;
+                                }
+                              });
+                            }
+                          },
                         ),
                       ],
-                      const SizedBox(height: 16),
-                      // Icon selection
-                      OutlinedButton.icon(
-                        icon: Icon(
-                          Icons.category,
-                          color: selectedIcon != null
-                              ? Theme.of(context).primaryColor
-                              : null,
-                        ),
-                        label: Text(selectedIcon != null
-                            ? selectedIcon!
-                            : 'Select Icon (Optional)'),
-                        onPressed: () async {
-                          final icon = await _pickCategory(initialIcon: selectedIcon);
-                          if (icon != null) {
-                            setDialogState(() {
-                              selectedIcon = icon;
-                            });
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      // Color category selection
-                      OutlinedButton.icon(
-                        icon: Icon(
-                          Icons.palette,
-                          color: displayColor,
-                        ),
-                        label: Text(selectedColorCategory != null
-                            ? selectedColorCategory.name
-                            : customColorHex != null
-                                ? 'Custom Color'
-                                : 'Select Color (Optional)'),
-                        onPressed: () async {
-                          final colorResult = await _pickColorCategory(
-                            initialColorCategoryId: selectedColorCategoryId ?? 
-                                (customColorHex != null ? 'custom:$customColorHex' : null),
-                          );
-                          if (colorResult != null) {
-                            setDialogState(() {
-                              if (colorResult.startsWith('custom:')) {
-                                // Custom color selected
-                                selectedColorCategoryId = null;
-                                customColorHex = colorResult.substring(7); // Remove "custom:" prefix
-                              } else {
-                                // Category selected
-                                selectedColorCategoryId = colorResult;
-                                customColorHex = null;
-                              }
-                            });
-                          }
-                        },
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-                ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
@@ -1856,7 +2096,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     if (result != null && mounted) {
       setState(() {
-        final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+        final entries =
+            List<EventExperienceEntry>.from(_currentEvent.experiences);
         entries[index] = result;
         _currentEvent = _currentEvent.copyWith(experiences: entries);
         _markUnsavedChanges();
@@ -1902,73 +2143,1062 @@ class _EventEditorModalState extends State<EventEditorModal> {
     // Expanded list of emojis for selection (same as add_category_modal.dart)
     final List<String> emojiOptions = [
       // Food & Drink
-      '🍎', '🍏', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒', '🍑', '🥭',
-      '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🫛', '🥒', '🌶️', '🌽', '🥕', '🫑', '🥔', '🧅', '🧄', '🍄', '🥜',
-      '🌰', '🍞', '🥐', '🥯', '🥞', '🍳', '🧇', '🥓', '🥩', '🍗', '🍖', '🍤', '🍣', '🍱', '🍚', '🍛', '🍜',
-      '🍲', '🥣', '🥗', '🍝', '🍠', '🥡', '🥪', '🌭', '🍔', '🍟', '🍕', '🥫', '🥙', '🥘', '🌮', '🌯', '🥨', '🥟',
-      '🦪', '🦞', '🦐', '🦑', '🍢', '🍡', '🍧', '🍨', '🍦', '🥧', '🍰', '🎂', '🧁', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪',
-      '🍯', '🥤', '🧃', '🧉', '🧊', '🥛', '☕', '🫖', '🧋', '🍵', '🍶', '🍾', '🍷', '🍸', '🍹', '🍺', '🍻', '🥂', '🥃',
-      
+      '🍎', '🍏', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒',
+      '🍑', '🥭',
+      '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🫛', '🥒', '🌶️', '🌽', '🥕',
+      '🫑', '🥔', '🧅', '🧄', '🍄', '🥜',
+      '🌰', '🍞', '🥐', '🥯', '🥞', '🍳', '🧇', '🥓', '🥩', '🍗', '🍖', '🍤',
+      '🍣', '🍱', '🍚', '🍛', '🍜',
+      '🍲', '🥣', '🥗', '🍝', '🍠', '🥡', '🥪', '🌭', '🍔', '🍟', '🍕', '🥫',
+      '🥙', '🥘', '🌮', '🌯', '🥨', '🥟',
+      '🦪', '🦞', '🦐', '🦑', '🍢', '🍡', '🍧', '🍨', '🍦', '🥧', '🍰', '🎂',
+      '🧁', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪',
+      '🍯', '🥤', '🧃', '🧉', '🧊', '🥛', '☕', '🫖', '🧋', '🍵', '🍶', '🍾',
+      '🍷', '🍸', '🍹', '🍺', '🍻', '🥂', '🥃',
+
       // Utensils & Tableware
       '🍽️', '🥢', '🍴', '🥄', '🧂',
 
       // Places & Buildings
-      '🏠', '🏡', '🏢', '🏣', '🏤', '🏥', '🏦', '🏨', '🏩', '🏪', '🏫', '🏬', '🏭', '🏯', '🏰', '🏛️', '⛪', '🕌', '🕍',
-      '⛩️', '🕋', '⛲', '🗽', '🗼', '🏟️', '🎡', '🎢', '🎠', '⛺', '🏕️', '🏖️', '🏜️', '🏝️', '🏞️', '⛰️', '🏔️', '🗻', '🌋', '🏗️', '🛖',
-      '🛣️', '🛤️', '🗺️', '🧭', '📍', '🏘️', '🌳', '🌆', '🌇', '🌅', '🌄', '⛱️', '🛍️', '🛒', '💈', '♨️', '⭐', '🌠', '🌌', '🪐', '🌍', '🌏', '🌎', '🪨', '🪵',
+      '🏠', '🏡', '🏢', '🏣', '🏤', '🏥', '🏦', '🏨', '🏩', '🏪', '🏫', '🏬',
+      '🏭', '🏯', '🏰', '🏛️', '⛪', '🕌', '🕍',
+      '⛩️', '🕋', '⛲', '🗽', '🗼', '🏟️', '🎡', '🎢', '🎠', '⛺', '🏕️', '🏖️',
+      '🏜️', '🏝️', '🏞️', '⛰️', '🏔️', '🗻', '🌋', '🏗️', '🛖',
+      '🛣️',
+      '🛤️',
+      '🗺️',
+      '🧭',
+      '📍',
+      '🏘️',
+      '🌳',
+      '🌆',
+      '🌇',
+      '🌅',
+      '🌄',
+      '⛱️',
+      '🛍️',
+      '🛒',
+      '💈',
+      '♨️',
+      '⭐',
+      '🌠',
+      '🌌',
+      '🪐',
+      '🌍',
+      '🌏',
+      '🌎',
+      '🪨',
+      '🪵',
       '❄️', '☃️',
 
       // Nature & Plants
-      '🌵', '🌲', '🌳', '🌴', '🌱', '🌿', '☘️', '🍀', '🎍', '🎋', '🍂', '🍁', '🍃', '🪴', '🏵️', '🌸', '🌹', '🌺', '🌻', '🌼', '🌷', '💐', '🥀',
+      '🌵', '🌲', '🌳', '🌴', '🌱', '🌿', '☘️', '🍀', '🎍', '🎋', '🍂', '🍁',
+      '🍃', '🪴', '🏵️', '🌸', '🌹', '🌺', '🌻', '🌼', '🌷', '💐', '🥀',
 
       // Animals
-      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐽', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒',
-      '🦍', '🦧', '🐔', '🐧', '🐦', '🐤', '🐣', '🐥', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🐝', '🪲', '🐛', '🐞', '🦋', '🐌', '🐜', '🐢', '🐍', '🦎', '🦂', '🦗', '🕷️', '🕸️', '🦟', '🐠', '🐟', '🐡', '🦈', '🐬', '🐳', '🐋', '🦭', '🦦', '🦑', '🦐', '🦞', '🦀', '🪼', '🐙', '🐊', '🐅', '🐆', '🦓', '🦒', '🐘', '🦏', '🦛', '🐪', '🐫', '🦙', '🦘', '🐃', '🐂', '🐄', '🐎', '🐖', '🐏', '🐑', '🦢', '🦩', '🦚', '🦜', '🦃', '🐓', '🦤', '🦥', '🦦', '🦨', '🦧', '🦣', '🦫', '🐇', '🦝', '🦡', '🦥', '🦬', '🦦', '🦨', '🦩', '🐉', '🐲', '🪽', '🕊️', '🐦‍⬛', '🐤', '🦢',
+      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮',
+      '🐷', '🐽', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒',
+      '🦍',
+      '🦧',
+      '🐔',
+      '🐧',
+      '🐦',
+      '🐤',
+      '🐣',
+      '🐥',
+      '🦆',
+      '🦅',
+      '🦉',
+      '🦇',
+      '🐺',
+      '🐗',
+      '🐴',
+      '🐝',
+      '🪲',
+      '🐛',
+      '🐞',
+      '🦋',
+      '🐌',
+      '🐜',
+      '🐢',
+      '🐍',
+      '🦎',
+      '🦂',
+      '🦗',
+      '🕷️',
+      '🕸️',
+      '🦟',
+      '🐠',
+      '🐟',
+      '🐡',
+      '🦈',
+      '🐬',
+      '🐳',
+      '🐋',
+      '🦭',
+      '🦦',
+      '🦑',
+      '🦐',
+      '🦞',
+      '🦀',
+      '🪼',
+      '🐙',
+      '🐊',
+      '🐅',
+      '🐆',
+      '🦓',
+      '🦒',
+      '🐘',
+      '🦏',
+      '🦛',
+      '🐪',
+      '🐫',
+      '🦙',
+      '🦘',
+      '🐃',
+      '🐂',
+      '🐄',
+      '🐎',
+      '🐖',
+      '🐏',
+      '🐑',
+      '🦢',
+      '🦩',
+      '🦚',
+      '🦜',
+      '🦃',
+      '🐓',
+      '🦤',
+      '🦥',
+      '🦦',
+      '🦨',
+      '🦧',
+      '🦣',
+      '🦫',
+      '🐇',
+      '🦝',
+      '🦡',
+      '🦥',
+      '🦬',
+      '🦦',
+      '🦨',
+      '🦩',
+      '🐉',
+      '🐲',
+      '🪽',
+      '🕊️',
+      '🐦‍⬛',
+      '🐤',
+      '🦢',
 
       // Faces & People
-      '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥲', '🥹', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔', '🫠', '🤐', '🤨', '😐', '😑', '😶', '😶‍🌫️', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '😵‍💫', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '🫤', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '👶', '🧒', '👦', '👧', '🧑', '👱', '👨', '🧔', '👨‍🦰', '👨‍🦱', '👨‍🦳', '👨‍🦲', '👩', '👩‍🦰', '👩‍🦱', '👩‍🦳', '👩‍🦲', '👱‍♀️', '👱‍♂️', '🧓', '👴', '👵', '🙍‍♂️', '🙍‍♀️', '🙎‍♂️', '🙎‍♀️', '🙅‍♂️', '🙅‍♀️', '🙆‍♂️', '🙆‍♀️', '💁‍♀️', '💁‍♂️', '🙋‍♀️', '🙋‍♂️', '🧏‍♂️', '🧏‍♀️', '🙇‍♂️', '🙇‍♀️', '🤦‍♂️', '🤦‍♀️', '🤷‍♂️', '🤷‍♀️', '🧑‍⚕️', '🧑‍🎓', '🧑‍🏫', '🧑‍⚖️', '🧑‍🌾', '🧑‍🍳', '🧑‍🔧', '🧑‍🏭', '🧑‍💼', '🧑‍🔬', '🧑‍💻', '🧑‍🎤', '🧑‍🎨', '🧑‍✈️', '🧑‍🚀', '🧑‍🚒', '👮‍♀️', '👮‍♂️', '🕵️‍♀️', '🕵️‍♂️', '💂‍♀️', '💂‍♂️', '🥷', '👷‍♀️', '👷‍♂️', '🤴', '👸', '👳‍♂️', '👳‍♀️', '👲', '🧕', '🤵', '👰', '🤰', '🤱', '🫄', '🫃', '🧑‍🍼', '👼', '🎅', '🤶', '🧑‍🎄', '🦸‍♂️', '🦸‍♀️', '🦹‍♂️', '🦹‍♀️', '🧙‍♂️', '🧙‍♀️', '🧚‍♂️', '🧚‍♀️', '🧛‍♂️', '🧛‍♀️', '🧜‍♂️', '🧜‍♀️', '🧝‍♂️', '🧝‍♀️', '🧞‍♂️', '🧞‍♀️', '🧟‍♂️', '🧟‍♀️', '🧌', '🚶‍♂️', '🚶‍♀️', '🧍‍♂️', '🧍‍♀️', '🧎‍♂️', '🧎‍♀️', '🧑‍🦯', '🧑‍🦼', '🧑‍🦽', '🏃‍♂️', '🏃‍♀️', '💃', '🕺', '🧗', '🧗‍♂️', '🧗‍♀️', '🏇', '🏂', '🏌️‍♀️', '🏌️‍♂️', '🏄‍♂️', '🏄‍♀️', '🏊‍♂️', '🏊‍♀️', '🚣‍♂️', '🚣‍♀️',
+      '😀',
+      '😃',
+      '😄',
+      '😁',
+      '😆',
+      '😅',
+      '😂',
+      '🤣',
+      '🥲',
+      '🥹',
+      '😊',
+      '😇',
+      '🙂',
+      '🙃',
+      '😉',
+      '😌',
+      '😍',
+      '🥰',
+      '😘',
+      '😗',
+      '😙',
+      '😚',
+      '😋',
+      '😛',
+      '😜',
+      '🤪',
+      '😝',
+      '🤑',
+      '🤗',
+      '🤭',
+      '🫢',
+      '🫣',
+      '🤫',
+      '🤔',
+      '🫠',
+      '🤐',
+      '🤨',
+      '😐',
+      '😑',
+      '😶',
+      '😶‍🌫️',
+      '😏',
+      '😒',
+      '🙄',
+      '😬',
+      '🤥',
+      '😌',
+      '😔',
+      '😪',
+      '😴',
+      '😷',
+      '🤒',
+      '🤕',
+      '🤢',
+      '🤮',
+      '🤧',
+      '🥵',
+      '🥶',
+      '🥴',
+      '😵',
+      '😵‍💫',
+      '🤯',
+      '🤠',
+      '🥳',
+      '😎',
+      '🤓',
+      '🧐',
+      '😕',
+      '🫤',
+      '😟',
+      '🙁',
+      '☹️',
+      '😮',
+      '😯',
+      '😲',
+      '😳',
+      '🥺',
+      '😦',
+      '😧',
+      '😨',
+      '😰',
+      '😥',
+      '😢',
+      '😭',
+      '😱',
+      '😖',
+      '😣',
+      '😞',
+      '😓',
+      '😩',
+      '😫',
+      '🥱',
+      '😤',
+      '😡',
+      '😠',
+      '🤬',
+      '😈',
+      '👿',
+      '💀',
+      '☠️',
+      '💩',
+      '🤡',
+      '👹',
+      '👺',
+      '👻',
+      '👽',
+      '👾',
+      '🤖',
+      '👶',
+      '🧒',
+      '👦',
+      '👧',
+      '🧑',
+      '👱',
+      '👨',
+      '🧔',
+      '👨‍🦰',
+      '👨‍🦱',
+      '👨‍🦳',
+      '👨‍🦲',
+      '👩',
+      '👩‍🦰',
+      '👩‍🦱',
+      '👩‍🦳',
+      '👩‍🦲',
+      '👱‍♀️',
+      '👱‍♂️',
+      '🧓',
+      '👴',
+      '👵',
+      '🙍‍♂️',
+      '🙍‍♀️',
+      '🙎‍♂️',
+      '🙎‍♀️',
+      '🙅‍♂️',
+      '🙅‍♀️',
+      '🙆‍♂️',
+      '🙆‍♀️',
+      '💁‍♀️',
+      '💁‍♂️',
+      '🙋‍♀️',
+      '🙋‍♂️',
+      '🧏‍♂️',
+      '🧏‍♀️',
+      '🙇‍♂️',
+      '🙇‍♀️',
+      '🤦‍♂️',
+      '🤦‍♀️',
+      '🤷‍♂️',
+      '🤷‍♀️',
+      '🧑‍⚕️',
+      '🧑‍🎓',
+      '🧑‍🏫',
+      '🧑‍⚖️',
+      '🧑‍🌾',
+      '🧑‍🍳',
+      '🧑‍🔧',
+      '🧑‍🏭',
+      '🧑‍💼',
+      '🧑‍🔬',
+      '🧑‍💻',
+      '🧑‍🎤',
+      '🧑‍🎨',
+      '🧑‍✈️',
+      '🧑‍🚀',
+      '🧑‍🚒',
+      '👮‍♀️',
+      '👮‍♂️',
+      '🕵️‍♀️',
+      '🕵️‍♂️',
+      '💂‍♀️',
+      '💂‍♂️',
+      '🥷',
+      '👷‍♀️',
+      '👷‍♂️',
+      '🤴',
+      '👸',
+      '👳‍♂️',
+      '👳‍♀️',
+      '👲',
+      '🧕',
+      '🤵',
+      '👰',
+      '🤰',
+      '🤱',
+      '🫄',
+      '🫃',
+      '🧑‍🍼',
+      '👼',
+      '🎅',
+      '🤶',
+      '🧑‍🎄',
+      '🦸‍♂️',
+      '🦸‍♀️',
+      '🦹‍♂️',
+      '🦹‍♀️',
+      '🧙‍♂️',
+      '🧙‍♀️',
+      '🧚‍♂️',
+      '🧚‍♀️',
+      '🧛‍♂️',
+      '🧛‍♀️',
+      '🧜‍♂️',
+      '🧜‍♀️',
+      '🧝‍♂️',
+      '🧝‍♀️',
+      '🧞‍♂️',
+      '🧞‍♀️',
+      '🧟‍♂️',
+      '🧟‍♀️',
+      '🧌',
+      '🚶‍♂️',
+      '🚶‍♀️',
+      '🧍‍♂️',
+      '🧍‍♀️',
+      '🧎‍♂️',
+      '🧎‍♀️',
+      '🧑‍🦯',
+      '🧑‍🦼',
+      '🧑‍🦽',
+      '🏃‍♂️',
+      '🏃‍♀️',
+      '💃',
+      '🕺',
+      '🧗',
+      '🧗‍♂️',
+      '🧗‍♀️',
+      '🏇',
+      '🏂',
+      '🏌️‍♀️',
+      '🏌️‍♂️',
+      '🏄‍♂️',
+      '🏄‍♀️',
+      '🏊‍♂️',
+      '🏊‍♀️',
+      '🚣‍♂️',
+      '🚣‍♀️',
 
       // Hand Gestures
-      '☝️', '👆', '👇', '👈', '👉', '🖖', '✋', '🤚', '🖐️', '🖑', '🤙', '🫱', '🫲', '🫳', '🫴', '👌', '🤌', '🤏', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🫶', '🙌', '👐', '🤲', '🙏', '🫂', '✍️',
-      
+      '☝️',
+      '👆',
+      '👇',
+      '👈',
+      '👉',
+      '🖖',
+      '✋',
+      '🤚',
+      '🖐️',
+      '🖑',
+      '🤙',
+      '🫱',
+      '🫲',
+      '🫳',
+      '🫴',
+      '👌',
+      '🤌',
+      '🤏',
+      '✌️',
+      '🤞',
+      '🫰',
+      '🤟',
+      '🤘',
+      '🤙',
+      '👍',
+      '👎',
+      '✊',
+      '👊',
+      '🤛',
+      '🤜',
+      '👏',
+      '🫶',
+      '🙌',
+      '👐',
+      '🤲',
+      '🙏',
+      '🫂',
+      '✍️',
+
       // Objects & Everyday Items
-      '💄', '💋', '💍', '💎', '⌚', '📱', '📲', '💻', '⌨️', '🖥️', '🖨️', '🖱️', '🖲️', '🧮', '🎥', '📷', '📹', '📼',
-      '☎️', '📞', '📟', '📠', '📺', '📻', '⏰', '⏱️', '⏲️', '🕰️', '🔋', '🔌', '💡', '🔦', '🕯️', '🧯', '🛢️', '🛒', '💳', '💰', '💵', '💴', '💶', '💷', '💸', '🧾', '💼', '📁', '📂', '🗂️', '📅', '📆', '🗒️', '🗓️', '📇', '📈', '📉', '📊', '📋', '📌', '📎', '🖇️', '📏', '📐', '✂️', '🗃️', '🗄️', '🗑️', '🔒', '🔓', '🔏', '🔐', '🔑', '🗝️', '🔨', '🪓', '⛏️', '⚒️', '🛠️', '🗡️', '⚔️', '🔫', '🪃', '🏹', '🛡️', '🔧', '🪛', '🔩', '⚙️', '🛞', '🧱', '⛓️', '🧲', '🪜', '⚗️', '🧪', '🧫', '🧬', '🔬', '🔭', '📡', '💉', '🩸', '💊', '🩹', '🩺',
+      '💄', '💋', '💍', '💎', '⌚', '📱', '📲', '💻', '⌨️', '🖥️', '🖨️', '🖱️',
+      '🖲️', '🧮', '🎥', '📷', '📹', '📼',
+      '☎️',
+      '📞',
+      '📟',
+      '📠',
+      '📺',
+      '📻',
+      '⏰',
+      '⏱️',
+      '⏲️',
+      '🕰️',
+      '🔋',
+      '🔌',
+      '💡',
+      '🔦',
+      '🕯️',
+      '🧯',
+      '🛢️',
+      '🛒',
+      '💳',
+      '💰',
+      '💵',
+      '💴',
+      '💶',
+      '💷',
+      '💸',
+      '🧾',
+      '💼',
+      '📁',
+      '📂',
+      '🗂️',
+      '📅',
+      '📆',
+      '🗒️',
+      '🗓️',
+      '📇',
+      '📈',
+      '📉',
+      '📊',
+      '📋',
+      '📌',
+      '📎',
+      '🖇️',
+      '📏',
+      '📐',
+      '✂️',
+      '🗃️',
+      '🗄️',
+      '🗑️',
+      '🔒',
+      '🔓',
+      '🔏',
+      '🔐',
+      '🔑',
+      '🗝️',
+      '🔨',
+      '🪓',
+      '⛏️',
+      '⚒️',
+      '🛠️',
+      '🗡️',
+      '⚔️',
+      '🔫',
+      '🪃',
+      '🏹',
+      '🛡️',
+      '🔧',
+      '🪛',
+      '🔩',
+      '⚙️',
+      '🛞',
+      '🧱',
+      '⛓️',
+      '🧲',
+      '🪜',
+      '⚗️',
+      '🧪',
+      '🧫',
+      '🧬',
+      '🔬',
+      '🔭',
+      '📡',
+      '💉',
+      '🩸',
+      '💊',
+      '🩹',
+      '🩺',
 
       // Clothing & Accessories
-      '👓', '🕶️', '🥽', '🥼', '🦺', '👔', '👕', '👖', '🧣', '🧤', '🧥', '🧦', '👗', '👘', '🥻', '🩱', '🩲', '🩳', '👙', '👚', '👛', '👜', '👝', '🛍️', '🎒', '🩴', '👞', '👟', '🥾', '🥿', '👠', '👡', '🩰', '👢', '👑', '👒', '🎩', '🎓', '🧢', '🪖', '⛑️', '💄', '💍', '💼', 
-      
+      '👓',
+      '🕶️',
+      '🥽',
+      '🥼',
+      '🦺',
+      '👔',
+      '👕',
+      '👖',
+      '🧣',
+      '🧤',
+      '🧥',
+      '🧦',
+      '👗',
+      '👘',
+      '🥻',
+      '🩱',
+      '🩲',
+      '🩳',
+      '👙',
+      '👚',
+      '👛',
+      '👜',
+      '👝',
+      '🛍️',
+      '🎒',
+      '🩴',
+      '👞',
+      '👟',
+      '🥾',
+      '🥿',
+      '👠',
+      '👡',
+      '🩰',
+      '👢',
+      '👑',
+      '👒',
+      '🎩',
+      '🎓',
+      '🧢',
+      '🪖',
+      '⛑️',
+      '💄',
+      '💍',
+      '💼',
+
       // Music & Arts
-      '🎤', '🎧', '🎼', '🎵', '🎶', '🎷', '🎸', '🎹', '🥁', '🎺', '🎻', '🎬', '🎨', '🎭',
-      
+      '🎤', '🎧', '🎼', '🎵', '🎶', '🎷', '🎸', '🎹', '🥁', '🎺', '🎻', '🎬',
+      '🎨', '🎭',
+
       // Celebration & Party
-      '🎂', '🎉', '🎊', '🎈', '🎇', '🎆', '✨', '🪄', '🎎', '🎏', '🪅', '🪩', '🎀', '🎁', '🪧', '🧧', '🎐', 
-      
+      '🎂', '🎉', '🎊', '🎈', '🎇', '🎆', '✨', '🪄', '🎎', '🎏', '🪅', '🪩',
+      '🎀', '🎁', '🪧', '🧧', '🎐',
+
       // Sports & Activities
-      '⚽', '⚾', '🏀', '🏐', '🏈', '🏉', '🎱', '🎳', '🥎', '🏓', '🏸', '🏒', '🏑', '🏏', '🥅', '🥊', '🥋', '🥌', '⛳', '⛸️', '🎣', '🎽', '🎿', '🛷', '⛷️', '🏂', '🪂', '🏹', '🧗', '🧗‍♂️', '🧗‍♀️', '🚵', '🚵‍♂️', '🚵‍♀️', '🚴', '🚴‍♂️', '🚴‍♀️', '🏊', '🏊‍♂️', '🏊‍♀️', '🤽', '🤽‍♂️', '🤽‍♀️', '🏄', '🏄‍♂️', '🏄‍♀️', '🧘', '🏋️', '🏋️‍♂️', '🏋️‍♀️', '🤸', '🤸‍♂️', '🤸‍♀️', '⛹️', '⛹️‍♂️', '⛹️‍♀️', '🤼', '🤼‍♂️', '🤼‍♀️', '🤾', '🤾‍♂️', '🤾‍♀️', '🧙‍♂️', '🧙‍♀️', '🎮', '🕹️', '🎲', '🧩', '🧸', '🪁', '🪀', '🎰', '🎯', '🪃', '🛹', '🛼', '🥏', '🪃', '🎠', '🎡', '🥍', 
-      
+      '⚽',
+      '⚾',
+      '🏀',
+      '🏐',
+      '🏈',
+      '🏉',
+      '🎱',
+      '🎳',
+      '🥎',
+      '🏓',
+      '🏸',
+      '🏒',
+      '🏑',
+      '🏏',
+      '🥅',
+      '🥊',
+      '🥋',
+      '🥌',
+      '⛳',
+      '⛸️',
+      '🎣',
+      '🎽',
+      '🎿',
+      '🛷',
+      '⛷️',
+      '🏂',
+      '🪂',
+      '🏹',
+      '🧗',
+      '🧗‍♂️',
+      '🧗‍♀️',
+      '🚵',
+      '🚵‍♂️',
+      '🚵‍♀️',
+      '🚴',
+      '🚴‍♂️',
+      '🚴‍♀️',
+      '🏊',
+      '🏊‍♂️',
+      '🏊‍♀️',
+      '🤽',
+      '🤽‍♂️',
+      '🤽‍♀️',
+      '🏄',
+      '🏄‍♂️',
+      '🏄‍♀️',
+      '🧘',
+      '🏋️',
+      '🏋️‍♂️',
+      '🏋️‍♀️',
+      '🤸',
+      '🤸‍♂️',
+      '🤸‍♀️',
+      '⛹️',
+      '⛹️‍♂️',
+      '⛹️‍♀️',
+      '🤼',
+      '🤼‍♂️',
+      '🤼‍♀️',
+      '🤾',
+      '🤾‍♂️',
+      '🤾‍♀️',
+      '🧙‍♂️',
+      '🧙‍♀️',
+      '🎮',
+      '🕹️',
+      '🎲',
+      '🧩',
+      '🧸',
+      '🪁',
+      '🪀',
+      '🎰',
+      '🎯',
+      '🪃',
+      '🛹',
+      '🛼',
+      '🥏',
+      '🪃',
+      '🎠',
+      '🎡',
+      '🥍',
+
       // Awards & Achievement
       '🏆', '🏅', '🥇', '🥈', '🥉', '🎫', '🎟️',
-      
+
       // Science, Education & Office
-      '📖', '📚', '📓', '📒', '📔', '📕', '📗', '📘', '📙', '📚', '🧮', '🔬', '🔭', '🛰️', '🔬', '📡', '🧪', '🧫', '🧬', '📝', '✏️', '✒️', '🖋️', '🖊️', '🖌️', '🖍️', '📅', '📆', '🗓️', '📇', '📈', '📉', '📊', '📋', '📌', '📎', '🖇️', 
-      
+      '📖',
+      '📚',
+      '📓',
+      '📒',
+      '📔',
+      '📕',
+      '📗',
+      '📘',
+      '📙',
+      '📚',
+      '🧮',
+      '🔬',
+      '🔭',
+      '🛰️',
+      '🔬',
+      '📡',
+      '🧪',
+      '🧫',
+      '🧬',
+      '📝',
+      '✏️',
+      '✒️',
+      '🖋️',
+      '🖊️',
+      '🖌️',
+      '🖍️',
+      '📅',
+      '📆',
+      '🗓️',
+      '📇',
+      '📈',
+      '📉',
+      '📊',
+      '📋',
+      '📌',
+      '📎',
+      '🖇️',
+
       // Transportation & Travel
-      '🚗', '🚕', '🚙', '🛻', '🚐', '🚚', '🚛', '🚜', '🦽', '🦼', '🛴', '🚲', '🛵', '🏍️', '🛺', '🚔', '🚓', '🚑', '🚒', '🚐', '🚚', '🚛', '🛻', '🚜', '🛴', '🛹', '🛼', '🚂', '🚃', '🚄', '🚅', '🚆', '🚇', '🚈', '🚉', '🚊', '🚝', '🚞', '🚋', '🚌', '🚍', '🚎', '🚐', '🏎️', '🚓', '⛵', '🛥️', '🚤', '🛳️', '⛴️', '🚢', '✈️', '🛩️', '🛫', '🛬', '🪂', '💺', '🚁', '🛰️', '🚀', '🛸', '🪐',
-      
+      '🚗',
+      '🚕',
+      '🚙',
+      '🛻',
+      '🚐',
+      '🚚',
+      '🚛',
+      '🚜',
+      '🦽',
+      '🦼',
+      '🛴',
+      '🚲',
+      '🛵',
+      '🏍️',
+      '🛺',
+      '🚔',
+      '🚓',
+      '🚑',
+      '🚒',
+      '🚐',
+      '🚚',
+      '🚛',
+      '🛻',
+      '🚜',
+      '🛴',
+      '🛹',
+      '🛼',
+      '🚂',
+      '🚃',
+      '🚄',
+      '🚅',
+      '🚆',
+      '🚇',
+      '🚈',
+      '🚉',
+      '🚊',
+      '🚝',
+      '🚞',
+      '🚋',
+      '🚌',
+      '🚍',
+      '🚎',
+      '🚐',
+      '🏎️',
+      '🚓',
+      '⛵',
+      '🛥️',
+      '🚤',
+      '🛳️',
+      '⛴️',
+      '🚢',
+      '✈️',
+      '🛩️',
+      '🛫',
+      '🛬',
+      '🪂',
+      '💺',
+      '🚁',
+      '🛰️',
+      '🚀',
+      '🛸',
+      '🪐',
+
       // Shapes, Symbols, & Miscellaneous
-      '❤️', '🩷', '🧡', '💛', '💚', '💙', '🩵', '💜', '🤎', '🖤', '🤍', '🩶', '💔', '❤️‍🔥', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '🔘', '🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤', '⚫', '⚪', '🟥', '🟧', '🟨', '🟩', '🟦', '🟪', '🟫', '⬛', '⬜', '◼️', '◻️', '◾', '◽', '▪️', '▫️', '◯', '❓', '❔', '❗', '‼️', '⁉️', '✔️', '☑️', '✅', '❌', '✖️', '➕', '➖', '➗', '✳️', '✴️', '➰', '➿', '〽️', '💲', '💯', '♠️', '♥️', '♦️', '♣️', '🃏', '🀄', '🎴', '🔔', '🔕', '🔒', '🔓', '🔏', '🔐', '🔑', '🗝️', '⚓', '🚬', '🪦', '⚖️', '♀️', '♂️', '⚧️',
-      
+      '❤️',
+      '🩷',
+      '🧡',
+      '💛',
+      '💚',
+      '💙',
+      '🩵',
+      '💜',
+      '🤎',
+      '🖤',
+      '🤍',
+      '🩶',
+      '💔',
+      '❤️‍🔥',
+      '💕',
+      '💞',
+      '💓',
+      '💗',
+      '💖',
+      '💘',
+      '💝',
+      '💟',
+      '🔘',
+      '🔴',
+      '🟠',
+      '🟡',
+      '🟢',
+      '🔵',
+      '🟣',
+      '🟤',
+      '⚫',
+      '⚪',
+      '🟥',
+      '🟧',
+      '🟨',
+      '🟩',
+      '🟦',
+      '🟪',
+      '🟫',
+      '⬛',
+      '⬜',
+      '◼️',
+      '◻️',
+      '◾',
+      '◽',
+      '▪️',
+      '▫️',
+      '◯',
+      '❓',
+      '❔',
+      '❗',
+      '‼️',
+      '⁉️',
+      '✔️',
+      '☑️',
+      '✅',
+      '❌',
+      '✖️',
+      '➕',
+      '➖',
+      '➗',
+      '✳️',
+      '✴️',
+      '➰',
+      '➿',
+      '〽️',
+      '💲',
+      '💯',
+      '♠️',
+      '♥️',
+      '♦️',
+      '♣️',
+      '🃏',
+      '🀄',
+      '🎴',
+      '🔔',
+      '🔕',
+      '🔒',
+      '🔓',
+      '🔏',
+      '🔐',
+      '🔑',
+      '🗝️',
+      '⚓',
+      '🚬',
+      '🪦',
+      '⚖️',
+      '♀️',
+      '♂️',
+      '⚧️',
+
       // Weather
-      '☀️', '🌤️', '⛅', '⛈️', '🌩️', '🌧️', '🌨️', '❄️', '☁️', '🌦️', '🌪️', '🌫️', '🌬️', '🌈', '☃️', '🌂', '☔', '💧', '💦', '🫧',
-      
+      '☀️', '🌤️', '⛅', '⛈️', '🌩️', '🌧️', '🌨️', '❄️', '☁️', '🌦️', '🌪️',
+      '🌫️', '🌬️', '🌈', '☃️', '🌂', '☔', '💧', '💦', '🫧',
+
       // Flags
-      '🇦🇫','🇦🇱','🇩🇿','🇦🇩','🇦🇴','🇦🇬','🇦🇷','🇦🇲','🇦🇺','🇦🇹','🇦🇿','🇧🇸','🇧🇭','🇧🇩','🇧🇧','🇧🇾','🇧🇪','🇧🇿','🇧🇯','🇧🇹','🇧🇴','🇧🇦','🇧🇼','🇧🇷','🇧🇳','🇧🇬','🇧🇫','🇧🇮','🇨🇻','🇰🇭','🇨🇲','🇨🇦','🇨🇫','🇹🇩','🇨🇱','🇨🇳','🇨🇴','🇰🇲','🇨🇬','🇨🇩','🇨🇷','🇭🇷','🇨🇺','🇨🇾','🇨🇿','🇩🇰','🇩🇯','🇩🇲','🇩🇴','🇪🇨','🇪🇬','🇸🇻','🇬🇶','🇪🇷','🇪🇪','🇪🇸','🇪🇹','🇫🇲','🇫🇮','🇫🇷','🇬🇦','🇬🇲','🇬🇪','🇩🇪','🇬🇭','🇬🇷','🇬🇩','🇬🇹','🇬🇳','🇬🇼','🇬🇾','🇭🇹','🇭🇳','🇭🇺','🇮🇸','🇮🇳','🇮🇩','🇮🇷','🇮🇶','🇮🇪','🇮🇱','🇮🇹','🇯🇲','🇯🇵','🇯🇴','🇰🇿','🇰🇪','🇰🇮','🇰🇵','🇰🇷','🇽🇰','🇰🇼','🇰🇬','🇱🇦','🇱🇻','🇱🇧','🇱🇸','🇱🇷','🇱🇾','🇱🇮','🇱🇹','🇱🇺','🇲🇬','🇲🇼','🇲🇾','🇲🇻','🇲🇱','🇲🇹','🇲🇭','🇲🇷','🇲🇺','🇲🇽','🇲🇩','🇲🇨','🇲🇳','🇲🇪','🇲🇦','🇲🇿','🇲🇲','🇳🇦','🇳🇷','🇳🇵','🇳🇱','🇳🇿','🇳🇮','🇳🇪','🇳🇬','🇳🇴','🇴🇲','🇵🇰','🇵🇼','🇵🇸','🇵🇦','🇵🇬','🇵🇾','🇵🇪','🇵🇭','🇵🇱','🇵🇹','🇶🇦','🇷🇴','🇷🇺','🇷🇼','🇰🇳','🇱🇨','🇻🇨','🇼🇸','🇸🇲','🇸🇹','🇸🇦','🇸🇳','🇷🇸','🇸🇨','🇸🇱','🇸🇬','🇸🇰','🇸🇮','🇸🇧','🇸🇴','🇿🇦','🇸🇸','🇪🇸','🇱🇰','🇸🇩','🇸🇷','🇸🇪','🇨🇭','🇸🇾','🇹🇼','🇹🇯','🇹🇿','🇹🇭','🇹🇱','🇹🇬','🇹🇴','🇹🇹','🇹🇳','🇹🇷','🇹🇲','🇹🇻','🇺🇬','🇺🇦','🇦🇪','🇬🇧','🇺🇸','🇺🇾','🇺🇿','🇻🇺','🇻🇦','🇻🇪','🇻🇳','🇾🇪','🇿🇲','🇿🇼',
-      '🏳️‍🌈','🏴‍☠️','🏳️','🏁','🚩','🏴','🏳️‍⚧️','🏳️‍🌈',
+      '🇦🇫',
+      '🇦🇱',
+      '🇩🇿',
+      '🇦🇩',
+      '🇦🇴',
+      '🇦🇬',
+      '🇦🇷',
+      '🇦🇲',
+      '🇦🇺',
+      '🇦🇹',
+      '🇦🇿',
+      '🇧🇸',
+      '🇧🇭',
+      '🇧🇩',
+      '🇧🇧',
+      '🇧🇾',
+      '🇧🇪',
+      '🇧🇿',
+      '🇧🇯',
+      '🇧🇹',
+      '🇧🇴',
+      '🇧🇦',
+      '🇧🇼',
+      '🇧🇷',
+      '🇧🇳',
+      '🇧🇬',
+      '🇧🇫',
+      '🇧🇮',
+      '🇨🇻',
+      '🇰🇭',
+      '🇨🇲',
+      '🇨🇦',
+      '🇨🇫',
+      '🇹🇩',
+      '🇨🇱',
+      '🇨🇳',
+      '🇨🇴',
+      '🇰🇲',
+      '🇨🇬',
+      '🇨🇩',
+      '🇨🇷',
+      '🇭🇷',
+      '🇨🇺',
+      '🇨🇾',
+      '🇨🇿',
+      '🇩🇰',
+      '🇩🇯',
+      '🇩🇲',
+      '🇩🇴',
+      '🇪🇨',
+      '🇪🇬',
+      '🇸🇻',
+      '🇬🇶',
+      '🇪🇷',
+      '🇪🇪',
+      '🇪🇸',
+      '🇪🇹',
+      '🇫🇲',
+      '🇫🇮',
+      '🇫🇷',
+      '🇬🇦',
+      '🇬🇲',
+      '🇬🇪',
+      '🇩🇪',
+      '🇬🇭',
+      '🇬🇷',
+      '🇬🇩',
+      '🇬🇹',
+      '🇬🇳',
+      '🇬🇼',
+      '🇬🇾',
+      '🇭🇹',
+      '🇭🇳',
+      '🇭🇺',
+      '🇮🇸',
+      '🇮🇳',
+      '🇮🇩',
+      '🇮🇷',
+      '🇮🇶',
+      '🇮🇪',
+      '🇮🇱',
+      '🇮🇹',
+      '🇯🇲',
+      '🇯🇵',
+      '🇯🇴',
+      '🇰🇿',
+      '🇰🇪',
+      '🇰🇮',
+      '🇰🇵',
+      '🇰🇷',
+      '🇽🇰',
+      '🇰🇼',
+      '🇰🇬',
+      '🇱🇦',
+      '🇱🇻',
+      '🇱🇧',
+      '🇱🇸',
+      '🇱🇷',
+      '🇱🇾',
+      '🇱🇮',
+      '🇱🇹',
+      '🇱🇺',
+      '🇲🇬',
+      '🇲🇼',
+      '🇲🇾',
+      '🇲🇻',
+      '🇲🇱',
+      '🇲🇹',
+      '🇲🇭',
+      '🇲🇷',
+      '🇲🇺',
+      '🇲🇽',
+      '🇲🇩',
+      '🇲🇨',
+      '🇲🇳',
+      '🇲🇪',
+      '🇲🇦',
+      '🇲🇿',
+      '🇲🇲',
+      '🇳🇦',
+      '🇳🇷',
+      '🇳🇵',
+      '🇳🇱',
+      '🇳🇿',
+      '🇳🇮',
+      '🇳🇪',
+      '🇳🇬',
+      '🇳🇴',
+      '🇴🇲',
+      '🇵🇰',
+      '🇵🇼',
+      '🇵🇸',
+      '🇵🇦',
+      '🇵🇬',
+      '🇵🇾',
+      '🇵🇪',
+      '🇵🇭',
+      '🇵🇱',
+      '🇵🇹',
+      '🇶🇦',
+      '🇷🇴',
+      '🇷🇺',
+      '🇷🇼',
+      '🇰🇳',
+      '🇱🇨',
+      '🇻🇨',
+      '🇼🇸',
+      '🇸🇲',
+      '🇸🇹',
+      '🇸🇦',
+      '🇸🇳',
+      '🇷🇸',
+      '🇸🇨',
+      '🇸🇱',
+      '🇸🇬',
+      '🇸🇰',
+      '🇸🇮',
+      '🇸🇧',
+      '🇸🇴',
+      '🇿🇦',
+      '🇸🇸',
+      '🇪🇸',
+      '🇱🇰',
+      '🇸🇩',
+      '🇸🇷',
+      '🇸🇪',
+      '🇨🇭',
+      '🇸🇾',
+      '🇹🇼',
+      '🇹🇯',
+      '🇹🇿',
+      '🇹🇭',
+      '🇹🇱',
+      '🇹🇬',
+      '🇹🇴',
+      '🇹🇹',
+      '🇹🇳',
+      '🇹🇷',
+      '🇹🇲',
+      '🇹🇻',
+      '🇺🇬',
+      '🇺🇦',
+      '🇦🇪',
+      '🇬🇧',
+      '🇺🇸',
+      '🇺🇾',
+      '🇺🇿',
+      '🇻🇺',
+      '🇻🇦',
+      '🇻🇪',
+      '🇻🇳',
+      '🇾🇪',
+      '🇿🇲',
+      '🇿🇼',
+      '🏳️‍🌈', '🏴‍☠️', '🏳️', '🏁', '🚩', '🏴', '🏳️‍⚧️', '🏳️‍🌈',
     ];
 
     String? selectedIcon = initialIcon;
-    
+
     return await showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -1985,7 +3215,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   children: [
                     Expanded(
                       child: GridView.builder(
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 6,
                           crossAxisSpacing: 8,
                           mainAxisSpacing: 8,
@@ -2044,7 +3275,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Future<String?> _pickCustomColor({Color? initialColor}) async {
     Color selectedColor = initialColor ?? Colors.blue;
-    
+
     return await showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -2080,7 +3311,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ElevatedButton(
                   child: const Text('Select'),
                   onPressed: () {
-                    final hexColor = '#${selectedColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+                    final hexColor =
+                        '#${selectedColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
                     Navigator.of(ctx).pop('custom:$hexColor');
                   },
                 ),
@@ -2093,12 +3325,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Future<String?> _pickColorCategory({String? initialColorCategoryId}) async {
-    final List<ColorCategory> categoriesToShow = List.from(widget.colorCategories);
-    
+    final List<ColorCategory> categoriesToShow =
+        List.from(widget.colorCategories);
+
     // Check if initial selection is a custom color
     Color? initialCustomColor;
-    if (initialColorCategoryId != null && initialColorCategoryId.startsWith('custom:')) {
-      final hexString = initialColorCategoryId.substring(7); // Remove "custom:" prefix
+    if (initialColorCategoryId != null &&
+        initialColorCategoryId.startsWith('custom:')) {
+      final hexString =
+          initialColorCategoryId.substring(7); // Remove "custom:" prefix
       try {
         initialCustomColor = _parseColor(hexString);
       } catch (e) {
@@ -2111,10 +3346,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
       builder: (ctx) {
         return Dialog(
           backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
           child: ConstrainedBox(
-            constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            constraints:
+                BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.8),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2168,10 +3404,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                            color: initialCustomColor ?? Colors.grey.shade300,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: Colors.grey.shade400, width: 1)),
+                              color: initialCustomColor ?? Colors.grey.shade300,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.grey.shade400, width: 1)),
                         ),
                         title: Text('Custom Color',
                             style: TextStyle(
@@ -2220,10 +3456,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Map<String, EventExperienceEntry> existingEntries = {
       for (final entry in _currentEvent.experiences) entry.experienceId: entry,
     };
-    
+
     // Track which existing saved experiences we've already included
     final Set<String> includedExistingIds = {};
-    
+
     // Preserve original order: iterate through original entries and keep them in place
     // Event-only experiences always stay, saved experiences only if selected
     final List<EventExperienceEntry> result = [];
@@ -2238,21 +3474,22 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
       // If saved experience is not in selectedIds, skip it (removed from selection)
     }
-    
+
     // Append new saved experiences (not in original list) at the end
     for (final id in selectedIds) {
       if (!includedExistingIds.contains(id)) {
-        result.add(existingEntries[id] ?? EventExperienceEntry(experienceId: id));
+        result
+            .add(existingEntries[id] ?? EventExperienceEntry(experienceId: id));
       }
     }
-    
+
     return result;
   }
 
   Widget _buildScheduleSection(String durationText) {
     // Get current event color (custom or default)
     final currentColor = _getEventColor(_currentEvent);
-    
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -2270,59 +3507,22 @@ class _EventEditorModalState extends State<EventEditorModal> {
               ),
               Tooltip(
                 message: 'View event on map',
-                child: ActionChip(
-                  avatar: Image.asset(
-                    'assets/icon/icon-cropped.png',
-                    height: 18,
-                  ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () => _openEventMapView(),
-                  tooltip: 'View event on map',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                    side: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
-                ),
-              ),
-              // Only show Ticketmaster button if API confirmed event exists on Ticketmaster
-              if (_currentEvent.ticketmasterUrl?.isNotEmpty == true) ...[
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: 'Search on Ticketmaster',
-                  child: ActionChip(
-                    avatar: Image.asset(
-                      'assets/icon/misc/ticketmaster_logo.png',
-                      height: 18,
-                    ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    onPressed: _openTicketmasterSearch,
-                    tooltip: 'Search on Ticketmaster',
-                    backgroundColor: const Color(0xFF026CDF),
-                    shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.all(4),
-                  ),
-                ),
-              ],
-              if (_currentEvent.shareToken?.isNotEmpty == true) ...[
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: 'Share event',
-                  child: ActionChip(
+                child: Builder(
+                  builder: (mapCtx) => ActionChip(
                     avatar: const Icon(
-                      Icons.share_outlined,
+                      Icons.map_outlined,
+                      color: AppColors.sage,
                       size: 18,
-                      color: Colors.blue,
                     ),
                     label: const SizedBox.shrink(),
                     labelPadding: EdgeInsets.zero,
-                    onPressed: _showEventShareSheet,
+                    onPressed: _help.isActive
+                        ? () => _helpTap(
+                              EventEditorHelpTargetId.scheduleMapButton,
+                              mapCtx,
+                            )
+                        : () => _openEventMapView(),
+                    tooltip: 'View event on map',
                     backgroundColor: Colors.white,
                     shape: StadiumBorder(
                       side: BorderSide(color: Colors.grey.shade300),
@@ -2331,20 +3531,90 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     padding: const EdgeInsets.all(4),
                   ),
                 ),
+              ),
+              // Only show Ticketmaster button if API confirmed event exists on Ticketmaster
+              if (_currentEvent.ticketmasterUrl?.isNotEmpty == true) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Search on Ticketmaster',
+                  child: Builder(
+                    builder: (ticketmasterCtx) => ActionChip(
+                      avatar: Image.asset(
+                        'assets/icon/misc/ticketmaster_logo.png',
+                        height: 18,
+                      ),
+                      label: const SizedBox.shrink(),
+                      labelPadding: EdgeInsets.zero,
+                      onPressed: _help.isActive
+                          ? () => _helpTap(
+                                EventEditorHelpTargetId
+                                    .scheduleTicketmasterButton,
+                                ticketmasterCtx,
+                              )
+                          : _openTicketmasterSearch,
+                      tooltip: 'Search on Ticketmaster',
+                      backgroundColor: const Color(0xFF026CDF),
+                      shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.all(4),
+                    ),
+                  ),
+                ),
+              ],
+              if (_currentEvent.shareToken?.isNotEmpty == true) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Share event',
+                  child: Builder(
+                    builder: (shareCtx) => ActionChip(
+                      avatar: const Icon(
+                        Icons.share_outlined,
+                        size: 18,
+                        color: Colors.blue,
+                      ),
+                      label: const SizedBox.shrink(),
+                      labelPadding: EdgeInsets.zero,
+                      onPressed: _help.isActive
+                          ? () => _helpTap(
+                                EventEditorHelpTargetId.scheduleShareButton,
+                                shareCtx,
+                              )
+                          : _showEventShareSheet,
+                      backgroundColor: Colors.white,
+                      shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.all(4),
+                    ),
+                  ),
+                ),
               ],
               if (!_isReadOnly) ...[
                 const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: withHeavyTap(() => _pickEventColor()),
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: currentColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.grey.shade400,
-                        width: 1,
+                Builder(
+                  builder: (colorCtx) => GestureDetector(
+                    onTap: withHeavyTap(() {
+                      if (_helpTap(
+                        EventEditorHelpTargetId.scheduleColorButton,
+                        colorCtx,
+                      )) {
+                        return;
+                      }
+                      _pickEventColor();
+                    }),
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: currentColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.grey.shade400,
+                          width: 1,
+                        ),
                       ),
                     ),
                   ),
@@ -2355,6 +3625,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SizedBox(height: 16),
           _buildDateTimePicker(
             label: 'Start',
+            helpTarget: EventEditorHelpTargetId.scheduleStartDate,
             dateTime: _currentEvent.startDateTime,
             onChanged: (newDateTime) {
               setState(() {
@@ -2370,6 +3641,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SizedBox(height: 16),
           _buildDateTimePicker(
             label: 'End',
+            helpTarget: EventEditorHelpTargetId.scheduleEndDate,
             dateTime: _currentEvent.endDateTime,
             onChanged: (newDateTime) {
               setState(() {
@@ -2397,6 +3669,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Widget _buildDateTimePicker({
     required String label,
+    required EventEditorHelpTargetId helpTarget,
     required DateTime dateTime,
     required ValueChanged<DateTime> onChanged,
     DateTime? minDateTime,
@@ -2411,76 +3684,85 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ? effectiveMaxDate
             : dateTime;
 
-    final dateButton = OutlinedButton(
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.black,
-        disabledForegroundColor: Colors.black,
-        backgroundColor: Colors.white,
-        disabledBackgroundColor: Colors.white,
-        shape: const StadiumBorder(),
-        side: BorderSide(color: Colors.grey.shade400),
+    final dateButton = Builder(
+      builder: (pickerCtx) => OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.black,
+          disabledForegroundColor: Colors.black,
+          backgroundColor: Colors.white,
+          disabledBackgroundColor: Colors.white,
+          shape: const StadiumBorder(),
+          side: BorderSide(color: Colors.grey.shade400),
+        ),
+        onPressed: _isReadOnly
+            ? null
+            : () async {
+                Widget wrapPicker(Widget? child) =>
+                    _wrapPickerWithWhiteTheme(context, child);
+
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: initialDate,
+                  firstDate: effectiveMinDate,
+                  lastDate: effectiveMaxDate,
+                  builder: (ctx, child) => wrapPicker(child),
+                );
+                if (date == null || !mounted) return;
+
+                final time = await showTimePicker(
+                  context: context,
+                  initialTime: TimeOfDay.fromDateTime(initialDate),
+                  builder: (ctx, child) => wrapPicker(child),
+                );
+                if (time == null || !mounted) return;
+
+                final newDateTime = DateTime(
+                  date.year,
+                  date.month,
+                  date.day,
+                  time.hour,
+                  time.minute,
+                );
+                if (minDateTime != null && newDateTime.isBefore(minDateTime)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content:
+                          Text('$label time must be after the start time.'),
+                    ),
+                  );
+                  return;
+                }
+                if (maxDateTime != null && newDateTime.isAfter(maxDateTime)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                          '$label time must be before the available range.'),
+                    ),
+                  );
+                  return;
+                }
+                onChanged(newDateTime);
+              },
+        child: Text(_formatDateTime(dateTime)),
       ),
-      onPressed: _isReadOnly ? null : () async {
-        Widget wrapPicker(Widget? child) =>
-            _wrapPickerWithWhiteTheme(context, child);
-
-        final date = await showDatePicker(
-          context: context,
-          initialDate: initialDate,
-          firstDate: effectiveMinDate,
-          lastDate: effectiveMaxDate,
-          builder: (ctx, child) => wrapPicker(child),
-        );
-        if (date == null || !mounted) return;
-
-        final time = await showTimePicker(
-          context: context,
-          initialTime: TimeOfDay.fromDateTime(initialDate),
-          builder: (ctx, child) => wrapPicker(child),
-        );
-        if (time == null || !mounted) return;
-
-        final newDateTime = DateTime(
-          date.year,
-          date.month,
-          date.day,
-          time.hour,
-          time.minute,
-        );
-        if (minDateTime != null && newDateTime.isBefore(minDateTime)) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('$label time must be after the start time.'),
-            ),
-          );
-          return;
-        }
-        if (maxDateTime != null && newDateTime.isAfter(maxDateTime)) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content:
-                  Text('$label time must be before the available range.'),
-            ),
-          );
-          return;
-        }
-        onChanged(newDateTime);
-      },
-      child: Text(_formatDateTime(dateTime)),
     );
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          labelText,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: dateButton),
-      ],
+    return _helpTapRegion(
+      target: helpTarget,
+      behavior: HitTestBehavior.translucent,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            labelText,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: dateButton),
+        ],
+      ),
     );
   }
 
@@ -2541,14 +3823,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
             return Colors
                 .black87; // Unselected: dark text (same as hour/minute)
           }),
-        ), dialogTheme: DialogThemeData(backgroundColor: Colors.white),
+        ),
+        dialogTheme: DialogThemeData(backgroundColor: Colors.white),
       ),
       child: child ?? const SizedBox.shrink(),
     );
   }
 
   Widget _buildItinerarySection() {
-    return Padding(
+    final section = Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2565,40 +3848,62 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ),
               ),
               if (!_isReadOnly) ...[
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'Add event-only experience',
-                child: InkWell(
-                  onTap: withHeavyTap(_createEventOnlyExperience),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.grey.shade600,
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Add event-only experience',
+                  child: Builder(
+                    builder: (addEventOnlyQuickCtx) => InkWell(
+                      onTap: withHeavyTap(() {
+                        if (_helpTap(
+                          EventEditorHelpTargetId.itineraryAddEventOnlyQuick,
+                          addEventOnlyQuickCtx,
+                        )) {
+                          return;
+                        }
+                        _createEventOnlyExperience();
+                      }),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.grey.shade600,
+                        ),
+                        child: const Icon(Icons.edit_note,
+                            color: Colors.white, size: 18),
+                      ),
                     ),
-                    child: const Icon(Icons.edit_note, color: Colors.white, size: 18),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'Add from saved experiences',
-                child: InkWell(
-                  onTap: withHeavyTap(_openItinerarySelector),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).primaryColor,
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Add from saved experiences',
+                  child: Builder(
+                    builder: (addSavedQuickCtx) => InkWell(
+                      onTap: withHeavyTap(() {
+                        if (_helpTap(
+                          EventEditorHelpTargetId.itineraryAddSavedQuick,
+                          addSavedQuickCtx,
+                        )) {
+                          return;
+                        }
+                        _openItinerarySelector();
+                      }),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Theme.of(context).primaryColor,
+                        ),
+                        child: const Icon(Icons.add,
+                            color: Colors.white, size: 18),
+                      ),
                     ),
-                    child: const Icon(Icons.add, color: Colors.white, size: 18),
                   ),
                 ),
-              ),
               ],
             ],
           ),
@@ -2617,34 +3922,39 @@ class _EventEditorModalState extends State<EventEditorModal> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _currentEvent.experiences.length,
               buildDefaultDragHandles: false,
-              onReorder: _isReadOnly ? (_, __) {} : (oldIndex, newIndex) {
-                setState(() {
-                  // Track the previous top-most experience ID
-                  final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
-                      ? _currentEvent.experiences.first.experienceId
-                      : null;
-                  
-                  if (newIndex > oldIndex) {
-                    newIndex -= 1;
-                  }
-                  final entries = List<EventExperienceEntry>.from(
-                      _currentEvent.experiences);
-                  final entry = entries.removeAt(oldIndex);
-                  entries.insert(newIndex, entry);
-                  var updatedEvent =
-                      _currentEvent.copyWith(experiences: entries);
-                  updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
-                  _currentEvent = updatedEvent;
-                  
-                  // Automatically update cover image from top-most experience if needed
-                  _updateCoverImageFromTopExperienceIfNeeded(
-                    previousTopExperienceId,
-                    updatedEvent.experiences,
-                  );
-                  
-                  _markUnsavedChanges();
-                });
-              },
+              onReorder: _isReadOnly
+                  ? (_, __) {}
+                  : (oldIndex, newIndex) {
+                      if (_help.isActive) return;
+                      setState(() {
+                        // Track the previous top-most experience ID
+                        final String? previousTopExperienceId =
+                            _currentEvent.experiences.isNotEmpty
+                                ? _currentEvent.experiences.first.experienceId
+                                : null;
+
+                        if (newIndex > oldIndex) {
+                          newIndex -= 1;
+                        }
+                        final entries = List<EventExperienceEntry>.from(
+                            _currentEvent.experiences);
+                        final entry = entries.removeAt(oldIndex);
+                        entries.insert(newIndex, entry);
+                        var updatedEvent =
+                            _currentEvent.copyWith(experiences: entries);
+                        updatedEvent =
+                            _eventWithAutoPrimarySchedule(updatedEvent);
+                        _currentEvent = updatedEvent;
+
+                        // Automatically update cover image from top-most experience if needed
+                        _updateCoverImageFromTopExperienceIfNeeded(
+                          previousTopExperienceId,
+                          updatedEvent.experiences,
+                        );
+
+                        _markUnsavedChanges();
+                      });
+                    },
               itemBuilder: (context, index) {
                 final entry = _currentEvent.experiences[index];
                 final Experience? experience = entry.isEventOnly
@@ -2653,7 +3963,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         (exp) => exp.id == entry.experienceId,
                       );
                 return _SlidingItineraryItem(
-                  key: ValueKey(entry.isEventOnly 
+                  key: ValueKey(entry.isEventOnly
                       ? 'event-only-${entry.inlineName ?? 'unnamed'}-$index'
                       : '${entry.experienceId}-$index'),
                   index: index,
@@ -2666,16 +3976,26 @@ class _EventEditorModalState extends State<EventEditorModal> {
             // Add Event-Only Experience button
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _createEventOnlyExperience,
-                icon: const Icon(Icons.edit_note, size: 18, color: Colors.white),
-                label: const Text('Add Event-Only Experience', style: TextStyle(color: Colors.white)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey.shade600,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+              child: Builder(
+                builder: (addEventOnlyCtx) => ElevatedButton.icon(
+                  onPressed: _help.isActive
+                      ? () => _helpTap(
+                            EventEditorHelpTargetId.itineraryAddEventOnly,
+                            addEventOnlyCtx,
+                          )
+                      : _createEventOnlyExperience,
+                  icon: const Icon(Icons.edit_note,
+                      size: 18, color: Colors.white),
+                  label: const Text('Add Event-Only Experience',
+                      style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey.shade600,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
               ),
@@ -2684,16 +4004,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
             // Add Saved Experiences button
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _openItinerarySelector,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add from Saved Experiences'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+              child: Builder(
+                builder: (addSavedCtx) => ElevatedButton.icon(
+                  onPressed: _help.isActive
+                      ? () => _helpTap(
+                            EventEditorHelpTargetId.itineraryAddSaved,
+                            addSavedCtx,
+                          )
+                      : _openItinerarySelector,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Add from Saved Experiences'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
               ),
@@ -2701,6 +4029,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
           ],
         ],
       ),
+    );
+
+    return _helpSectionTapRegion(
+      target: EventEditorHelpTargetId.itinerarySection,
+      child: section,
     );
   }
 
@@ -2715,20 +4048,18 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final bool isExpanded = _itineraryExpandedState[tileId] ?? false;
     // Determine if this is an event-only experience
     final bool isEventOnly = entry.isEventOnly;
-    
+
     // Get display values from either the saved experience or inline data
     final String displayName = isEventOnly
         ? (entry.inlineName ?? 'Untitled')
         : (experience?.name ?? 'Unknown Experience');
-    
-    final String? categoryId = isEventOnly
-        ? entry.inlineCategoryId
-        : experience?.categoryId;
-    
-    final String? colorCategoryId = isEventOnly
-        ? entry.inlineColorCategoryId
-        : experience?.colorCategoryId;
-    
+
+    final String? categoryId =
+        isEventOnly ? entry.inlineCategoryId : experience?.categoryId;
+
+    final String? colorCategoryId =
+        isEventOnly ? entry.inlineColorCategoryId : experience?.colorCategoryId;
+
     final UserCategory? category = widget.categories.firstWhereOrNull(
       (cat) => cat.id == categoryId,
     );
@@ -2736,11 +4067,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
         widget.colorCategories.firstWhereOrNull(
       (color) => color.id == colorCategoryId,
     );
-    
+
     final String categoryIcon = isEventOnly
         ? (entry.inlineCategoryIconDenorm ?? category?.icon ?? '📍')
         : (category?.icon ?? experience?.categoryIconDenorm ?? '?');
-    
+
     final Color leadingBoxColor = colorCategory != null
         ? colorCategory.color.withOpacity(0.5)
         : isEventOnly && entry.inlineColorHexDenorm != null
@@ -2749,29 +4080,33 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     experience!.colorHexDenorm!.isNotEmpty
                 ? _parseColor(experience.colorHexDenorm!).withOpacity(0.5)
                 : Colors.white;
-    
+
     final List<UserCategory> otherCategories = isEventOnly
         ? entry.inlineOtherCategoryIds
-            .map((id) => widget.categories.firstWhereOrNull((cat) => cat.id == id))
+            .map((id) =>
+                widget.categories.firstWhereOrNull((cat) => cat.id == id))
             .whereType<UserCategory>()
             .toList()
         : (experience?.otherCategories
-                .map((id) => widget.categories.firstWhereOrNull((cat) => cat.id == id))
+                .map((id) =>
+                    widget.categories.firstWhereOrNull((cat) => cat.id == id))
                 .whereType<UserCategory>()
                 .toList() ??
             []);
-    
+
     final List<ColorCategory> otherColorCategories = isEventOnly
         ? entry.inlineOtherColorCategoryIds
-            .map((id) => widget.colorCategories.firstWhereOrNull((color) => color.id == id))
+            .map((id) => widget.colorCategories
+                .firstWhereOrNull((color) => color.id == id))
             .whereType<ColorCategory>()
             .toList()
         : (experience?.otherColorCategoryIds
-                .map((id) => widget.colorCategories.firstWhereOrNull((color) => color.id == id))
+                .map((id) => widget.colorCategories
+                    .firstWhereOrNull((color) => color.id == id))
                 .whereType<ColorCategory>()
                 .toList() ??
             []);
-    
+
     final String? address = isEventOnly
         ? entry.inlineLocation?.address
         : experience?.location.address;
@@ -2780,18 +4115,22 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
     final bool hasNotes = (entry.note != null && entry.note!.isNotEmpty) ||
         (entry.transportInfo != null && entry.transportInfo!.isNotEmpty);
-    
+
     // Event-only experiences don't have media
-    final int contentCount = isEventOnly ? 0 : (experience?.sharedMediaItemIds.length ?? 0);
-    final bool shouldShowSubRow =
-        hasOtherCategories || hasOtherColorCategories || contentCount > 0 || isEventOnly || hasNotes;
+    final int contentCount =
+        isEventOnly ? 0 : (experience?.sharedMediaItemIds.length ?? 0);
+    final bool shouldShowSubRow = hasOtherCategories ||
+        hasOtherColorCategories ||
+        contentCount > 0 ||
+        isEventOnly ||
+        hasNotes;
     const double playButtonDiameter = 36.0;
     const double playIconSize = 20.0;
     const double badgeDiameter = 18.0;
     const double badgeFontSize = 11.0;
     const double badgeBorderWidth = 2.0;
     const double badgeOffset = -3.0;
-    
+
     final List<Widget> subtitleChildren = [];
     if (hasAddress) {
       subtitleChildren.add(
@@ -2867,94 +4206,111 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     // Map button
                     Tooltip(
                       message: 'View Location on App Map',
-                      child: ActionChip(
-                        avatar: Image.asset(
-                          'assets/icon/icon-cropped.png',
-                          height: 18,
+                      child: _helpTapRegion(
+                        target: EventEditorHelpTargetId.itineraryCardMap,
+                        behavior: HitTestBehavior.translucent,
+                        child: ActionChip(
+                          avatar: const Icon(
+                            Icons.map_outlined,
+                            color: AppColors.sage,
+                            size: 18,
+                          ),
+                          label: const SizedBox.shrink(),
+                          labelPadding: EdgeInsets.zero,
+                          onPressed: () => _handleMapButtonPressed(experience),
+                          tooltip: 'View Location on App Map',
+                          backgroundColor: Colors.white,
+                          shape: StadiumBorder(
+                            side: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.all(4),
                         ),
-                        label: const SizedBox.shrink(),
-                        labelPadding: EdgeInsets.zero,
-                        onPressed: () => _handleMapButtonPressed(experience),
-                        tooltip: 'View Location on App Map',
-                        backgroundColor: Colors.white,
-                        shape: StadiumBorder(
-                          side: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.all(4),
                       ),
                     ),
                     const SizedBox(width: 4),
                     // Directions button
                     Tooltip(
                       message: 'Get Directions',
-                      child: ActionChip(
-                        avatar: Icon(
-                          Icons.directions_outlined,
-                          color: Theme.of(context).primaryColor,
-                          size: 18,
+                      child: _helpTapRegion(
+                        target: EventEditorHelpTargetId.itineraryCardDirections,
+                        behavior: HitTestBehavior.translucent,
+                        child: ActionChip(
+                          avatar: const Icon(
+                            Icons.directions_outlined,
+                            color: AppColors.teal,
+                            size: 18,
+                          ),
+                          label: const SizedBox.shrink(),
+                          labelPadding: EdgeInsets.zero,
+                          onPressed: () =>
+                              _launchDirections(experience.location),
+                          tooltip: 'Get Directions',
+                          backgroundColor: Colors.white,
+                          shape: StadiumBorder(
+                            side: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.all(4),
                         ),
-                        label: const SizedBox.shrink(),
-                        labelPadding: EdgeInsets.zero,
-                        onPressed: () => _launchDirections(experience.location),
-                        tooltip: 'Get Directions',
-                        backgroundColor: Colors.white,
-                        shape: StadiumBorder(
-                          side: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.all(4),
                       ),
                     ),
                     // Play button (only if content exists)
                     if (contentCount > 0) ...[
                       const SizedBox(width: 4),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: withHeavyTap(() => _openExperienceContentPreview(experience)),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Container(
-                              width: playButtonDiameter,
-                              height: playButtonDiameter,
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).primaryColor,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.play_arrow,
-                                color: Colors.white,
-                                size: playIconSize,
-                              ),
-                            ),
-                            Positioned(
-                              bottom: badgeOffset,
-                              right: badgeOffset,
-                              child: Container(
-                                width: badgeDiameter,
-                                height: badgeDiameter,
+                      _helpTapRegion(
+                        target: EventEditorHelpTargetId.itineraryCardContent,
+                        behavior: HitTestBehavior.translucent,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: withHeavyTap(
+                              () => _openExperienceContentPreview(experience)),
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Container(
+                                width: playButtonDiameter,
+                                height: playButtonDiameter,
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: Theme.of(context).primaryColor,
                                   shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Theme.of(context).primaryColor,
-                                    width: badgeBorderWidth,
-                                  ),
                                 ),
-                                child: Center(
-                                  child: Text(
-                                    contentCount.toString(),
-                                    style: TextStyle(
+                                child: const Icon(
+                                  Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: playIconSize,
+                                ),
+                              ),
+                              Positioned(
+                                bottom: badgeOffset,
+                                right: badgeOffset,
+                                child: Container(
+                                  width: badgeDiameter,
+                                  height: badgeDiameter,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
                                       color: Theme.of(context).primaryColor,
-                                      fontSize: badgeFontSize,
-                                      fontWeight: FontWeight.w600,
+                                      width: badgeBorderWidth,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      contentCount.toString(),
+                                      style: TextStyle(
+                                        color: Theme.of(context).primaryColor,
+                                        fontSize: badgeFontSize,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -2969,41 +4325,54 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     // Map button
                     Tooltip(
                       message: 'View Location on App Map',
-                      child: ActionChip(
-                        avatar: Image.asset(
-                          'assets/icon/icon-cropped.png',
-                          height: 18,
+                      child: _helpTapRegion(
+                        target: EventEditorHelpTargetId.itineraryCardMap,
+                        behavior: HitTestBehavior.translucent,
+                        child: ActionChip(
+                          avatar: const Icon(
+                            Icons.map_outlined,
+                            color: AppColors.sage,
+                            size: 18,
+                          ),
+                          label: const SizedBox.shrink(),
+                          labelPadding: EdgeInsets.zero,
+                          onPressed: () =>
+                              _handleEventOnlyMapButtonPressed(entry),
+                          tooltip: 'View Location on App Map',
+                          backgroundColor: Colors.white,
+                          shape: StadiumBorder(
+                            side: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
                         ),
-                        label: const SizedBox.shrink(),
-                        labelPadding: EdgeInsets.zero,
-                        onPressed: () => _handleEventOnlyMapButtonPressed(entry),
-                        tooltip: 'View Location on App Map',
-                        backgroundColor: Colors.white,
-                        shape: StadiumBorder(
-                          side: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                     ),
                     const SizedBox(width: 4),
                     // Directions button
                     Tooltip(
                       message: 'Get Directions',
-                      child: ActionChip(
-                        avatar: Icon(
-                          Icons.directions_outlined,
-                          color: Theme.of(context).primaryColor,
-                          size: 18,
+                      child: _helpTapRegion(
+                        target: EventEditorHelpTargetId.itineraryCardDirections,
+                        behavior: HitTestBehavior.translucent,
+                        child: ActionChip(
+                          avatar: const Icon(
+                            Icons.directions_outlined,
+                            color: AppColors.teal,
+                            size: 18,
+                          ),
+                          label: const SizedBox.shrink(),
+                          labelPadding: EdgeInsets.zero,
+                          onPressed: () =>
+                              _launchDirections(entry.inlineLocation!),
+                          tooltip: 'Get Directions',
+                          backgroundColor: Colors.white,
+                          shape: StadiumBorder(
+                            side: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
                         ),
-                        label: const SizedBox.shrink(),
-                        labelPadding: EdgeInsets.zero,
-                        onPressed: () => _launchDirections(entry.inlineLocation!),
-                        tooltip: 'Get Directions',
-                        backgroundColor: Colors.white,
-                        shape: StadiumBorder(
-                          side: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                     ),
                   ],
@@ -3012,7 +4381,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
               if (isEventOnly) ...[
                 SizedBox(width: entry.inlineLocation != null ? 4 : 12),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade600,
                     borderRadius: BorderRadius.circular(12),
@@ -3036,7 +4406,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Widget leadingWidget = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (!_isReadOnly) ...[
+        if (!_isReadOnly && !_help.isActive) ...[
           ReorderableDragStartListener(
             index: index,
             child: const Icon(Icons.drag_handle),
@@ -3087,30 +4457,38 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 color: Colors.white,
                 child: Column(
                   children: [
-                    ListTile(
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 8.0),
-                      leading: leadingWidget,
-                      title: Text(
-                        displayName,
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
+                    Builder(
+                      builder: (itineraryCardCtx) => ListTile(
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 8.0),
+                        leading: leadingWidget,
+                        title: Text(
+                          displayName,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                        subtitle: subtitleChildren.isEmpty
+                            ? null
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: subtitleChildren,
+                              ),
+                        trailing: Icon(
+                          isExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 20,
+                        ),
+                        onTap: withHeavyTap(() {
+                          if (_helpTap(
+                            EventEditorHelpTargetId.itineraryCard,
+                            itineraryCardCtx,
+                          )) {
+                            return;
+                          }
+                          setState(() {
+                            _itineraryExpandedState[tileId] = !isExpanded;
+                          });
+                        }),
                       ),
-                      subtitle: subtitleChildren.isEmpty
-                          ? null
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: subtitleChildren,
-                            ),
-                      trailing: Icon(
-                        isExpanded ? Icons.expand_less : Icons.expand_more,
-                        size: 20,
-                      ),
-                      onTap: withHeavyTap(() {
-                        setState(() {
-                          _itineraryExpandedState[tileId] = !isExpanded;
-                        });
-                      }),
                     ),
                     if (isExpanded)
                       Padding(
@@ -3119,153 +4497,172 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             // Scheduled Time
-                            InkWell(
-                              onTap: withHeavyTap(() {
-                                setState(() {
-                                  _itineraryExpandedState[tileId] = false;
-                                });
-                              }),
-                              child: Padding(
-                            padding:
-                                    const EdgeInsets.symmetric(vertical: 8.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Padding(
-                                      padding: EdgeInsets.only(
-                                          top: 4.0, right: 16.0),
-                                      child: Icon(Icons.schedule, size: 24),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          const Text(
-                                            'Scheduled time',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w500,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            entry.scheduledTime != null
-                                                ? _formatDateTime(
-                                                    entry.scheduledTime!)
-                                                : 'Not set',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodyMedium
-                                                ?.copyWith(
-                                                  color: Colors.grey[700],
-                                                ),
-                                          ),
-                                        ],
+                            _helpTapRegion(
+                              target: EventEditorHelpTargetId
+                                  .itineraryItemScheduledTime,
+                              child: InkWell(
+                                onTap: withHeavyTap(() {
+                                  setState(() {
+                                    _itineraryExpandedState[tileId] = false;
+                                  });
+                                }),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8.0),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Padding(
+                                        padding: EdgeInsets.only(
+                                            top: 4.0, right: 16.0),
+                                        child: Icon(Icons.schedule, size: 24),
                                       ),
-                                    ),
-                                  ],
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              'Scheduled time',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w500,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              entry.scheduledTime != null
+                                                  ? _formatDateTime(
+                                                      entry.scheduledTime!)
+                                                  : 'Not set',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: Colors.grey[700],
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
                             // Transport Info
-                            InkWell(
-                              onTap: withHeavyTap(() {
-                                setState(() {
-                                  _itineraryExpandedState[tileId] = false;
-                                });
-                              }),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 8.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Padding(
-                                      padding: EdgeInsets.only(
-                                          top: 4.0, right: 16.0),
-                                      child: Icon(Icons.directions, size: 24),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          const Text(
-                                            'Transportation',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w500,
-                                              fontSize: 16,
-                                            ),
+                            _helpTapRegion(
+                              target: EventEditorHelpTargetId
+                                  .itineraryItemTransport,
+                              child: InkWell(
+                                onTap: withHeavyTap(() {
+                                  setState(() {
+                                    _itineraryExpandedState[tileId] = false;
+                                  });
+                                }),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8.0),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Padding(
+                                        padding: EdgeInsets.only(
+                                            top: 4.0, right: 16.0),
+                                        child: Icon(
+                                          Icons.directions,
+                                          size: 24,
+                                          color: AppColors.teal,
                                         ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                            (entry.transportInfo == null ||
-                                                    entry.transportInfo!
-                                                        .trim()
-                                                        .isEmpty ||
-                                                    entry.transportInfo ==
-                                                        'Notes on how to get here')
-                                                ? 'Not mentioned'
-                                                : entry.transportInfo!,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodyMedium
-                                                ?.copyWith(
-                                                  color: Colors.grey[700],
-                                                ),
-                                          ),
-                                        ],
                                       ),
-                                    ),
-                                  ],
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              'Transportation',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w500,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              (entry.transportInfo == null ||
+                                                      entry.transportInfo!
+                                                          .trim()
+                                                          .isEmpty ||
+                                                      entry.transportInfo ==
+                                                          'Notes on how to get here')
+                                                  ? 'Not mentioned'
+                                                  : entry.transportInfo!,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: Colors.grey[700],
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
                             // Note
-                            InkWell(
-                              onTap: withHeavyTap(() {
-                                setState(() {
-                                  _itineraryExpandedState[tileId] = false;
-                                });
-                              }),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 8.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Padding(
-                                      padding: EdgeInsets.only(
-                                          top: 4.0, right: 16.0),
-                                      child: Icon(Icons.note, size: 24),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          const Text(
-                                            'Notes',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w500,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            entry.note ?? 'None',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodyMedium
-                                                ?.copyWith(
-                                                  color: Colors.grey[700],
-                                                ),
-                                          ),
-                                        ],
+                            _helpTapRegion(
+                              target:
+                                  EventEditorHelpTargetId.itineraryItemNotes,
+                              child: InkWell(
+                                onTap: withHeavyTap(() {
+                                  setState(() {
+                                    _itineraryExpandedState[tileId] = false;
+                                  });
+                                }),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8.0),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Padding(
+                                        padding: EdgeInsets.only(
+                                            top: 4.0, right: 16.0),
+                                        child: Icon(Icons.note, size: 24),
                                       ),
-                                    ),
-                                  ],
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              'Notes',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w500,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              entry.note ?? 'None',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: Colors.grey[700],
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -3273,12 +4670,17 @@ class _EventEditorModalState extends State<EventEditorModal> {
                               const Divider(),
                               Align(
                                 alignment: Alignment.centerRight,
-                                child: TextButton.icon(
-                                  icon: const Icon(Icons.open_in_new),
-                                  label: const Text('Open'),
-                                  onPressed: experience != null
-                                      ? () => _openExperiencePage(experience)
-                                      : null,
+                                child: _helpTapRegion(
+                                  target:
+                                      EventEditorHelpTargetId.itineraryItemOpen,
+                                  behavior: HitTestBehavior.translucent,
+                                  child: TextButton.icon(
+                                    icon: const Icon(Icons.open_in_new),
+                                    label: const Text('Open'),
+                                    onPressed: experience != null
+                                        ? () => _openExperiencePage(experience)
+                                        : null,
+                                  ),
                                 ),
                               ),
                             ],
@@ -3316,208 +4718,271 @@ class _EventEditorModalState extends State<EventEditorModal> {
         Stack(
           clipBehavior: Clip.none,
           children: [
-            Card(
-              key: ValueKey(entry.experienceId),
-              margin: const EdgeInsets.only(bottom: 12),
-              color: Colors.white,
-              child: ExpansionTile(
-                shape: const RoundedRectangleBorder(
-                  side: BorderSide(color: Colors.transparent, width: 0),
-                  borderRadius: BorderRadius.zero,
-                ),
-                collapsedShape: const RoundedRectangleBorder(
-                  side: BorderSide(color: Colors.transparent, width: 0),
-                  borderRadius: BorderRadius.zero,
-                ),
-                tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
-                childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-                leading: leadingWidget,
-                title: Text(
-                  displayName,
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                subtitle: subtitleChildren.isEmpty
-                    ? null
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: subtitleChildren,
-                      ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Scheduled Time
-                        InkWell(
-                          onTap: withHeavyTap(() => _editScheduledTime(entry, index)),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 4.0, right: 16.0),
-                                  child: Icon(Icons.schedule, size: 24),
-                                ),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Scheduled time',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        entry.scheduledTime != null
-                                            ? _formatDateTime(entry.scheduledTime!)
-                                            : 'Not set',
-                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                              color: Colors.grey[700],
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (!_isReadOnly)
-                                  const Padding(
-                                    padding: EdgeInsets.only(
-                                        top: 4.0, left: 8.0),
-                                    child: Icon(Icons.edit_outlined, size: 20),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // Transport Info
-                        InkWell(
-                          onTap: withHeavyTap(() => _editTransportInfo(entry, index)),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 4.0, right: 16.0),
-                                  child: Icon(Icons.directions, size: 24),
-                                ),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Transportation',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        entry.transportInfo ?? 'Notes on how to get here',
-                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                              color: Colors.grey[700],
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (!_isReadOnly)
-                                  const Padding(
-                                    padding: EdgeInsets.only(
-                                        top: 4.0, left: 8.0),
-                                    child: Icon(Icons.edit_outlined, size: 20),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // Note
-                        InkWell(
-                          onTap: withHeavyTap(() => _editNote(entry, index)),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 4.0, right: 16.0),
-                                  child: Icon(Icons.note, size: 24),
-                                ),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Notes',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        entry.note ?? 'None',
-                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                              color: Colors.grey[700],
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (!_isReadOnly)
-                                  const Padding(
-                                    padding: EdgeInsets.only(
-                                        top: 4.0, left: 8.0),
-                                    child: Icon(Icons.edit_outlined, size: 20),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const Divider(),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            if (!isEventOnly)
-                              TextButton.icon(
-                                icon: const Icon(Icons.open_in_new),
-                                label: const Text('Open'),
-                                onPressed: experience != null
-                                    ? () => _openExperiencePage(experience)
-                                    : null,
-                              ),
-                            if (isEventOnly)
-                            TextButton.icon(
-                              icon: const Icon(Icons.edit),
-                              label: const Text('Edit'),
-                              onPressed: () => _editEventOnlyExperience(entry, index),
-                            ),
-                            if (!_isReadOnly)
-                              TextButton.icon(
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Theme.of(context).primaryColor,
-                                ),
-                                icon: Icon(Icons.delete,
-                                    color: Theme.of(context).primaryColor),
-                                label: Text(
-                                  'Remove',
-                                  style: TextStyle(
-                                      color: Theme.of(context).primaryColor),
-                                ),
-                                onPressed: () => _removeExperience(index),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
+            _helpSectionTapRegion(
+              target: EventEditorHelpTargetId.itineraryCard,
+              child: Card(
+                key: ValueKey(entry.experienceId),
+                margin: const EdgeInsets.only(bottom: 12),
+                color: Colors.white,
+                child: ExpansionTile(
+                  enabled: !_help.isActive,
+                  shape: const RoundedRectangleBorder(
+                    side: BorderSide(color: Colors.transparent, width: 0),
+                    borderRadius: BorderRadius.zero,
                   ),
-                ],
+                  collapsedShape: const RoundedRectangleBorder(
+                    side: BorderSide(color: Colors.transparent, width: 0),
+                    borderRadius: BorderRadius.zero,
+                  ),
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  leading: leadingWidget,
+                  title: Text(
+                    displayName,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                  subtitle: subtitleChildren.isEmpty
+                      ? null
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: subtitleChildren,
+                        ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Scheduled Time
+                          _helpTapRegion(
+                            target: EventEditorHelpTargetId
+                                .itineraryItemScheduledTime,
+                            child: InkWell(
+                              onTap: withHeavyTap(
+                                  () => _editScheduledTime(entry, index)),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(
+                                          top: 4.0, right: 16.0),
+                                      child: Icon(Icons.schedule, size: 24),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Scheduled time',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            entry.scheduledTime != null
+                                                ? _formatDateTime(
+                                                    entry.scheduledTime!)
+                                                : 'Not set',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: Colors.grey[700],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (!_isReadOnly)
+                                      const Padding(
+                                        padding: EdgeInsets.only(
+                                            top: 4.0, left: 8.0),
+                                        child:
+                                            Icon(Icons.edit_outlined, size: 20),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Transport Info
+                          _helpTapRegion(
+                            target:
+                                EventEditorHelpTargetId.itineraryItemTransport,
+                            child: InkWell(
+                              onTap: withHeavyTap(
+                                  () => _editTransportInfo(entry, index)),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(
+                                          top: 4.0, right: 16.0),
+                                      child: Icon(
+                                        Icons.directions,
+                                        size: 24,
+                                        color: AppColors.teal,
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Transportation',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            entry.transportInfo ??
+                                                'Notes on how to get here',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: Colors.grey[700],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (!_isReadOnly)
+                                      const Padding(
+                                        padding: EdgeInsets.only(
+                                            top: 4.0, left: 8.0),
+                                        child:
+                                            Icon(Icons.edit_outlined, size: 20),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Note
+                          _helpTapRegion(
+                            target: EventEditorHelpTargetId.itineraryItemNotes,
+                            child: InkWell(
+                              onTap:
+                                  withHeavyTap(() => _editNote(entry, index)),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(
+                                          top: 4.0, right: 16.0),
+                                      child: Icon(Icons.note, size: 24),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Notes',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            entry.note ?? 'None',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: Colors.grey[700],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (!_isReadOnly)
+                                      const Padding(
+                                        padding: EdgeInsets.only(
+                                            top: 4.0, left: 8.0),
+                                        child:
+                                            Icon(Icons.edit_outlined, size: 20),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Divider(),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              if (!isEventOnly)
+                                _helpTapRegion(
+                                  target:
+                                      EventEditorHelpTargetId.itineraryItemOpen,
+                                  behavior: HitTestBehavior.translucent,
+                                  child: TextButton.icon(
+                                    icon: const Icon(Icons.open_in_new),
+                                    label: const Text('Open'),
+                                    onPressed: experience != null
+                                        ? () => _openExperiencePage(experience)
+                                        : null,
+                                  ),
+                                ),
+                              if (isEventOnly)
+                                _helpTapRegion(
+                                  target:
+                                      EventEditorHelpTargetId.itineraryItemEdit,
+                                  behavior: HitTestBehavior.translucent,
+                                  child: TextButton.icon(
+                                    icon: const Icon(Icons.edit),
+                                    label: const Text('Edit'),
+                                    onPressed: () =>
+                                        _editEventOnlyExperience(entry, index),
+                                  ),
+                                ),
+                              if (!_isReadOnly)
+                                _helpTapRegion(
+                                  target: EventEditorHelpTargetId
+                                      .itineraryItemRemove,
+                                  behavior: HitTestBehavior.translucent,
+                                  child: TextButton.icon(
+                                    style: TextButton.styleFrom(
+                                      foregroundColor:
+                                          Theme.of(context).primaryColor,
+                                    ),
+                                    icon: Icon(Icons.delete,
+                                        color: Theme.of(context).primaryColor),
+                                    label: Text(
+                                      'Remove',
+                                      style: TextStyle(
+                                          color:
+                                              Theme.of(context).primaryColor),
+                                    ),
+                                    onPressed: () => _removeExperience(index),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             Positioned(
@@ -3599,7 +5064,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (!mounted) return;
 
     final Location locationForMap = _buildLocationForMapNavigation(experience);
-    
+
     // Use the current event state (which may have unsaved changes)
     final eventToShow = _synchronizeCurrentEventFromControllers();
 
@@ -3622,7 +5087,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
-  Future<void> _handleEventOnlyMapButtonPressed(EventExperienceEntry entry) async {
+  Future<void> _handleEventOnlyMapButtonPressed(
+      EventExperienceEntry entry) async {
     if (!mounted || entry.inlineLocation == null) return;
 
     // Use the current event state (which may have unsaved changes)
@@ -3673,11 +5139,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Future<void> _openTicketmasterSearch() async {
     // Use the search term that found results, or fall back to event title
-    final searchTerm = _currentEvent.ticketmasterSearchTerm ?? _currentEvent.title;
+    final searchTerm =
+        _currentEvent.ticketmasterSearchTerm ?? _currentEvent.title;
     final searchQuery = Uri.encodeComponent(searchTerm);
     final searchUrl = 'https://www.ticketmaster.com/search?q=$searchQuery';
     final uri = Uri.parse(searchUrl);
-    
+
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {
@@ -3775,15 +5242,17 @@ class _EventEditorModalState extends State<EventEditorModal> {
             'experienceId': '',
             'name': entry.inlineName ?? 'Untitled',
             'description': entry.inlineDescription ?? '',
-            'location': entry.inlineLocation != null ? {
-              'displayName': entry.inlineLocation!.displayName,
-              'address': entry.inlineLocation!.address,
-              'city': entry.inlineLocation!.city,
-              'state': entry.inlineLocation!.state,
-              'country': entry.inlineLocation!.country,
-              'latitude': entry.inlineLocation!.latitude,
-              'longitude': entry.inlineLocation!.longitude,
-            } : null,
+            'location': entry.inlineLocation != null
+                ? {
+                    'displayName': entry.inlineLocation!.displayName,
+                    'address': entry.inlineLocation!.address,
+                    'city': entry.inlineLocation!.city,
+                    'state': entry.inlineLocation!.state,
+                    'country': entry.inlineLocation!.country,
+                    'latitude': entry.inlineLocation!.latitude,
+                    'longitude': entry.inlineLocation!.longitude,
+                  }
+                : null,
             'categoryIconDenorm': entry.inlineCategoryIconDenorm,
             'colorHexDenorm': entry.inlineColorHexDenorm,
           });
@@ -3832,9 +5301,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
     required String title,
   }) async {
     if (recipientIds.isEmpty) return DirectShareResult(threadIds: []);
-    
+
     final eventSnapshot = _buildEventSnapshot();
-    final shareId = 'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
+    final shareId =
+        'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
 
     final List<String> threadIds = [];
     for (final recipientId in recipientIds) {
@@ -3865,9 +5335,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
     required String title,
   }) async {
     if (threadIds.isEmpty) return DirectShareResult(threadIds: []);
-    
+
     final eventSnapshot = _buildEventSnapshot();
-    final shareId = 'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
+    final shareId =
+        'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
 
     final List<String> successThreadIds = [];
     for (final threadId in threadIds) {
@@ -3894,9 +5365,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
     required String title,
   }) async {
     if (participantIds.isEmpty) return DirectShareResult(threadIds: []);
-    
+
     final eventSnapshot = _buildEventSnapshot();
-    final shareId = 'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
+    final shareId =
+        'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
 
     try {
       final thread = await _messageService.createOrGetThread(
@@ -3959,7 +5431,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     _attemptedAnonymousSignIn = true;
     try {
       final userCredential = await FirebaseAuth.instance.signInAnonymously();
-      debugPrint('EventEditorModal: Anonymous sign-in successful: ${userCredential.user?.uid}');
+      debugPrint(
+          'EventEditorModal: Anonymous sign-in successful: ${userCredential.user?.uid}');
       // Wait for the auth service to update its state
       await Future.delayed(const Duration(milliseconds: 200));
     } catch (e) {
@@ -4068,13 +5541,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
       if (loadingContext != null && mounted) {
         Navigator.of(loadingContext!).pop();
       }
-      
+
       debugPrint('EventEditorModal: Error opening content preview: $e');
       if (mounted) {
         String errorMessage = 'Could not load content preview';
-        if (e.toString().contains('permission') || e.toString().contains('PERMISSION_DENIED')) {
+        if (e.toString().contains('permission') ||
+            e.toString().contains('PERMISSION_DENIED')) {
           errorMessage = 'Sign in to view this content';
-        } else if (e.toString().contains('sign in') || e.toString().contains('auth')) {
+        } else if (e.toString().contains('sign in') ||
+            e.toString().contains('auth')) {
           errorMessage = 'Authentication required to view content';
         } else {
           errorMessage = 'Could not load content: $e';
@@ -4124,21 +5599,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
   bool _isDarkColor(Color color) {
     // Calculate relative luminance (0 = dark, 1 = light)
     // Using the formula from WCAG guidelines
-    final luminance = (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
+    final luminance =
+        (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
     return luminance < 0.5;
   }
 
   Future<void> _pickEventColor() async {
     // Get current color (custom or default)
     final currentColor = _getEventColor(_currentEvent);
-    
+
     final result = await _pickCustomColor(initialColor: currentColor);
     if (result != null && mounted) {
       // Remove "custom:" prefix if present
-      final colorHex = result.startsWith('custom:') 
-          ? result.substring(7) 
-          : result;
-      
+      final colorHex =
+          result.startsWith('custom:') ? result.substring(7) : result;
+
       setState(() {
         _currentEvent = _currentEvent.copyWith(colorHex: colorHex);
         _markUnsavedChanges();
@@ -4318,10 +5793,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
   void _removeExperience(int index) {
     setState(() {
       // Track the previous top-most experience ID
-      final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
-          ? _currentEvent.experiences.first.experienceId
-          : null;
-      
+      final String? previousTopExperienceId =
+          _currentEvent.experiences.isNotEmpty
+              ? _currentEvent.experiences.first.experienceId
+              : null;
+
       final entries =
           List<EventExperienceEntry>.from(_currentEvent.experiences);
       final removedEntry = entries.removeAt(index);
@@ -4329,13 +5805,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
       var updatedEvent = _currentEvent.copyWith(experiences: entries);
       updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
       _currentEvent = updatedEvent;
-      
+
       // Automatically update cover image from top-most experience if needed
       _updateCoverImageFromTopExperienceIfNeeded(
         previousTopExperienceId,
         updatedEvent.experiences,
       );
-      
+
       _markUnsavedChanges();
     });
   }
@@ -4399,21 +5875,32 @@ class _EventEditorModalState extends State<EventEditorModal> {
           runSpacing: 8,
           children: _currentEvent.collaboratorIds.map((userId) {
             final profile = _userProfiles[userId];
-            return Chip(
-              avatar: _buildUserAvatar(profile, size: 24),
-              label: Text(profile?.displayName ?? 'User'),
-              deleteIcon: isPlanner ? const Icon(Icons.close, size: 18) : null,
-              onDeleted: isPlanner ? () => _removeCollaborator(userId) : null,
+            return _helpTapRegion(
+              target: EventEditorHelpTargetId.peopleManageMember,
+              behavior: HitTestBehavior.translucent,
+              child: Chip(
+                avatar: _buildUserAvatar(profile, size: 24),
+                label: Text(profile?.displayName ?? 'User'),
+                deleteIcon:
+                    isPlanner ? const Icon(Icons.close, size: 18) : null,
+                onDeleted: (isPlanner && !_help.isActive)
+                    ? () => _removeCollaborator(userId)
+                    : null,
+              ),
             );
           }).toList(),
         ),
         const SizedBox(height: 8),
       ],
       if (isPlanner)
-        OutlinedButton.icon(
-          icon: const Icon(Icons.person_add),
-          label: const Text('Add Collaborators'),
-          onPressed: _openAddCollaboratorsSheet,
+        _helpTapRegion(
+          target: EventEditorHelpTargetId.peopleAddCollaborators,
+          behavior: HitTestBehavior.translucent,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.person_add),
+            label: const Text('Add Collaborators'),
+            onPressed: _openAddCollaboratorsSheet,
+          ),
         ),
       const SizedBox(height: 16),
       // Invited Users
@@ -4430,94 +5917,117 @@ class _EventEditorModalState extends State<EventEditorModal> {
           runSpacing: 8,
           children: _currentEvent.invitedUserIds.map((userId) {
             final profile = _userProfiles[userId];
-            return Chip(
-              avatar: _buildUserAvatar(profile, size: 24),
-              label: Text(profile?.displayName ?? 'User'),
-              deleteIcon: isPlanner ? const Icon(Icons.close, size: 18) : null,
-              onDeleted: isPlanner ? () => _removeInvitedUser(userId) : null,
+            return _helpTapRegion(
+              target: EventEditorHelpTargetId.peopleManageMember,
+              behavior: HitTestBehavior.translucent,
+              child: Chip(
+                avatar: _buildUserAvatar(profile, size: 24),
+                label: Text(profile?.displayName ?? 'User'),
+                deleteIcon:
+                    isPlanner ? const Icon(Icons.close, size: 18) : null,
+                onDeleted: (isPlanner && !_help.isActive)
+                    ? () => _removeInvitedUser(userId)
+                    : null,
+              ),
             );
           }).toList(),
         ),
         const SizedBox(height: 8),
       ],
       if (isPlanner)
-        OutlinedButton.icon(
-          icon: const Icon(Icons.visibility_outlined),
-          label: const Text('Add Viewers'),
-          onPressed: _openInvitePeopleSheet,
+        _helpTapRegion(
+          target: EventEditorHelpTargetId.peopleAddViewers,
+          behavior: HitTestBehavior.translucent,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.visibility_outlined),
+            label: const Text('Add Viewers'),
+            onPressed: _openInvitePeopleSheet,
+          ),
         ),
     ];
 
     if (!_isReadOnly) {
-      return Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'People',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            ...bodyChildren,
-          ],
+      return _helpSectionTapRegion(
+        target: EventEditorHelpTargetId.peopleSection,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'People',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 16),
+              ...bodyChildren,
+            ],
+          ),
         ),
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            onTap: withHeavyTap(() {
-              setState(() {
-                _isPeopleExpanded = !_isPeopleExpanded;
-              });
-            }),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Text(
-                  'People:',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-                const SizedBox(width: 12),
-                if (!_isPeopleExpanded)
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final avatars = _buildCollapsedPeopleAvatars(
-                          peopleProfiles,
-                          constraints.maxWidth,
-                        );
-                        if (avatars.isEmpty) {
-                          return const Text('No people');
-                        }
-                        return Row(children: avatars);
-                      },
+    return _helpSectionTapRegion(
+      target: EventEditorHelpTargetId.peopleSection,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Builder(
+              builder: (peopleToggleCtx) => InkWell(
+                onTap: withHeavyTap(() {
+                  if (_helpTap(
+                    EventEditorHelpTargetId.peopleToggle,
+                    peopleToggleCtx,
+                  )) {
+                    return;
+                  }
+                  setState(() {
+                    _isPeopleExpanded = !_isPeopleExpanded;
+                  });
+                }),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      'People:',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
-                  ),
-                if (!_isPeopleExpanded) const SizedBox(width: 8),
-                Icon(
-                  _isPeopleExpanded
-                      ? Icons.expand_less
-                      : Icons.expand_more,
-                  size: 20,
+                    const SizedBox(width: 12),
+                    if (!_isPeopleExpanded)
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final avatars = _buildCollapsedPeopleAvatars(
+                              peopleProfiles,
+                              constraints.maxWidth,
+                            );
+                            if (avatars.isEmpty) {
+                              return const Text('No people');
+                            }
+                            return Row(children: avatars);
+                          },
+                        ),
+                      ),
+                    if (!_isPeopleExpanded) const SizedBox(width: 8),
+                    Icon(
+                      _isPeopleExpanded ? Icons.expand_less : Icons.expand_more,
+                      size: 20,
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
-          if (_isPeopleExpanded) ...[
-            const SizedBox(height: 16),
-            ...bodyChildren,
+            if (_isPeopleExpanded) ...[
+              const SizedBox(height: 16),
+              ...bodyChildren,
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -4803,7 +6313,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         break;
     }
 
-    return Padding(
+    final section = Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4812,9 +6322,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(
-                _isReadOnly
-                    ? 'Visibility & Sharing:'
-                    : 'Visibility & Sharing',
+                _isReadOnly ? 'Visibility & Sharing:' : 'Visibility & Sharing',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -4850,68 +6358,87 @@ class _EventEditorModalState extends State<EventEditorModal> {
           if (_isReadOnly) ...[
             // Description shown inline with header row
           ] else ...[
-            RadioListTile<EventVisibility>(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Private'),
-              subtitle: const Text('Only those who are invited'),
-              value: EventVisibility.private,
-              groupValue: _currentEvent.visibility,
-              onChanged: isPlanner
-                  ? (value) {
-                      if (value != null) {
-                        setState(() {
-                          _currentEvent =
-                              _currentEvent.copyWith(visibility: value);
-                          _markUnsavedChanges();
-                        });
-                      }
-                    }
-                  : null,
+            _helpTapRegion(
+              target: EventEditorHelpTargetId.visibilityOptions,
+              child: RadioListTile<EventVisibility>(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Private'),
+                subtitle: const Text('Only those who are invited'),
+                value: EventVisibility.private,
+                groupValue: _currentEvent.visibility,
+                onChanged: _help.isActive
+                    ? null
+                    : isPlanner
+                        ? (value) {
+                            if (value != null) {
+                              setState(() {
+                                _currentEvent =
+                                    _currentEvent.copyWith(visibility: value);
+                                _markUnsavedChanges();
+                              });
+                            }
+                          }
+                        : null,
+              ),
             ),
-            RadioListTile<EventVisibility>(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Shared Link'),
-              subtitle: const Text('Anyone with the link'),
-              value: EventVisibility.sharedLink,
-              groupValue: _currentEvent.visibility,
-              onChanged: isPlanner
-                  ? (value) {
-                      if (value != null) {
-                        setState(() {
-                          _currentEvent =
-                              _currentEvent.copyWith(visibility: value);
-                          _markUnsavedChanges();
-                        });
-                      }
-                    }
-                  : null,
+            _helpTapRegion(
+              target: EventEditorHelpTargetId.visibilityOptions,
+              child: RadioListTile<EventVisibility>(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Shared Link'),
+                subtitle: const Text('Anyone with the link'),
+                value: EventVisibility.sharedLink,
+                groupValue: _currentEvent.visibility,
+                onChanged: _help.isActive
+                    ? null
+                    : isPlanner
+                        ? (value) {
+                            if (value != null) {
+                              setState(() {
+                                _currentEvent =
+                                    _currentEvent.copyWith(visibility: value);
+                                _markUnsavedChanges();
+                              });
+                            }
+                          }
+                        : null,
+              ),
             ),
-            RadioListTile<EventVisibility>(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Public'),
-              subtitle: const Text('Discoverable by anyone'),
-              value: EventVisibility.public,
-              groupValue: _currentEvent.visibility,
-              onChanged: isPlanner
-                  ? (value) {
-                      if (value != null) {
-                        setState(() {
-                          _currentEvent =
-                              _currentEvent.copyWith(visibility: value);
-                          _markUnsavedChanges();
-                        });
-                      }
-                    }
-                  : null,
+            _helpTapRegion(
+              target: EventEditorHelpTargetId.visibilityOptions,
+              child: RadioListTile<EventVisibility>(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Public'),
+                subtitle: const Text('Discoverable by anyone'),
+                value: EventVisibility.public,
+                groupValue: _currentEvent.visibility,
+                onChanged: _help.isActive
+                    ? null
+                    : isPlanner
+                        ? (value) {
+                            if (value != null) {
+                              setState(() {
+                                _currentEvent =
+                                    _currentEvent.copyWith(visibility: value);
+                                _markUnsavedChanges();
+                              });
+                            }
+                          }
+                        : null,
+              ),
             ),
             const SizedBox(height: 16),
           ],
           if (isPlanner && _currentEvent.id.isNotEmpty) ...[
             if (_currentEvent.shareToken == null)
-              OutlinedButton.icon(
-                icon: const Icon(Icons.link),
-                label: const Text('Generate Share Link'),
-                onPressed: _generateShareLink,
+              _helpTapRegion(
+                target: EventEditorHelpTargetId.visibilityGenerateLink,
+                behavior: HitTestBehavior.translucent,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.link),
+                  label: const Text('Generate Share Link'),
+                  onPressed: _generateShareLink,
+                ),
               )
             else ...[
               Container(
@@ -4928,33 +6455,51 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         style: const TextStyle(fontSize: 13),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.copy),
-                      onPressed: () async {
-                        final token = _currentEvent.shareToken;
-                        if (token == null) return;
-                        final link = 'https://plendy.app/event/$token';
-                        await Clipboard.setData(ClipboardData(text: link));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Copied to clipboard')),
-                        );
-                      },
+                    Builder(
+                      builder: (copyLinkCtx) => IconButton(
+                        icon: const Icon(Icons.copy),
+                        onPressed: _help.isActive
+                            ? () => _helpTap(
+                                  EventEditorHelpTargetId.visibilityCopyLink,
+                                  copyLinkCtx,
+                                )
+                            : () async {
+                                final token = _currentEvent.shareToken;
+                                if (token == null) return;
+                                final link = 'https://plendy.app/event/$token';
+                                await Clipboard.setData(
+                                    ClipboardData(text: link));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Copied to clipboard')),
+                                );
+                              },
+                      ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 8),
               if (!_isReadOnly)
-                TextButton.icon(
-                  icon: const Icon(Icons.link_off, color: Colors.red),
-                  label: const Text('Revoke Link',
-                      style: TextStyle(color: Colors.red)),
-                  onPressed: _revokeShareLink,
+                _helpTapRegion(
+                  target: EventEditorHelpTargetId.visibilityRevokeLink,
+                  behavior: HitTestBehavior.translucent,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.link_off, color: Colors.red),
+                    label: const Text('Revoke Link',
+                        style: TextStyle(color: Colors.red)),
+                    onPressed: _revokeShareLink,
+                  ),
                 ),
             ],
           ],
         ],
       ),
+    );
+
+    return _helpSectionTapRegion(
+      target: EventEditorHelpTargetId.visibilitySection,
+      child: section,
     );
   }
 
@@ -5015,15 +6560,19 @@ class _EventEditorModalState extends State<EventEditorModal> {
           Row(
             children: [
               Expanded(
-                child: TextField(
-                  controller: _capacityController,
-                  readOnly: _isReadOnly,
-                  decoration: const InputDecoration(
-                    labelText: 'Max capacity (optional)',
-                    border: OutlineInputBorder(),
-                    hintText: 'No limit',
+                child: _helpTapRegion(
+                  target: EventEditorHelpTargetId.capacityField,
+                  behavior: HitTestBehavior.translucent,
+                  child: TextField(
+                    controller: _capacityController,
+                    readOnly: _isReadOnly || _help.isActive,
+                    decoration: const InputDecoration(
+                      labelText: 'Max capacity (optional)',
+                      border: OutlineInputBorder(),
+                      hintText: 'No limit',
+                    ),
+                    keyboardType: TextInputType.number,
                   ),
-                  keyboardType: TextInputType.number,
                 ),
               ),
               const SizedBox(width: 16),
@@ -5075,7 +6624,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
     }
 
-    return Padding(
+    final section = Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5085,7 +6634,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             children: [
               Text(
                 'Notification:',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
               ),
@@ -5106,73 +6655,79 @@ class _EventEditorModalState extends State<EventEditorModal> {
           ),
           if (!_isReadOnly) ...[
             const SizedBox(height: 16),
-            DropdownButtonFormField<EventNotificationType>(
-              value: _currentEvent.notificationPreference.type,
-              decoration: const InputDecoration(
-                labelText: 'Remind me',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white,
-              ),
-              items: const [
-                DropdownMenuItem(
-                  value: EventNotificationType.none,
-                  child: Text('None'),
+            _helpTapRegion(
+              target: EventEditorHelpTargetId.notificationsDropdown,
+              child: DropdownButtonFormField<EventNotificationType>(
+                value: _currentEvent.notificationPreference.type,
+                decoration: const InputDecoration(
+                  labelText: 'Remind me',
+                  border: OutlineInputBorder(),
+                  filled: true,
+                  fillColor: Colors.white,
                 ),
-                DropdownMenuItem(
-                  value: EventNotificationType.fiveMinutes,
-                  child: Text('5 minutes before'),
-                ),
-                DropdownMenuItem(
-                  value: EventNotificationType.fifteenMinutes,
-                  child: Text('15 minutes before'),
-                ),
-                DropdownMenuItem(
-                  value: EventNotificationType.thirtyMinutes,
-                  child: Text('30 minutes before'),
-                ),
-                DropdownMenuItem(
-                  value: EventNotificationType.oneHour,
-                  child: Text('1 hour before'),
-                ),
-                DropdownMenuItem(
-                  value: EventNotificationType.oneDay,
-                  child: Text('1 day before'),
-                ),
-                DropdownMenuItem(
-                  value: EventNotificationType.custom,
-                  child: Text('Custom...'),
-                ),
-              ],
-              onChanged: (value) async {
-                if (value == null) return;
-                if (value == EventNotificationType.custom) {
-                  final duration = await _showCustomDurationDialog(
-                    initialDuration:
-                        _currentEvent.notificationPreference.customDuration,
-                  );
-                  if (duration == null) return;
-                  if (!mounted) return;
-                  setState(() {
-                    _currentEvent = _currentEvent.copyWith(
-                      notificationPreference: EventNotificationPreference(
-                        type: value,
-                        customDuration: duration,
-                      ),
-                    );
-                    _markUnsavedChanges();
-                  });
-                  return;
-                }
+                items: const [
+                  DropdownMenuItem(
+                    value: EventNotificationType.none,
+                    child: Text('None'),
+                  ),
+                  DropdownMenuItem(
+                    value: EventNotificationType.fiveMinutes,
+                    child: Text('5 minutes before'),
+                  ),
+                  DropdownMenuItem(
+                    value: EventNotificationType.fifteenMinutes,
+                    child: Text('15 minutes before'),
+                  ),
+                  DropdownMenuItem(
+                    value: EventNotificationType.thirtyMinutes,
+                    child: Text('30 minutes before'),
+                  ),
+                  DropdownMenuItem(
+                    value: EventNotificationType.oneHour,
+                    child: Text('1 hour before'),
+                  ),
+                  DropdownMenuItem(
+                    value: EventNotificationType.oneDay,
+                    child: Text('1 day before'),
+                  ),
+                  DropdownMenuItem(
+                    value: EventNotificationType.custom,
+                    child: Text('Custom...'),
+                  ),
+                ],
+                onChanged: _help.isActive
+                    ? null
+                    : (value) async {
+                        if (value == null) return;
+                        if (value == EventNotificationType.custom) {
+                          final duration = await _showCustomDurationDialog(
+                            initialDuration: _currentEvent
+                                .notificationPreference.customDuration,
+                          );
+                          if (duration == null) return;
+                          if (!mounted) return;
+                          setState(() {
+                            _currentEvent = _currentEvent.copyWith(
+                              notificationPreference:
+                                  EventNotificationPreference(
+                                type: value,
+                                customDuration: duration,
+                              ),
+                            );
+                            _markUnsavedChanges();
+                          });
+                          return;
+                        }
 
-                setState(() {
-                  _currentEvent = _currentEvent.copyWith(
-                    notificationPreference:
-                        EventNotificationPreference(type: value),
-                  );
-                  _markUnsavedChanges();
-                });
-              },
+                        setState(() {
+                          _currentEvent = _currentEvent.copyWith(
+                            notificationPreference:
+                                EventNotificationPreference(type: value),
+                          );
+                          _markUnsavedChanges();
+                        });
+                      },
+              ),
             ),
             if (_currentEvent.notificationPreference.type ==
                     EventNotificationType.custom &&
@@ -5190,6 +6745,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ],
       ),
     );
+
+    return section;
   }
 
   Widget _buildDescriptionSection() {
@@ -5205,25 +6762,31 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _descriptionController,
-            readOnly: _isReadOnly,
-            decoration: const InputDecoration(
-              hintText: 'Describe the vibe, schedule details, dress code, etc.',
-              border: OutlineInputBorder(),
-              filled: true,
-              fillColor: Colors.white,
+          _helpTapRegion(
+            target: EventEditorHelpTargetId.descriptionField,
+            behavior: HitTestBehavior.translucent,
+            child: TextField(
+              controller: _descriptionController,
+              readOnly: _isReadOnly || _help.isActive,
+              decoration: const InputDecoration(
+                hintText:
+                    'Describe the vibe, schedule details, dress code, etc.',
+                border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              minLines: 4,
+              maxLines: null,
+              textInputAction: TextInputAction.newline,
             ),
-            minLines: 4,
-            maxLines: null,
-            textInputAction: TextInputAction.newline,
           ),
         ],
       ),
     );
   }
 
-  Future<Duration?> _showCustomDurationDialog({Duration? initialDuration}) async {
+  Future<Duration?> _showCustomDurationDialog(
+      {Duration? initialDuration}) async {
     int hours = initialDuration?.inHours ?? 0;
     int minutes = (initialDuration?.inMinutes ?? 30) % 60;
 
@@ -5294,8 +6857,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   Widget _buildCommentsSection() {
     final theme = Theme.of(context);
     final mutedTextColor =
-        theme.textTheme.bodySmall?.color?.withOpacity(0.7) ??
-            Colors.grey[600];
+        theme.textTheme.bodySmall?.color?.withOpacity(0.7) ?? Colors.grey[600];
     final comments = List<EventComment>.from(_currentEvent.comments)
       ..sort(
         (a, b) => b.createdAt.compareTo(a.createdAt),
@@ -5311,8 +6873,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
           Text(
             'Comments (${comments.length})',
             style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 16),
           if (comments.isEmpty)
@@ -5345,17 +6907,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                   child: Text(
                                     displayName,
                                     style: theme.textTheme.bodyMedium
-                                        ?.copyWith(
-                                            fontWeight: FontWeight.w600),
+                                        ?.copyWith(fontWeight: FontWeight.w600),
                                   ),
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
                                   _formatTimeAgo(comment.createdAt),
-                                  style:
-                                      theme.textTheme.bodySmall?.copyWith(
-                                            color: mutedTextColor,
-                                          ),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: mutedTextColor,
+                                  ),
                                 ),
                               ],
                             ),
@@ -5436,25 +6996,32 @@ class _EventEditorModalState extends State<EventEditorModal> {
       hintText = 'Comments are limited to invited guests';
     }
 
-    final bool enableInput =
-        isAuthenticated && canComment && !_isPostingComment && _currentEvent.id.isNotEmpty;
+    final bool enableInput = !_help.isActive &&
+        isAuthenticated &&
+        canComment &&
+        !_isPostingComment &&
+        _currentEvent.id.isNotEmpty;
 
     return Row(
       children: [
         Expanded(
-          child: TextField(
-            controller: _commentController,
-            enabled: enableInput,
-            minLines: 1,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: hintText,
-              border: const OutlineInputBorder(),
-              filled: true,
-              fillColor: Colors.white,
-              isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: _helpTapRegion(
+            target: EventEditorHelpTargetId.commentInput,
+            behavior: HitTestBehavior.translucent,
+            child: TextField(
+              controller: _commentController,
+              enabled: enableInput,
+              minLines: 1,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: hintText,
+                border: const OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
             ),
           ),
         ),
@@ -5464,27 +7031,34 @@ class _EventEditorModalState extends State<EventEditorModal> {
             color: enableInput ? theme.primaryColor : Colors.grey.shade300,
             borderRadius: BorderRadius.circular(10),
           ),
-          child: IconButton(
-            icon: _isPostingComment
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        enableInput
-                            ? Colors.white
-                            : theme.iconTheme.color ?? Colors.black,
+          child: Builder(
+            builder: (commentSendCtx) => IconButton(
+              icon: _isPostingComment
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          enableInput
+                              ? Colors.white
+                              : theme.iconTheme.color ?? Colors.black,
+                        ),
                       ),
+                    )
+                  : Icon(
+                      Icons.send,
+                      color: enableInput
+                          ? Colors.white
+                          : theme.iconTheme.color ?? Colors.black54,
                     ),
-                  )
-                : Icon(
-                    Icons.send,
-                    color: enableInput
-                        ? Colors.white
-                        : theme.iconTheme.color ?? Colors.black54,
-                  ),
-            onPressed: enableInput ? _submitComment : null,
+              onPressed: _help.isActive
+                  ? () => _helpTap(
+                        EventEditorHelpTargetId.commentSend,
+                        commentSendCtx,
+                      )
+                  : (enableInput ? _submitComment : null),
+            ),
           ),
         ),
       ],
@@ -5545,18 +7119,23 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _deleteEvent,
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              label: const Text(
-                'Delete Event',
-                style: TextStyle(color: Colors.red),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.red),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            child: Builder(
+              builder: (deleteCtx) => OutlinedButton.icon(
+                onPressed: _help.isActive
+                    ? () => _helpTap(
+                        EventEditorHelpTargetId.deleteButton, deleteCtx)
+                    : _deleteEvent,
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                label: const Text(
+                  'Delete Event',
+                  style: TextStyle(color: Colors.red),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
               ),
             ),

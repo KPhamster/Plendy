@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,6 +12,9 @@ import '../services/user_service.dart';
 import '../services/email_validation_service.dart';
 import 'public_profile_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/edit_profile_help_content.dart';
+import '../models/edit_profile_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 // Custom formatter to trim trailing whitespace
 class _TrimTrailingWhitespaceFormatter extends TextInputFormatter {
@@ -22,10 +24,12 @@ class _TrimTrailingWhitespaceFormatter extends TextInputFormatter {
     TextEditingValue newValue,
   ) {
     // If text is being added and ends with whitespace, trim it
-    if (newValue.text != oldValue.text && newValue.text.trimRight() != newValue.text) {
+    if (newValue.text != oldValue.text &&
+        newValue.text.trimRight() != newValue.text) {
       return TextEditingValue(
         text: newValue.text.trimRight(),
-        selection: TextSelection.collapsed(offset: newValue.text.trimRight().length),
+        selection:
+            TextSelection.collapsed(offset: newValue.text.trimRight().length),
       );
     }
     return newValue;
@@ -39,7 +43,8 @@ class EditProfileScreen extends StatefulWidget {
   _EditProfileScreenState createState() => _EditProfileScreenState();
 }
 
-class _EditProfileScreenState extends State<EditProfileScreen> {
+class _EditProfileScreenState extends State<EditProfileScreen>
+    with TickerProviderStateMixin {
   final _authService = AuthService();
   final _userService = UserService();
   final _emailValidationService = EmailValidationService();
@@ -56,25 +61,36 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isPrivateProfile =
       false; // State for privacy setting, default to public
   bool? _initialIsPrivateProfile; // Store initial privacy setting
-  bool _canEditEmail = false; // Whether user can edit email (password users only)
-  bool _emailVerificationPending = false; // Whether email verification is pending
+  bool _canEditEmail =
+      false; // Whether user can edit email (password users only)
+  bool _emailVerificationPending =
+      false; // Whether email verification is pending
   Timer? _emailCheckTimer; // Timer to check for email verification
-  
+
   // Email validation state
   Timer? _emailDebounceTimer;
   bool _isValidatingEmail = false;
   bool _emailValidated = false;
   String _lastValidatedEmail = '';
+  late final ScreenHelpController<EditProfileHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<EditProfileHelpTargetId>(
+      vsync: this,
+      content: editProfileHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: EditProfileHelpTargetId.helpButton,
+    );
     _loadCurrentData();
     _emailController.addListener(_onEmailChanged);
   }
 
   @override
   void dispose() {
+    _help.dispose();
     _emailDebounceTimer?.cancel();
     _emailCheckTimer?.cancel();
     _emailController.removeListener(_onEmailChanged);
@@ -91,10 +107,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _nameController.text = user.displayName ?? '';
       _emailController.text = user.email ?? '';
       _initialEmail = user.email;
-      
+
       // Check if user can edit email (has password provider)
       _canEditEmail = _authService.hasPasswordProvider();
-      
+
       final userProfileDoc =
           await _userService.getUserProfile(user.uid); // Fetch full profile
       if (mounted) {
@@ -141,12 +157,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   void _onEmailChanged() {
     final email = _emailController.text.trim();
-    
+
     // Don't validate if email hasn't changed from initial or if it's a social auth user
     if (!_canEditEmail) {
       return;
     }
-    
+
     // Reset validation state when email changes
     if (email != _lastValidatedEmail) {
       setState(() {
@@ -169,7 +185,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
 
     // Check if email is the same as initial - mark as valid automatically
-    if (_initialEmail != null && email.toLowerCase() == _initialEmail!.toLowerCase()) {
+    if (_initialEmail != null &&
+        email.toLowerCase() == _initialEmail!.toLowerCase()) {
       setState(() {
         _isValidatingEmail = false;
         _emailError = null;
@@ -204,12 +221,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _validateEmailAsync(String email) async {
     if (!mounted) return;
-    
+
     try {
       final result = await _emailValidationService.validateEmail(email);
-      
+
       if (!mounted) return;
-      
+
       // Only update if email hasn't changed
       if (_emailController.text.trim() == email) {
         setState(() {
@@ -221,7 +238,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      
+
       // On error, allow save (don't block due to network issues)
       if (_emailController.text.trim() == email) {
         setState(() {
@@ -320,7 +337,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       // First check if re-authentication is needed by attempting the update
       await _authService.updateEmailWithVerification(newEmail);
-      
+
       // Success - verification email sent
       setState(() {
         _emailVerificationPending = true;
@@ -368,7 +385,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                        Icon(Icons.info_outline,
+                            color: Colors.blue[700], size: 20),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -388,7 +406,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 TextButton(
                   onPressed: () {
                     Navigator.of(context).pop(); // Close dialog
-                    Navigator.of(context).pop(true); // Return to previous screen
+                    Navigator.of(context)
+                        .pop(true); // Return to previous screen
                   },
                   child: const Text('OK'),
                 ),
@@ -399,7 +418,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
     } on Exception catch (e) {
       setState(() => _isLoading = false);
-      
+
       // Check if it's a requires-recent-login error
       if (e.toString().contains('sign out and sign back in')) {
         if (mounted) {
@@ -408,7 +427,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+            SnackBar(
+                content: Text(e.toString().replaceFirst('Exception: ', ''))),
           );
         }
       }
@@ -505,10 +525,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (user == null) throw Exception('User not authenticated');
 
       // Handle email update separately if changed
-      bool emailChanged = _canEditEmail && 
-          _emailController.text.trim().isNotEmpty && 
-          _emailController.text.trim().toLowerCase() != (_initialEmail?.toLowerCase() ?? '');
-      
+      bool emailChanged = _canEditEmail &&
+          _emailController.text.trim().isNotEmpty &&
+          _emailController.text.trim().toLowerCase() !=
+              (_initialEmail?.toLowerCase() ?? '');
+
       if (emailChanged) {
         // Ensure email is validated before proceeding
         final email = _emailController.text.trim();
@@ -516,7 +537,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           // Perform full validation now
           try {
             final result = await _emailValidationService.validateEmail(email);
-            
+
             if (!mounted) return;
 
             if (!result.isValid) {
@@ -542,7 +563,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             if (!mounted) return;
           }
         }
-        
+
         await _handleEmailUpdate(email);
         // Don't continue with other updates - email verification is pending
         return;
@@ -633,221 +654,303 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: AppColors.backgroundColor,
-        foregroundColor: Colors.black,
-        centerTitle: true,
-        title: const Text('Edit Profile'),
-        leadingWidth: 80,
-        leading: TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text(
-            'Cancel',
-            style:
-                TextStyle(color: Colors.black, fontWeight: FontWeight.normal),
-          ),
-        ),
-        actions: [
-          if (!_isLoading)
-            TextButton(
-              onPressed: _updateProfile,
-              child: const Text('Save'),
-            ),
-        ],
-      ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  GestureDetector(
-                    onTap: withHeavyTap(_pickImage),
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        _imageFile != null
-                            ? CircleAvatar(
-                                radius: 50,
-                                backgroundImage: FileImage(_imageFile!),
-                              )
-                            : (_authService.currentUser?.photoURL != null &&
-                                    _authService.currentUser!.photoURL!.isNotEmpty
-                                ? ClipOval(
-                                    child: CachedNetworkImage(
-                                      imageUrl: _authService.currentUser!.photoURL!,
-                                      width: 100,
-                                      height: 100,
-                                      fit: BoxFit.cover,
-                                      placeholder: (context, url) => const CircleAvatar(
-                                        radius: 50,
-                                        child: Icon(Icons.camera_alt, size: 50),
-                                      ),
-                                      errorWidget: (context, url, error) => const CircleAvatar(
-                                        radius: 50,
-                                        child: Icon(Icons.camera_alt, size: 50),
-                                      ),
-                                    ),
-                                  )
-                                : const CircleAvatar(
-                                    radius: 50,
-                                    child: Icon(Icons.camera_alt, size: 50),
-                                  )),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).primaryColor,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
-                            child: const Icon(Icons.edit, size: 16, color: Colors.white),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _openPublicProfile,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('View public profile page'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _usernameController,
-                    decoration: InputDecoration(
-                      labelText: 'Username',
-                      hintText: 'Enter unique username',
-                      errorText: _usernameError,
-                    ),
-                    onChanged: _validateUsername,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _nameController,
-                    decoration: InputDecoration(
-                      labelText: 'Display Name',
-                      hintText: 'Enter your name',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    enabled: _canEditEmail && !_emailVerificationPending,
-                    inputFormatters: [_TrimTrailingWhitespaceFormatter()],
-                    decoration: InputDecoration(
-                      labelText: 'Email',
-                      hintText: 'Enter your email',
-                      errorText: _emailError,
-                      errorMaxLines: 2,
-                      suffixIcon: _buildEmailSuffixIcon(),
-                      helperText: !_canEditEmail
-                          ? 'Email changes only available for password users'
-                          : _emailVerificationPending
-                              ? 'Check your new email to verify'
-                              : null,
-                      helperStyle: TextStyle(
-                        color: !_canEditEmail ? Colors.grey[600] : Colors.orange[700],
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _bioController,
-                    decoration: const InputDecoration(
-                      labelText: 'About You',
-                      hintText: 'Share a short description',
-                      alignLabelWithHint: true,
-                    ),
-                    maxLines: 4,
-                  ),
-                  const SizedBox(height: 24), // Added const & more space
-                  const Text('Profile Visibility',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  RadioListTile<bool>(
-                    title: const Text('Public'),
-                    subtitle: const Text('Anyone can follow you.'),
-                    value: false, // Corresponds to _isPrivateProfile = false
-                    groupValue: _isPrivateProfile,
-                    onChanged: (bool? value) {
-                      if (value != null) {
-                        setState(() {
-                          _isPrivateProfile = value;
-                        });
-                      }
-                    },
-                  ),
-                  RadioListTile<bool>(
-                    title: const Text('Private'),
-                    subtitle: const Text('You approve who follows you.'),
-                    value: true, // Corresponds to _isPrivateProfile = true
-                    groupValue: _isPrivateProfile,
-                    onChanged: (bool? value) {
-                      if (value != null) {
-                        setState(() {
-                          _isPrivateProfile = value;
-                        });
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 32),
-                  TextButton(
-                    onPressed: _confirmDeleteAccount,
-                    child: const Text(
-                      'Delete Account',
-                      style: TextStyle(color: Colors.red, fontSize: 16),
-                    ),
-                  ),
-                ],
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.backgroundColor,
+          appBar: AppBar(
+            backgroundColor: AppColors.backgroundColor,
+            foregroundColor: Colors.black,
+            centerTitle: true,
+            title: const Text('Edit Profile'),
+            leadingWidth: 80,
+            leading: TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                    color: Colors.black, fontWeight: FontWeight.normal),
               ),
             ),
-    );
-  }
-
-  // --- ADDED: Show confirmation dialog for account deletion ---
-  void _confirmDeleteAccount() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: Colors.white,
-          title: const Text('Delete Account'),
-          content: const Text(
-              'Are you sure you want to delete your account? This action is permanent and cannot be undone. All of your data, including experiences and reviews, will be removed.'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-            TextButton(
-              child: const Text('Delete', style: TextStyle(color: Colors.red)),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close the dialog
-                _deleteAccount(); // Proceed with deletion
-              },
-            ),
-          ],
-        );
-      },
+            actions: [
+              if (!_isLoading)
+                Builder(
+                  builder: (saveCtx) => TextButton(
+                    onPressed: _help.isActive
+                        ? () => _help.tryTap(
+                            EditProfileHelpTargetId.saveButton, saveCtx)
+                        : _updateProfile,
+                    child: const Text('Save'),
+                  ),
+                ),
+              _help.buildIconButton(inactiveColor: Colors.black87),
+            ],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          body: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Builder(
+                        builder: (photoCtx) => GestureDetector(
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  EditProfileHelpTargetId.profilePhoto,
+                                  photoCtx)
+                              : withHeavyTap(_pickImage),
+                          behavior: HitTestBehavior.translucent,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              _imageFile != null
+                                  ? CircleAvatar(
+                                      radius: 50,
+                                      backgroundImage: FileImage(_imageFile!),
+                                    )
+                                  : (_authService.currentUser?.photoURL !=
+                                              null &&
+                                          _authService
+                                              .currentUser!.photoURL!.isNotEmpty
+                                      ? ClipOval(
+                                          child: CachedNetworkImage(
+                                            imageUrl: _authService
+                                                .currentUser!.photoURL!,
+                                            width: 100,
+                                            height: 100,
+                                            fit: BoxFit.cover,
+                                            placeholder: (context, url) =>
+                                                const CircleAvatar(
+                                              radius: 50,
+                                              child: Icon(Icons.camera_alt,
+                                                  size: 50),
+                                            ),
+                                            errorWidget:
+                                                (context, url, error) =>
+                                                    const CircleAvatar(
+                                              radius: 50,
+                                              child: Icon(Icons.camera_alt,
+                                                  size: 50),
+                                            ),
+                                          ),
+                                        )
+                                      : const CircleAvatar(
+                                          radius: 50,
+                                          child:
+                                              Icon(Icons.camera_alt, size: 50),
+                                        )),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 28,
+                                  height: 28,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).primaryColor,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: Colors.white, width: 2),
+                                  ),
+                                  child: const Icon(Icons.edit,
+                                      size: 16, color: Colors.white),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Builder(
+                        builder: (viewPublicCtx) => SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _help.isActive
+                                ? () => _help.tryTap(
+                                    EditProfileHelpTargetId
+                                        .viewPublicProfileButton,
+                                    viewPublicCtx)
+                                : _openPublicProfile,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Theme.of(context).primaryColor,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('View public profile page'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Builder(
+                        builder: (usernameCtx) => GestureDetector(
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  EditProfileHelpTargetId.usernameField,
+                                  usernameCtx)
+                              : null,
+                          behavior: HitTestBehavior.translucent,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: TextFormField(
+                              controller: _usernameController,
+                              decoration: InputDecoration(
+                                labelText: 'Username',
+                                hintText: 'Enter unique username',
+                                errorText: _usernameError,
+                              ),
+                              onChanged: _validateUsername,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Builder(
+                        builder: (displayNameCtx) => GestureDetector(
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  EditProfileHelpTargetId.displayNameField,
+                                  displayNameCtx)
+                              : null,
+                          behavior: HitTestBehavior.translucent,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: TextFormField(
+                              controller: _nameController,
+                              decoration: const InputDecoration(
+                                labelText: 'Display Name',
+                                hintText: 'Enter your name',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Builder(
+                        builder: (emailCtx) => GestureDetector(
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  EditProfileHelpTargetId.emailField, emailCtx)
+                              : null,
+                          behavior: HitTestBehavior.translucent,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: TextFormField(
+                              controller: _emailController,
+                              keyboardType: TextInputType.emailAddress,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              enabled:
+                                  _canEditEmail && !_emailVerificationPending,
+                              inputFormatters: [
+                                _TrimTrailingWhitespaceFormatter()
+                              ],
+                              decoration: InputDecoration(
+                                labelText: 'Email',
+                                hintText: 'Enter your email',
+                                errorText: _emailError,
+                                errorMaxLines: 2,
+                                suffixIcon: _buildEmailSuffixIcon(),
+                                helperText: !_canEditEmail
+                                    ? 'Email changes only available for password users'
+                                    : _emailVerificationPending
+                                        ? 'Check your new email to verify'
+                                        : null,
+                                helperStyle: TextStyle(
+                                  color: !_canEditEmail
+                                      ? Colors.grey[600]
+                                      : Colors.orange[700],
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Builder(
+                        builder: (bioCtx) => GestureDetector(
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  EditProfileHelpTargetId.bioField, bioCtx)
+                              : null,
+                          behavior: HitTestBehavior.translucent,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: TextFormField(
+                              controller: _bioController,
+                              decoration: const InputDecoration(
+                                labelText: 'About You',
+                                hintText: 'Share a short description',
+                                alignLabelWithHint: true,
+                              ),
+                              maxLines: 4,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Builder(
+                        builder: (privacyCtx) => GestureDetector(
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  EditProfileHelpTargetId.privacySection,
+                                  privacyCtx)
+                              : null,
+                          behavior: HitTestBehavior.translucent,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Profile Visibility',
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                RadioListTile<bool>(
+                                  title: const Text('Public'),
+                                  subtitle:
+                                      const Text('Anyone can follow you.'),
+                                  value: false,
+                                  groupValue: _isPrivateProfile,
+                                  onChanged: (bool? value) {
+                                    if (value != null) {
+                                      setState(() {
+                                        _isPrivateProfile = value;
+                                      });
+                                    }
+                                  },
+                                ),
+                                RadioListTile<bool>(
+                                  title: const Text('Private'),
+                                  subtitle: const Text(
+                                      'You approve who follows you.'),
+                                  value: true,
+                                  groupValue: _isPrivateProfile,
+                                  onChanged: (bool? value) {
+                                    if (value != null) {
+                                      setState(() {
+                                        _isPrivateProfile = value;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 
@@ -879,51 +982,4 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
     });
   }
-  // --- END ADDED ---
-
-  // --- ADDED: Placeholder for account deletion logic ---
-  Future<void> _deleteAccount() async {
-    setState(() => _isLoading = true);
-    try {
-      final user = _authService.currentUser;
-      if (user == null) {
-        throw Exception("No user is currently signed in.");
-      }
-
-      // This will trigger the Cloud Function to delete all associated data
-      await user.delete();
-
-      // After deletion, navigate away from the profile screen, perhaps to the auth screen
-      if (mounted) {
-        // Return to root and let auth StreamBuilder render AuthScreen
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Account successfully deleted.')),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      // Handle potential re-authentication requirement
-      if (e.code == 'requires-recent-login') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'This action requires you to have recently signed in. Please sign out and sign back in to continue.')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting account: ${e.message}')),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An unexpected error occurred: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-  // --- END ADDED ---
 }

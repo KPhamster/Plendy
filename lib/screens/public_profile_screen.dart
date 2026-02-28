@@ -31,6 +31,9 @@ import 'public_profile_map_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/public_profile_help_content.dart';
+import '../models/public_profile_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -58,7 +61,7 @@ class PublicProfileScreen extends StatefulWidget {
 }
 
 class _PublicProfileScreenState extends State<PublicProfileScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final UserService _userService = UserService();
   final ExperienceService _experienceService = ExperienceService();
 
@@ -96,10 +99,20 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   // Cache for categories from other users (experience owners)
   final Map<String, UserCategory> _externalCategoryCache = {};
   final Map<String, ColorCategory> _externalColorCategoryCache = {};
+  late final ScreenHelpController<PublicProfileHelpTargetId> _help;
+  final List<GlobalKey> _tabKeys =
+      List<GlobalKey>.generate(2, (_) => GlobalKey());
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<PublicProfileHelpTargetId>(
+      vsync: this,
+      content: publicProfileHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: PublicProfileHelpTargetId.helpButton,
+    );
     _tabController = TabController(length: 2, vsync: this);
   }
 
@@ -118,6 +131,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   @override
   void dispose() {
+    _help.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -1547,6 +1561,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     );
   }
 
+  PublicProfileHelpTargetId _helpTargetForTab(int index) {
+    return index == 0
+        ? PublicProfileHelpTargetId.collectionsTabSwitch
+        : PublicProfileHelpTargetId.reviewsTabSwitch;
+  }
+
   Widget _buildFollowButton() {
     if (_currentUserId == null || _currentUserId == widget.userId) {
       return const SizedBox.shrink();
@@ -1578,24 +1598,28 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     return SizedBox(
       width: double.infinity,
-      child: ElevatedButton(
-        onPressed:
-            (_isProcessingFollow || onPressed == null) ? null : onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: backgroundColor,
-          foregroundColor: foregroundColor,
-          disabledBackgroundColor: backgroundColor,
-          disabledForegroundColor: foregroundColor,
-          padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Builder(
+        builder: (followCtx) => ElevatedButton(
+          onPressed: _help.isActive
+              ? () => _help.tryTap(
+                  PublicProfileHelpTargetId.followButton, followCtx)
+              : ((_isProcessingFollow || onPressed == null) ? null : onPressed),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: backgroundColor,
+            foregroundColor: foregroundColor,
+            disabledBackgroundColor: backgroundColor,
+            disabledForegroundColor: foregroundColor,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+          ),
+          child: _isProcessingFollow
+              ? SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: foregroundColor),
+                )
+              : Text(label),
         ),
-        child: _isProcessingFollow
-            ? SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: foregroundColor),
-              )
-            : Text(label),
       ),
     );
   }
@@ -1672,9 +1696,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                GestureDetector(
-                  onTap: withHeavyTap(() => _showProfilePhotoDialog(profile)),
-                  child: _buildAvatar(profile),
+                Builder(
+                  builder: (photoCtx) => GestureDetector(
+                    onTap: _help.isActive
+                        ? () => _help.tryTap(
+                            PublicProfileHelpTargetId.profileHeader, photoCtx)
+                        : withHeavyTap(() => _showProfilePhotoDialog(profile)),
+                    child: _buildAvatar(profile),
+                  ),
                 ),
                 const SizedBox(width: 24),
                 Expanded(
@@ -1682,40 +1711,74 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (hasDisplayName)
-                        Text(
-                          profile.displayName!,
-                          style: const TextStyle(
-                              fontSize: 22, fontWeight: FontWeight.bold),
+                        Builder(
+                          builder: (nameCtx) => GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: _help.isActive
+                                ? () => _help.tryTap(
+                                    PublicProfileHelpTargetId.profileHeader,
+                                    nameCtx)
+                                : null,
+                            child: Text(
+                              profile.displayName!,
+                              style: const TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.bold),
+                            ),
+                          ),
                         ),
                       if (hasDisplayName) const SizedBox(height: 4),
                       if (hasUsername)
-                        Text(
-                          '@${profile.username!}',
-                          style: TextStyle(color: Colors.grey[700]),
+                        Builder(
+                          builder: (usernameCtx) => GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: _help.isActive
+                                ? () => _help.tryTap(
+                                    PublicProfileHelpTargetId.profileHeader,
+                                    usernameCtx)
+                                : null,
+                            child: Text(
+                              '@${profile.username!}',
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                          ),
                         ),
                       if (hasIdentityText) const SizedBox(height: 8),
                       if (hasIdentityText) const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildCountTile(
-                              label: 'Following',
-                              count: _followingCount,
-                              onTap: withHeavyTap(() {
-                                unawaited(_openFollowingDialog());
-                              } as VoidCallback),
+                      Builder(
+                        builder: (countCtx) => GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: _help.isActive
+                              ? () => _help.tryTap(
+                                  PublicProfileHelpTargetId
+                                      .followingFollowersCount,
+                                  countCtx)
+                              : null,
+                          child: IgnorePointer(
+                            ignoring: _help.isActive,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _buildCountTile(
+                                    label: 'Following',
+                                    count: _followingCount,
+                                    onTap: withHeavyTap(() {
+                                      unawaited(_openFollowingDialog());
+                                    } as VoidCallback),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _buildCountTile(
+                                    label: 'Followers',
+                                    count: _followersCount,
+                                    onTap: withHeavyTap(() {
+                                      unawaited(_openFollowersDialog());
+                                    } as VoidCallback),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          Expanded(
-                            child: _buildCountTile(
-                              label: 'Followers',
-                              count: _followersCount,
-                              onTap: withHeavyTap(() {
-                                unawaited(_openFollowersDialog());
-                              } as VoidCallback),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
@@ -1726,9 +1789,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             _buildFollowButton(),
             if (hasBio) ...[
               const SizedBox(height: 24),
-              Text(
-                bioText!,
-                style: const TextStyle(fontSize: 16),
+              Builder(
+                builder: (bioCtx) => GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _help.isActive
+                      ? () => _help.tryTap(
+                          PublicProfileHelpTargetId.bioText, bioCtx)
+                      : null,
+                  child: Text(
+                    bioText!,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
               ),
             ],
             const SizedBox(height: 24),
@@ -1740,27 +1812,56 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     return WillPopScope(
       onWillPop: _handleBackNavigation,
-      child: Scaffold(
-        backgroundColor: AppColors.backgroundColor,
-        appBar: AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => _handleBackNavigation(),
-          ),
-          title: viewingOwnProfile ? const Text('Public Profile') : null,
-          backgroundColor: AppColors.backgroundColor,
-          foregroundColor: Colors.black,
-          elevation: 0,
-          actions: [
-            if (profile != null)
-              IconButton(
-                icon: const Icon(Icons.share_outlined, color: AppColors.teal),
-                tooltip: 'Share Profile',
-                onPressed: () => _shareProfile(profile),
+      child: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: AppColors.backgroundColor,
+            appBar: AppBar(
+              leading: Builder(
+                builder: (backCtx) => IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () {
+                    if (_help.tryTap(
+                        PublicProfileHelpTargetId.currentView, backCtx)) {
+                      return;
+                    }
+                    _handleBackNavigation();
+                  },
+                ),
               ),
-          ],
-        ),
-        body: SafeArea(child: content),
+              title: viewingOwnProfile ? const Text('Public Profile') : null,
+              backgroundColor: AppColors.backgroundColor,
+              foregroundColor: Colors.black,
+              elevation: 0,
+              actions: [
+                if (profile != null)
+                  Builder(
+                    builder: (shareCtx) => IconButton(
+                      icon: const Icon(Icons.share_outlined,
+                          color: AppColors.teal),
+                      tooltip: 'Share Profile',
+                      onPressed: () {
+                        if (_help.tryTap(
+                            PublicProfileHelpTargetId.shareButton, shareCtx)) {
+                          return;
+                        }
+                        _shareProfile(profile);
+                      },
+                    ),
+                  ),
+                _help.buildIconButton(inactiveColor: Colors.black87),
+              ],
+              bottom: _help.isActive
+                  ? PreferredSize(
+                      preferredSize: const Size.fromHeight(24),
+                      child: _help.buildExitBanner(),
+                    )
+                  : null,
+            ),
+            body: SafeArea(child: content),
+          ),
+          if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+        ],
       ),
     );
   }
@@ -1769,15 +1870,24 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final theme = Theme.of(context);
     final tabBar = TabBar(
       controller: _tabController,
+      onTap: (index) {
+        if (!_help.isActive) return;
+        final tabCtx = _tabKeys[index].currentContext;
+        if (tabCtx != null) {
+          _help.showTarget(_helpTargetForTab(index), tabCtx, withHaptic: true);
+        }
+      },
       labelColor: theme.primaryColor,
       unselectedLabelColor: Colors.grey[600],
       indicatorColor: theme.primaryColor,
-      tabs: const [
+      tabs: [
         Tab(
+          key: _tabKeys[0],
           icon: Icon(Icons.collections_outlined),
           text: 'Collection',
         ),
         Tab(
+          key: _tabKeys[1],
           icon: Icon(Icons.rate_review_outlined),
           text: 'Reviews',
         ),
@@ -1926,9 +2036,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header: Category icon box, Experience name, Address, Time
-            InkWell(
+            Builder(
+              builder: (reviewCtx) => InkWell(
               onTap: withHeavyTap(experience != null
-                  ? () => _navigateToExperienceFromReview(experience)
+                  ? () {
+                      if (_help.tryTap(
+                          PublicProfileHelpTargetId.collectionReviewItem,
+                          reviewCtx)) return;
+                      _navigateToExperienceFromReview(experience);
+                    }
                   : null),
               borderRadius: BorderRadius.circular(8),
               child: Row(
@@ -1996,6 +2112,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 ],
               ),
             ),
+            ),
             const SizedBox(height: 12),
             // Review Content
             Text(
@@ -2057,7 +2174,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         itemCount: imageUrls.length,
         itemBuilder: (context, index) {
           return GestureDetector(
-            onTap: withHeavyTap(() => _showFullScreenReviewImage(imageUrls, index)),
+            onTap: withHeavyTap(
+                () => _showFullScreenReviewImage(imageUrls, index)),
             child: Container(
               width: 80,
               height: 80,
@@ -2157,23 +2275,32 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   alignment: Alignment.centerLeft,
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(
-                        foregroundColor: AppColors.sage,
-                        visualDensity:
-                            const VisualDensity(horizontal: -2, vertical: -2),
-                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: Builder(
+                      builder: (mapCtx) => TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.sage,
+                          visualDensity:
+                              const VisualDensity(horizontal: -2, vertical: -2),
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 8.0),
+                        ),
+                        icon: const Icon(Icons.map_outlined),
+                        label: const Text('Map'),
+                        onPressed: () {
+                          if (_help.tryTap(
+                              PublicProfileHelpTargetId.mapButton, mapCtx)) {
+                            return;
+                          }
+                          _openMapView();
+                        },
                       ),
-                      icon: const Icon(Icons.map_outlined),
-                      label: const Text('Map'),
-                      onPressed: _openMapView,
                     ),
                   ),
                 ),
               ),
               Flexible(
                 child: Builder(
-                  builder: (context) {
+                  builder: (toggleCtx) {
                     final IconData toggleIcon = _showingColorCategories
                         ? Icons.category_outlined
                         : Icons.color_lens_outlined;
@@ -2182,6 +2309,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                         : 'Color Categories';
 
                     void onToggle() {
+                      if (_help.tryTap(
+                          PublicProfileHelpTargetId.categoryToggleButton,
+                          toggleCtx)) {
+                        return;
+                      }
                       setState(() {
                         _showingColorCategories = !_showingColorCategories;
                         _selectedCategory = null;
@@ -2245,12 +2377,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
 
     // Filter categories to only show those with experiences
-    final categoriesWithExperiences = _publicCategories
-        .where((category) {
-          final experiences = _categoryExperiences[category.id] ?? [];
-          return experiences.isNotEmpty;
-        })
-        .toList();
+    final categoriesWithExperiences = _publicCategories.where((category) {
+      final experiences = _categoryExperiences[category.id] ?? [];
+      return experiences.isNotEmpty;
+    }).toList();
 
     if (categoriesWithExperiences.isEmpty) {
       return const Center(child: Text('No public categories to share yet.'));
@@ -2287,7 +2417,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 childAspectRatio: 3 / 3.5,
               ),
               delegate: SliverChildBuilderDelegate(
-                (context, index) {
+                (gridCtx, index) {
                   final category = categoriesWithExperiences[index];
                   final experiences = _categoryExperiences[category.id] ?? [];
                   final bool isSelected = _selectedCategory?.id == category.id;
@@ -2297,19 +2427,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     clipBehavior: Clip.antiAlias,
                     elevation: 2.0,
                     color: isSelected
-                        ? Theme.of(context).primaryColor.withOpacity(0.1)
+                        ? Theme.of(gridCtx).primaryColor.withOpacity(0.1)
                         : null,
                     shape: isSelected
                         ? RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(4.0),
                             side: BorderSide(
-                              color: Theme.of(context).primaryColor,
+                              color: Theme.of(gridCtx).primaryColor,
                               width: 2,
                             ),
                           )
                         : null,
                     child: InkWell(
                       onTap: withHeavyTap(() {
+                        if (_help.tryTap(
+                            PublicProfileHelpTargetId.collectionCategoryItem,
+                            gridCtx)) return;
                         setState(() {
                           if (isSelected) {
                             _selectedCategory = null;
@@ -2363,7 +2496,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final int headerOffset = showCountHeader ? 1 : 0;
     return ListView.builder(
       itemCount: categoriesWithExperiences.length + headerOffset,
-      itemBuilder: (context, index) {
+      itemBuilder: (itemContext, index) {
         if (showCountHeader && index == 0) {
           return _buildExperienceCountHeader(_publicExperienceCount);
         }
@@ -2371,32 +2504,38 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         final experiences = _categoryExperiences[category.id] ?? [];
         final bool isSelected = _selectedCategory?.id == category.id;
 
-        return ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-          leading: Padding(
-            padding: const EdgeInsets.only(left: 4, right: 8),
-            child: Text(
-              category.icon,
-              style: const TextStyle(fontSize: 24),
+        return Builder(
+          builder: (tileCtx) => ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 4, right: 8),
+              child: Text(
+                category.icon,
+                style: const TextStyle(fontSize: 24),
+              ),
             ),
+            title: Text(category.name),
+            subtitle: Text(
+              '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
+            ),
+            trailing: isSelected
+                ? Icon(Icons.check_circle,
+                    color: Theme.of(tileCtx).primaryColor)
+                : null,
+            selected: isSelected,
+            onTap: withHeavyTap(() {
+              if (_help.tryTap(
+                  PublicProfileHelpTargetId.collectionCategoryItem,
+                  tileCtx)) return;
+              setState(() {
+                if (isSelected) {
+                  _selectedCategory = null;
+                } else {
+                  _selectedCategory = category;
+                }
+              });
+            }),
           ),
-          title: Text(category.name),
-          subtitle: Text(
-            '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
-          ),
-          trailing: isSelected
-              ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
-              : null,
-          selected: isSelected,
-          onTap: withHeavyTap(() {
-            setState(() {
-              if (isSelected) {
-                _selectedCategory = null;
-              } else {
-                _selectedCategory = category;
-              }
-            });
-          }),
         );
       },
     );
@@ -2456,7 +2595,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         borderRadius: BorderRadius.circular(8.0),
       ),
       child: MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
+        data:
+            MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.center,
@@ -2474,7 +2614,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       ),
     );
 
-    return ListTile(
+    return Builder(
+      builder: (itemCtx) => ListTile(
       key: ValueKey(experience.id),
       contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
       visualDensity: const VisualDensity(horizontal: -4),
@@ -2566,9 +2707,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   ),
                   if (contentCount > 0) ...[
                     const SizedBox(width: 12),
-                    GestureDetector(
+                    Builder(
+                      builder: (playCtx) => GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: withHeavyTap(() async {
+                        if (_help.tryTap(
+                            PublicProfileHelpTargetId.collectionExperienceItem,
+                            playCtx)) return;
                         // Prefetch media if not cached, then show preview
                         if (!_experienceMediaCache.containsKey(experience.id)) {
                           await _prefetchExperienceMedia(experience);
@@ -2620,6 +2765,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                         ],
                       ),
                     ),
+                    ),
                   ],
                 ],
               ),
@@ -2627,6 +2773,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         ],
       ),
       onTap: withHeavyTap(() async {
+        if (_help.tryTap(PublicProfileHelpTargetId.collectionExperienceItem,
+            itemCtx)) return;
         // Prefetch media in background for faster loading
         if (contentCount > 0 &&
             !_experienceMediaCache.containsKey(experience.id)) {
@@ -2634,6 +2782,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         }
         await _navigateToExperience(experience, displayCategory);
       }),
+    ),
     );
   }
 
@@ -2643,12 +2792,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
 
     // Filter color categories to only show those with experiences
-    final colorCategoriesWithExperiences = _publicColorCategories
-        .where((colorCategory) {
-          final experiences = _categoryExperiences[colorCategory.id] ?? [];
-          return experiences.isNotEmpty;
-        })
-        .toList();
+    final colorCategoriesWithExperiences =
+        _publicColorCategories.where((colorCategory) {
+      final experiences = _categoryExperiences[colorCategory.id] ?? [];
+      return experiences.isNotEmpty;
+    }).toList();
 
     if (colorCategoriesWithExperiences.isEmpty) {
       return const Center(
@@ -2687,7 +2835,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 childAspectRatio: 3 / 3.5,
               ),
               delegate: SliverChildBuilderDelegate(
-                (context, index) {
+                (gridCtx, index) {
                   final colorCategory = colorCategoriesWithExperiences[index];
                   final experiences =
                       _categoryExperiences[colorCategory.id] ?? [];
@@ -2699,19 +2847,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     clipBehavior: Clip.antiAlias,
                     elevation: 2.0,
                     color: isSelected
-                        ? Theme.of(context).primaryColor.withOpacity(0.1)
+                        ? Theme.of(gridCtx).primaryColor.withOpacity(0.1)
                         : null,
                     shape: isSelected
                         ? RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(4.0),
                             side: BorderSide(
-                              color: Theme.of(context).primaryColor,
+                              color: Theme.of(gridCtx).primaryColor,
                               width: 2,
                             ),
                           )
                         : null,
                     child: InkWell(
                       onTap: withHeavyTap(() {
+                        if (_help.tryTap(
+                            PublicProfileHelpTargetId.collectionCategoryItem,
+                            gridCtx)) return;
                         setState(() {
                           if (isSelected) {
                             _selectedColorCategory = null;
@@ -2777,46 +2928,53 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         }
         return const Divider(height: 1);
       },
-      itemBuilder: (context, index) {
+      itemBuilder: (itemContext, index) {
         if (showCountHeader && index == 0) {
           return _buildExperienceCountHeader(_publicExperienceCount);
         }
-        final colorCategory = colorCategoriesWithExperiences[index - headerOffset];
+        final colorCategory =
+            colorCategoriesWithExperiences[index - headerOffset];
         final experiences = _categoryExperiences[colorCategory.id] ?? [];
         final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
 
-        return ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-          leading: Padding(
-            padding: const EdgeInsets.only(left: 9.0),
-            child: Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                color: colorCategory.color,
-                shape: BoxShape.circle,
+        return Builder(
+          builder: (tileCtx) => ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 9.0),
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: colorCategory.color,
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
+            title: Text(colorCategory.name),
+            subtitle: Text(
+              '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
+            ),
+            trailing: isSelected
+                ? Icon(Icons.check_circle,
+                    color: Theme.of(tileCtx).primaryColor)
+                : null,
+            selected: isSelected,
+            onTap: withHeavyTap(() {
+              if (_help.tryTap(
+                  PublicProfileHelpTargetId.collectionCategoryItem,
+                  tileCtx)) return;
+              setState(() {
+                if (isSelected) {
+                  _selectedColorCategory = null;
+                } else {
+                  _selectedColorCategory = colorCategory;
+                  _showingColorCategories = true;
+                  _selectedCategory = null;
+                }
+              });
+            }),
           ),
-          title: Text(colorCategory.name),
-          subtitle: Text(
-            '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
-          ),
-          trailing: isSelected
-              ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
-              : null,
-          selected: isSelected,
-          onTap: withHeavyTap(() {
-            setState(() {
-              if (isSelected) {
-                _selectedColorCategory = null;
-              } else {
-                _selectedColorCategory = colorCategory;
-                _showingColorCategories = true;
-                _selectedCategory = null;
-              }
-            });
-          }),
         );
       },
     );

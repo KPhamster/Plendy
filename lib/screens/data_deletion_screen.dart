@@ -1,187 +1,257 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/data_deletion_help_content.dart';
+import '../models/data_deletion_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 /// Screen for user data deletion instructions (required by Facebook App Review)
-/// 
+///
 /// This screen provides clear instructions on how users can request deletion
 /// of their data from Plendy, as required by Facebook/Meta for app permissions.
-class DataDeletionScreen extends StatelessWidget {
+class DataDeletionScreen extends StatefulWidget {
   const DataDeletionScreen({super.key});
 
   @override
+  State<DataDeletionScreen> createState() => _DataDeletionScreenState();
+}
+
+class _DataDeletionScreenState extends State<DataDeletionScreen>
+    with TickerProviderStateMixin {
+  late final ScreenHelpController<DataDeletionHelpTargetId> _help;
+
+  @override
+  void initState() {
+    super.initState();
+    _help = ScreenHelpController<DataDeletionHelpTargetId>(
+      vsync: this,
+      content: dataDeletionHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: DataDeletionHelpTargetId.helpButton,
+    );
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Delete My Data'),
-        backgroundColor: const Color(0xFFD40000),
-        foregroundColor: Colors.white,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            const Icon(
-              Icons.privacy_tip,
-              size: 64,
-              color: Color(0xFFD40000),
-            ),
-            const SizedBox(height: 24),
-            
-            Text(
-              'Your Privacy Matters',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: const Text('Delete My Data'),
+            backgroundColor: const Color(0xFFD40000),
+            foregroundColor: Colors.white,
+            actions: [
+              _help.buildIconButton(
+                inactiveColor: Colors.white,
+                activeColor: const Color(0xFFD40000),
               ),
-            ),
-            const SizedBox(height: 16),
-            
-            Text(
-              'You have the right to request deletion of your personal data from Plendy at any time.',
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            
-            const SizedBox(height: 32),
-            const Divider(),
-            const SizedBox(height: 24),
-            
-            // What gets deleted section
-            Text(
-              'What Gets Deleted',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            _buildBulletPoint(context, 'Your Plendy account and profile'),
-            _buildBulletPoint(context, 'All experiences and places you\'ve saved'),
-            _buildBulletPoint(context, 'Your reviews and comments'),
-            _buildBulletPoint(context, 'Uploaded photos and media'),
-            _buildBulletPoint(context, 'Personal preferences and settings'),
-            _buildBulletPoint(context, 'Authentication data (email, password hash)'),
-            
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 24),
-            
-            // How to request deletion
-            Text(
-              'How to Request Deletion',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            Text(
-              'Choose one of the following methods:',
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 24),
-            
-            // Method 1: In-app deletion
-            _buildDeletionMethod(
-              context,
-              icon: Icons.phone_android,
-              title: 'Method 1: Delete from App',
-              steps: [
-                'Open the Plendy app',
-                'Go to Profile → Settings',
-                'Tap "Delete Account"',
-                'Confirm deletion',
-              ],
-            ),
-            
-            const SizedBox(height: 24),
-            
-            // Method 2: Email request
-            _buildDeletionMethod(
-              context,
-              icon: Icons.email,
-              title: 'Method 2: Email Request',
-              steps: [
-                'Send an email to: admin@plendy.app',
-                'Subject: "Delete My Plendy Account"',
-                'Include your registered email address',
-                'We\'ll process within 30 days',
-              ],
-              actionButton: _buildEmailButton(context),
-            ),
-            
-            const SizedBox(height: 32),
-            const Divider(),
-            const SizedBox(height: 24),
-            
-            // Timeline
-            Text(
-              'Deletion Timeline',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            _buildTimelineItem(
-              context,
-              '1. Request Received',
-              'We confirm receipt of your deletion request',
-            ),
-            _buildTimelineItem(
-              context,
-              '2. Processing (1-7 days)',
-              'Account deactivated and deletion queued',
-            ),
-            _buildTimelineItem(
-              context,
-              '3. Complete (within 30 days)',
-              'All personal data permanently deleted',
-            ),
-            
-            const SizedBox(height: 32),
-            const Divider(),
-            const SizedBox(height: 24),
-            
-            // Contact info
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue[200]!),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            ],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          body: Builder(
+            builder: (viewCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(
+                        DataDeletionHelpTargetId.instructionsView,
+                        viewCtx,
+                      )
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.help_outline, color: Colors.blue),
-                      const SizedBox(width: 8),
+                      // Header
+                      const Icon(
+                        Icons.privacy_tip,
+                        size: 64,
+                        color: Color(0xFFD40000),
+                      ),
+                      const SizedBox(height: 24),
+
                       Text(
-                        'Questions?',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue[900],
-                          fontSize: 16,
+                        'Your Privacy Matters',
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      Text(
+                        'You have the right to request deletion of your personal data from Plendy at any time.',
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+
+                      const SizedBox(height: 32),
+                      const Divider(),
+                      const SizedBox(height: 24),
+
+                      // What gets deleted section
+                      Text(
+                        'What Gets Deleted',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      _buildBulletPoint(
+                          context, 'Your Plendy account and profile'),
+                      _buildBulletPoint(
+                          context, 'All experiences and places you\'ve saved'),
+                      _buildBulletPoint(context, 'Your reviews and comments'),
+                      _buildBulletPoint(context, 'Uploaded photos and media'),
+                      _buildBulletPoint(
+                          context, 'Personal preferences and settings'),
+                      _buildBulletPoint(context,
+                          'Authentication data (email, password hash)'),
+
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      const SizedBox(height: 24),
+
+                      // How to request deletion
+                      Text(
+                        'How to Request Deletion',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      Text(
+                        'Choose one of the following methods:',
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Method 1: In-app deletion
+                      _buildDeletionMethod(
+                        context,
+                        icon: Icons.phone_android,
+                        title: 'Method 1: Delete from App',
+                        steps: [
+                          'Open the Plendy app',
+                          'Go to Profile → Settings',
+                          'Tap "Delete Account"',
+                          'Confirm deletion',
+                        ],
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Method 2: Email request
+                      _buildDeletionMethod(
+                        context,
+                        icon: Icons.email,
+                        title: 'Method 2: Email Request',
+                        steps: [
+                          'Send an email to: admin@plendy.app',
+                          'Subject: "Delete My Plendy Account"',
+                          'Include your registered email address',
+                          'We\'ll process within 30 days',
+                        ],
+                        actionButton: _buildEmailButton(context),
+                      ),
+
+                      const SizedBox(height: 32),
+                      const Divider(),
+                      const SizedBox(height: 24),
+
+                      // Timeline
+                      Text(
+                        'Deletion Timeline',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      _buildTimelineItem(
+                        context,
+                        '1. Request Received',
+                        'We confirm receipt of your deletion request',
+                      ),
+                      _buildTimelineItem(
+                        context,
+                        '2. Processing (1-7 days)',
+                        'Account deactivated and deletion queued',
+                      ),
+                      _buildTimelineItem(
+                        context,
+                        '3. Complete (within 30 days)',
+                        'All personal data permanently deleted',
+                      ),
+
+                      const SizedBox(height: 32),
+                      const Divider(),
+                      const SizedBox(height: 24),
+
+                      // Contact info
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue[200]!),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.help_outline,
+                                    color: Colors.blue),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Questions?',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue[900],
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Contact us at admin@plendy.app for any questions about data deletion or privacy.',
+                              style: TextStyle(color: Colors.blue[900]),
+                            ),
+                          ],
                         ),
                       ),
+
+                      const SizedBox(height: 32),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Contact us at admin@plendy.app for any questions about data deletion or privacy.',
-                    style: TextStyle(color: Colors.blue[900]),
-                  ),
-                ],
+                ),
               ),
             ),
-            
-            const SizedBox(height: 32),
-          ],
+          ),
         ),
-      ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 
@@ -288,15 +358,16 @@ class DataDeletionScreen extends StatelessWidget {
       onPressed: () async {
         final email = 'admin@plendy.app';
         final subject = 'Delete My Plendy Account';
-        final body = 'Please delete my Plendy account and all associated data.\n\n'
+        final body =
+            'Please delete my Plendy account and all associated data.\n\n'
             'My registered email: [ENTER YOUR EMAIL HERE]';
-        
+
         final uri = Uri(
           scheme: 'mailto',
           path: email,
           query: 'subject=$subject&body=${Uri.encodeComponent(body)}',
         );
-        
+
         if (await canLaunchUrl(uri)) {
           await launchUrl(uri);
         } else {

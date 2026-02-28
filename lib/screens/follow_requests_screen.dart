@@ -8,6 +8,9 @@ import '../services/notification_state_service.dart'; // Import NotificationStat
 import '../widgets/notification_dot.dart'; // Import NotificationDot
 import '../widgets/cached_profile_avatar.dart';
 import 'my_people_screen.dart'; // Import MyPeopleScreen
+import '../config/follow_requests_help_content.dart';
+import '../models/follow_requests_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class FollowRequestsScreen extends StatefulWidget {
   const FollowRequestsScreen({super.key});
@@ -16,21 +19,31 @@ class FollowRequestsScreen extends StatefulWidget {
   State<FollowRequestsScreen> createState() => _FollowRequestsScreenState();
 }
 
-class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
+class _FollowRequestsScreenState extends State<FollowRequestsScreen>
+    with TickerProviderStateMixin {
   final UserService _userService = UserService();
   AuthService? _authService;
-  NotificationStateService? _notificationService; // Store reference to notification service
+  NotificationStateService?
+      _notificationService; // Store reference to notification service
   List<UserProfile> _followRequests = [];
   bool _isLoadingInitial = true; // For initial load indicator
   String? _currentUserId;
   StreamSubscription? _requestsSubscription;
 
   // Keep track of loading state for individual buttons
-  final Map<String, bool> _isProcessingRequest = {}; 
+  final Map<String, bool> _isProcessingRequest = {};
+  late final ScreenHelpController<FollowRequestsHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<FollowRequestsHelpTargetId>(
+      vsync: this,
+      content: followRequestsHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: FollowRequestsHelpTargetId.helpButton,
+    );
     // Mark follow requests as seen when screen opens - will be called in didChangeDependencies
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _notificationService?.markFollowRequestsAsSeen();
@@ -41,12 +54,13 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final authService = Provider.of<AuthService>(context, listen: false);
-    final notificationService = Provider.of<NotificationStateService>(context, listen: false);
-    
+    final notificationService =
+        Provider.of<NotificationStateService>(context, listen: false);
+
     if (_authService != authService) {
       _authService = authService;
       _currentUserId = _authService?.currentUser?.uid;
-      
+
       if (_currentUserId != null) {
         _subscribeToFollowRequests(); // Re-subscribe with new auth service
       } else {
@@ -61,7 +75,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
         }
       }
     }
-    
+
     // Store reference to notification service
     if (_notificationService != notificationService) {
       _notificationService = notificationService;
@@ -71,23 +85,28 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   void _subscribeToFollowRequests() {
     _requestsSubscription?.cancel(); // Cancel previous subscription if any
     if (_currentUserId == null) {
-      if (mounted) setState(() {_followRequests = []; _isLoadingInitial = false;});
+      if (mounted)
+        setState(() {
+          _followRequests = [];
+          _isLoadingInitial = false;
+        });
       return;
     }
     if (mounted) setState(() => _isLoadingInitial = true);
 
-    _requestsSubscription = _userService.getFollowRequestsStream(_currentUserId!).listen(
+    _requestsSubscription =
+        _userService.getFollowRequestsStream(_currentUserId!).listen(
       (requests) {
         if (mounted) {
           setState(() {
             _followRequests = requests;
-            _isLoadingInitial = false; 
+            _isLoadingInitial = false;
           });
         }
       },
       onError: (error) {
         if (mounted) setState(() => _isLoadingInitial = false);
-        
+
         // Silently ignore permission errors after logout
         if (error.toString().contains('PERMISSION_DENIED')) {
           print("Follow requests stream: User no longer authenticated");
@@ -95,7 +114,9 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
           print("Error listening to follow requests: $error");
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Could not load follow requests: ${error.toString()}')),
+              SnackBar(
+                  content: Text(
+                      'Could not load follow requests: ${error.toString()}')),
             );
           }
         }
@@ -118,14 +139,15 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
         SnackBar(content: Text('Action failed: ${e.toString()}')),
       );
     } finally {
-      if(mounted){
-          setState(() => _isProcessingRequest[requesterId] = false);
+      if (mounted) {
+        setState(() => _isProcessingRequest[requesterId] = false);
       }
     }
   }
 
   @override
   void dispose() {
+    _help.dispose();
     _requestsSubscription?.cancel();
     // Mark follow requests as seen when screen closes - use stored reference
     _notificationService?.markFollowRequestsAsSeen();
@@ -134,67 +156,115 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Follow Requests'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            // Navigate back to MyPeopleScreen instead of just popping
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
-            );
-          },
-        ),
-      ),
-      body: _isLoadingInitial
-          ? const Center(child: CircularProgressIndicator())
-          : _followRequests.isEmpty
-              ? const Center(
-                  child: Text('No pending follow requests.', style: TextStyle(fontSize: 16)),
-                )
-              : ListView.builder(
-                  itemCount: _followRequests.length,
-                  itemBuilder: (context, index) {
-                    final userProfile = _followRequests[index];
-                    bool isProcessing = _isProcessingRequest[userProfile.id] ?? false;
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: const Text('Follow Requests'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                // Navigate back to MyPeopleScreen instead of just popping
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                      builder: (context) => const MyPeopleScreen()),
+                );
+              },
+            ),
+            actions: [_help.buildIconButton(inactiveColor: Colors.black87)],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          body: Builder(
+            builder: (listCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(
+                        FollowRequestsHelpTargetId.requestsList,
+                        listCtx,
+                      )
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: _isLoadingInitial
+                    ? const Center(child: CircularProgressIndicator())
+                    : _followRequests.isEmpty
+                        ? const Center(
+                            child: Text('No pending follow requests.',
+                                style: TextStyle(fontSize: 16)),
+                          )
+                        : ListView.builder(
+                            itemCount: _followRequests.length,
+                            itemBuilder: (context, index) {
+                              final userProfile = _followRequests[index];
+                              bool isProcessing =
+                                  _isProcessingRequest[userProfile.id] ?? false;
 
-                    return Consumer<NotificationStateService>(
-                      builder: (context, notificationService, child) {
-                        bool isUnseen = notificationService.unseenFollowRequestIds.contains(userProfile.id);
-                        
-                        final displayName = userProfile.displayName ?? userProfile.username ?? 'Unknown User';
-                        return ListTile(
-                          leading: ProfilePictureNotificationDot(
-                            profilePicture: CachedProfileAvatar(
-                              photoUrl: userProfile.photoURL,
-                              fallbackText: displayName.isNotEmpty ? displayName[0].toUpperCase() : null,
-                            ),
-                            showDot: isUnseen,
+                              return Consumer<NotificationStateService>(
+                                builder: (context, notificationService, child) {
+                                  bool isUnseen = notificationService
+                                      .unseenFollowRequestIds
+                                      .contains(userProfile.id);
+
+                                  final displayName = userProfile.displayName ??
+                                      userProfile.username ??
+                                      'Unknown User';
+                                  return ListTile(
+                                    leading: ProfilePictureNotificationDot(
+                                      profilePicture: CachedProfileAvatar(
+                                        photoUrl: userProfile.photoURL,
+                                        fallbackText: displayName.isNotEmpty
+                                            ? displayName[0].toUpperCase()
+                                            : null,
+                                      ),
+                                      showDot: isUnseen,
+                                    ),
+                                    title: Text(displayName),
+                                    subtitle: Text(
+                                        '@${userProfile.username ?? 'unknown'}'),
+                                    trailing: isProcessing
+                                        ? const SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2.0))
+                                        : Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              TextButton(
+                                                onPressed: () => _handleRequest(
+                                                    userProfile.id, true),
+                                                child: const Text('Approve',
+                                                    style: TextStyle(
+                                                        color: Colors.blue)),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              TextButton(
+                                                onPressed: () => _handleRequest(
+                                                    userProfile.id, false),
+                                                child: const Text('Deny',
+                                                    style: TextStyle(
+                                                        color: Colors.red)),
+                                              ),
+                                            ],
+                                          ),
+                                  );
+                                },
+                              );
+                            },
                           ),
-                          title: Text(displayName),
-                          subtitle: Text('@${userProfile.username ?? 'unknown'}'),
-                          trailing: isProcessing 
-                            ? const SizedBox(width: 24, height: 24, child:CircularProgressIndicator(strokeWidth: 2.0))
-                            : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                TextButton(
-                                  onPressed: () => _handleRequest(userProfile.id, true),
-                                  child: const Text('Approve', style: TextStyle(color: Colors.blue)),
-                                ),
-                                const SizedBox(width: 8),
-                                TextButton(
-                                  onPressed: () => _handleRequest(userProfile.id, false),
-                                  child: const Text('Deny', style: TextStyle(color: Colors.red)),
-                                ),
-                              ],
-                            ),
-                        );
-                      },
-                    );
-                  },
-                ),
+              ),
+            ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
-} 
+}

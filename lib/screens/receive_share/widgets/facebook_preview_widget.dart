@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../services/facebook_oembed_service.dart';
 import '../../../config/api_secrets.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 // Conditional imports for web support
 import 'facebook_web_logic.dart' if (dart.library.io) 'facebook_web_logic_stub.dart' as web_logic;
@@ -21,6 +22,8 @@ class FacebookPreviewWidget extends StatefulWidget {
   final Function(String)? onPageFinished;
   final Future<void> Function(String) launchUrlCallback;
   final bool showControls;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const FacebookPreviewWidget({
     super.key,
@@ -30,6 +33,8 @@ class FacebookPreviewWidget extends StatefulWidget {
     this.onPageFinished,
     required this.launchUrlCallback,
     this.showControls = true,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -60,6 +65,11 @@ class FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
   void dispose() {
     _isDisposed = true;
     super.dispose();
+  }
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
   }
 
   /// Initialize the embed using Meta oEmbed API
@@ -809,25 +819,32 @@ class FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              IconButton(
+              Builder(builder: (ctx) => IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh',
-                onPressed: refresh,
-              ),
-              IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewRefreshButton, ctx)) return;
+                  refresh();
+                },
+              )),
+              Builder(builder: (ctx) => IconButton(
                 icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
                 tooltip: 'Open in Facebook',
-                onPressed: _launchFacebookUrl,
-              ),
-              IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+                  _launchFacebookUrl();
+                },
+              )),
+              Builder(builder: (ctx) => IconButton(
                 icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
                 tooltip: _isExpanded ? 'Collapse' : 'Expand',
                 onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewExpandButton, ctx)) return;
                   setState(() {
                     _isExpanded = !_isExpanded;
                   });
                 },
-              ),
+              )),
             ],
           ),
         ]

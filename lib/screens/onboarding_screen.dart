@@ -27,8 +27,13 @@ class OnboardingScreen extends StatefulWidget {
   static bool onboardingShareDetected = false;
 
   final VoidCallback? onFinishedFlow;
+  final bool tutorialReplayMode;
 
-  const OnboardingScreen({super.key, this.onFinishedFlow});
+  const OnboardingScreen({
+    super.key,
+    this.onFinishedFlow,
+    this.tutorialReplayMode = false,
+  });
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -43,7 +48,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   static const String _eggHatchVideoAsset =
       'assets/onboarding/egg_hatch_intro.mp4';
 
-  final PageController _pageController = PageController();
+  late final PageController _pageController;
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
   final FocusNode _displayNameFocus = FocusNode();
@@ -254,6 +259,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pageController = PageController(
+      initialPage: widget.tutorialReplayMode ? 1 : 0,
+    );
+    if (widget.tutorialReplayMode) {
+      _currentPage = 1;
+    }
     _displayNameController.addListener(_handleProfileFieldChange);
     _usernameController.addListener(_handleProfileFieldChange);
     _prefillExistingValues();
@@ -397,9 +408,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     // Listen to edit mode scroll to hide down arrow when scrolled to Plendy
     _editModeScrollController.addListener(_onEditModeScroll);
 
-    // Start egg hatch video on initial load (since it's now page 0)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (devModeOnboardingTest && devModeStartAtMainScreenTutorial) {
+      if (widget.tutorialReplayMode) {
+        _startTutorialReplayMode();
+      } else if (devModeOnboardingTest && devModeStartAtMainScreenTutorial) {
         _startMainScreenTutorialDevMode();
       } else if (mounted && _isOnEggHatchVideoStep) {
         _startEggHatchVideo();
@@ -423,6 +435,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _showSaveTutorialStep = false;
       _showMainScreenTutorialStep = true;
     });
+  }
+
+  void _startTutorialReplayMode() {
+    if (!mounted) return;
+    setState(() {
+      _showPostSaveDialogues = true;
+      _postSaveDialogueIndex = 2;
+      _postSaveTypewriterComplete = false;
+      _showBasketCollectionImage = true;
+    });
+    _basketCollectionImageSlideController.animateTo(0.5);
   }
 
   void _onAppsRowScroll() {
@@ -834,11 +857,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     setState(() {
       _showMainScreenTutorialStep = false;
     });
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => const MainScreen(),
-      ),
-    );
+    if (widget.tutorialReplayMode) {
+      Navigator.of(context).pop();
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const MainScreen(),
+        ),
+      );
+    }
   }
 
   void _startEggHatchVideo() {
@@ -937,7 +964,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
 
     return PopScope(
-      canPop: false,
+      canPop: widget.tutorialReplayMode,
       child: Scaffold(
         backgroundColor: AppColors.backgroundColor,
         body: Stack(
@@ -1280,6 +1307,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           // Before name fields OR post-save dialogues: bird positioned at bottom-center
           : Stack(
               children: [
+                if (widget.tutorialReplayMode)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: SafeArea(
+                      child: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                        tooltip: 'Close',
+                      ),
+                    ),
+                  ),
                 // Basket collection image at top half of screen (behind speech bubble)
                 if (_showBasketCollectionImage)
                   Positioned(
@@ -1544,6 +1583,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             _showMainScreenTutorialStep = true;
           });
         },
+        onClose: widget.tutorialReplayMode ? () => Navigator.of(context).pop() : null,
       );
     }
     if (_showMainScreenTutorialStep) {
@@ -1551,6 +1591,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         onComplete: () {
           _finishMainScreenTutorial();
         },
+        onClose: widget.tutorialReplayMode ? () => Navigator.of(context).pop() : null,
       );
     }
     if (_showRealSharingStep) {
@@ -1561,20 +1602,31 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-          child: Center(
-            child: Text(
-              'How to share from Instagram',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ) ??
-                  const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  'How to share from Instagram',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ) ??
+                      const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                ),
+              ),
+              if (widget.tutorialReplayMode)
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Close',
+                ),
+            ],
           ),
         ),
         Expanded(

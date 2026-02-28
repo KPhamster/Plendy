@@ -1,0 +1,4 @@
+enum TutorialsHelpTargetId {
+  helpButton,
+  tutorialsList,
+}

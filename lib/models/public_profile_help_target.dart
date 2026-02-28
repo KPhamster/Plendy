@@ -1,0 +1,16 @@
+enum PublicProfileHelpTargetId {
+  helpButton,
+  profileHeader,
+  followingFollowersCount,
+  bioText,
+  shareButton,
+  collectionsTabSwitch,
+  reviewsTabSwitch,
+  currentView,
+  followButton,
+  mapButton,
+  categoryToggleButton,
+  collectionCategoryItem,
+  collectionExperienceItem,
+  collectionReviewItem,
+}

@@ -14,6 +14,9 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import '../services/google_maps_service.dart';
+import '../config/discovery_share_preview_help_content.dart';
+import '../models/discovery_share_preview_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 /// Standalone read-only screen for unauthenticated web visitors opening a shared discovery link.
 class DiscoverySharePreviewScreen extends StatefulWidget {
@@ -27,9 +30,8 @@ class DiscoverySharePreviewScreen extends StatefulWidget {
 }
 
 class _DiscoverySharePreviewScreenState
-    extends State<DiscoverySharePreviewScreen> {
-  final DiscoveryShareService _discoveryShareService =
-      DiscoveryShareService();
+    extends State<DiscoverySharePreviewScreen> with TickerProviderStateMixin {
+  final DiscoveryShareService _discoveryShareService = DiscoveryShareService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
 
@@ -37,11 +39,25 @@ class _DiscoverySharePreviewScreenState
   bool _isError = false;
   String? _errorMessage;
   DiscoverySharePayload? _payload;
+  late final ScreenHelpController<DiscoverySharePreviewHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<DiscoverySharePreviewHelpTargetId>(
+      vsync: this,
+      content: discoverySharePreviewHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: DiscoverySharePreviewHelpTargetId.helpButton,
+    );
     _loadSharedExperience();
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSharedExperience() async {
@@ -73,9 +89,42 @@ class _DiscoverySharePreviewScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _buildBody(),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.black,
+          body: GestureDetector(
+            behavior: _help.isActive
+                ? HitTestBehavior.opaque
+                : HitTestBehavior.deferToChild,
+            onTap: _help.isActive
+                ? () => _help.tryTap(
+                      DiscoverySharePreviewHelpTargetId.previewView,
+                      context,
+                    )
+                : null,
+            child: IgnorePointer(
+              ignoring: _help.isActive,
+              child: _buildBody(),
+            ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+        if (_help.isActive)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            left: 8,
+            right: 56,
+            child: _help.buildExitBanner(),
+          ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 8,
+          right: 8,
+          child: _help.buildIconButton(
+            inactiveColor: Colors.white,
+          ),
+        ),
+      ],
     );
   }
 
