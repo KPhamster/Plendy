@@ -1,0 +1,4 @@
+enum CategorySharePreviewHelpTargetId {
+  helpButton,
+  previewView,
+}

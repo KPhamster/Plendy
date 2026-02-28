@@ -47,10 +47,12 @@ enum _MainTutorialTab { collection, map }
 
 class MainScreenTutorialWidget extends StatefulWidget {
   final VoidCallback onComplete;
+  final VoidCallback? onClose;
 
   const MainScreenTutorialWidget({
     super.key,
     required this.onComplete,
+    this.onClose,
   });
 
   @override
@@ -322,11 +324,14 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-          child: Center(
-            child: Text(
-              'Using Collections and Map',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  'Using Collections and Map',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                         color: Colors.black87,
                       ) ??
@@ -335,7 +340,15 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
                     fontWeight: FontWeight.bold,
                     color: Colors.black87,
                   ),
-            ),
+                ),
+              ),
+              if (widget.onClose != null)
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: widget.onClose,
+                  tooltip: 'Close',
+                ),
+            ],
           ),
         ),
         Expanded(

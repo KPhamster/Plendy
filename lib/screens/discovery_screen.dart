@@ -37,8 +37,13 @@ import '../widgets/web_media_preview_card.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
 import '../services/discovery_cover_service.dart';
+import '../services/help_mode_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/colors.dart';
+import '../config/discovery_help_content.dart';
+import '../models/discovery_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -48,7 +53,7 @@ class DiscoveryScreen extends StatefulWidget {
   });
 
   final String? initialShareToken;
-  
+
   /// Callback triggered when an experience is successfully saved from Discovery.
   /// Use this to refresh Collections or other screens.
   final VoidCallback? onExperienceSaved;
@@ -58,7 +63,7 @@ class DiscoveryScreen extends StatefulWidget {
 }
 
 class DiscoveryScreenState extends State<DiscoveryScreen>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
   static const UserCategory _publicReadOnlyCategory = UserCategory(
     id: 'public_readonly_category',
     name: 'Discovery',
@@ -74,6 +79,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final ReportService _reportService = ReportService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
+  final Set<String> _instagramWebViewOverrides = <String>{};
   final PageController _pageController = PageController();
   final Random _random = Random();
   static const String _seenMediaPrefsKey = 'discovery_seen_media_keys_v1';
@@ -108,6 +114,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   double _dragDistance = 0;
   static const double _dragThreshold = 40;
   String? _lastDisplayedShareToken;
+  late final ScreenHelpController<DiscoveryHelpTargetId> _help;
+  final GlobalKey _coverFeedHelpAnchorKey = GlobalKey();
+  final GlobalKey _startDiscoveringButtonKey = GlobalKey();
+  final GlobalKey _feedCenterHelpAnchorKey = GlobalKey();
+  final GlobalKey _sourceActionHelpKey = GlobalKey();
+  final GlobalKey _shareActionHelpKey = GlobalKey();
+  final GlobalKey _locationActionHelpKey = GlobalKey();
+  final GlobalKey _saveActionHelpKey = GlobalKey();
+  final GlobalKey _moreActionHelpKey = GlobalKey();
   // Firebase Storage folder containing the curated cover background images.
   static const String _coverBackgroundFolder = 'cover_photos';
   static const Duration _coverFadeDuration = Duration(milliseconds: 600);
@@ -133,48 +148,40 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       author: 'Augustine of Hippo',
     ),
     _CoverQuote(
-      text:
-          'Not all those who wander are lost.',
+      text: 'Not all those who wander are lost.',
       author: 'J.R.R. Tolkien',
     ),
     _CoverQuote(
-      text:
-          'Life is either a daring adventure or nothing at all.',
+      text: 'Life is either a daring adventure or nothing at all.',
       author: 'Helen Keller',
     ),
-     _CoverQuote(
-      text:
-          'Adventure is worthwhile in itself.',
+    _CoverQuote(
+      text: 'Adventure is worthwhile in itself.',
       author: 'Amelia Earhart',
     ),
-     _CoverQuote(
-      text:
-          'The journey of a thousand miles begins with a single step.',
+    _CoverQuote(
+      text: 'The journey of a thousand miles begins with a single step.',
       author: 'Lao Tzu',
     ),
-     _CoverQuote(
-      text:
-          'To travel is to live.',
+    _CoverQuote(
+      text: 'To travel is to live.',
       author: 'Hans Christian Andersen',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Only those who will risk going too far can possibly find out how far one can go.',
       author: 'T.S. Eliot',
     ),
-     _CoverQuote(
-      text:
-          'If you think adventure is dangerous, try routine; it is lethal.',
+    _CoverQuote(
+      text: 'If you think adventure is dangerous, try routine; it is lethal.',
       author: 'Paulo Coelho',
     ),
     _CoverQuote(
-      text:
-          'Wanderer, there is no path; the path is made by walking.',
+      text: 'Wanderer, there is no path; the path is made by walking.',
       author: 'Antonio Machado',
     ),
     _CoverQuote(
-      text:
-          'Wherever you go, go with all your heart.',
+      text: 'Wherever you go, go with all your heart.',
       author: 'Confucius',
     ),
     _CoverQuote(
@@ -198,382 +205,380 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       author: 'Gustave Flaubert',
     ),
     _CoverQuote(
-      text:
-          'The mountains are calling and I must go.',
+      text: 'The mountains are calling and I must go.',
       author: 'John Muir',
     ),
-     _CoverQuote(
-      text:
-          'In every walk with nature one receives far more than he seeks.',
+    _CoverQuote(
+      text: 'In every walk with nature one receives far more than he seeks.',
       author: 'John Muir',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Go confidently in the direction of your dreams. Live the life you have imagined.',
       author: 'Henry David Thoreau',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Traveling — it leaves you speechless, then turns you into a storyteller.',
       author: 'Ibn Battuta',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'The biggest adventure you can take is to live the life of your dreams.',
       author: 'Oprah Winfrey',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Because in the end, you won’t remember the time you spent working in an office… Climb that mountain.',
       author: 'Jack Kerouac',
     ),
-     _CoverQuote(
-      text:
-          'Live in the sunshine, swim the sea, drink the wild air.',
+    _CoverQuote(
+      text: 'Live in the sunshine, swim the sea, drink the wild air.',
       author: 'Ralph Waldo Emerson',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'The clearest way into the Universe is through a forest wilderness.',
       author: 'John Muir',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'To travel is to discover that everyone is wrong about other countries.',
       author: 'Aldous Huxley',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'We live in a wonderful world that is full of beauty, charm and adventure.',
       author: 'Jawaharlal Nehru',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'A ship in harbor is safe, but that is not what ships are built for.',
       author: 'John A. Shedd',
     ),
-     _CoverQuote(
-      text:
-          'The use of traveling is to regulate imagination by reality.',
+    _CoverQuote(
+      text: 'The use of traveling is to regulate imagination by reality.',
       author: 'Samuel Johnson',
     ),
-     _CoverQuote(
-      text:
-          'Travel far enough, you meet yourself.',
+    _CoverQuote(
+      text: 'Travel far enough, you meet yourself.',
       author: 'David Mitchell',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'The very basic core of a man’s living spirit is his passion for adventure.',
       author: 'Christopher McCandless',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Twenty years from now you will be more disappointed by the things you didn’t do than by the ones you did do… Explore. Dream. Discover.',
       author: 'H. Jackson Brown Jr.',
     ),
-     _CoverQuote(
-      text:
-          'Oh, the places you’ll go!',
+    _CoverQuote(
+      text: 'Oh, the places you’ll go!',
       author: 'Dr. Seuss',
     ),
-     _CoverQuote(
-      text:
-          'Exploration is really the essence of the human spirit.',
+    _CoverQuote(
+      text: 'Exploration is really the essence of the human spirit.',
       author: 'Frank Borman',
     ),
-     _CoverQuote(
-      text:
-          'Somewhere, something incredible is waiting to be known.',
+    _CoverQuote(
+      text: 'Somewhere, something incredible is waiting to be known.',
       author: 'Carl Sagan',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'To awaken quite alone in a strange town is one of the pleasantest sensations in the world.',
       author: 'Freya Stark',
     ),
-     _CoverQuote(
-      text:
-          'The life you have led doesn’t need to be the only life you have.',
+    _CoverQuote(
+      text: 'The life you have led doesn’t need to be the only life you have.',
       author: 'Anna Quindlen',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'If you’re offered a seat on a rocket ship, don’t ask what seat! Just get on.',
       author: 'Sheryl Sandberg',
     ),
-     _CoverQuote(
-      text:
-          'You miss 100% of the shots you don’t take.',
+    _CoverQuote(
+      text: 'You miss 100% of the shots you don’t take.',
       author: 'Wayne Gretzky',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'I am always doing that which I cannot do, in order that I may learn how to do it.',
       author: 'Pablo Picasso',
     ),
-     _CoverQuote(
-      text:
-          'What we fear doing most is usually what we most need to do.',
+    _CoverQuote(
+      text: 'What we fear doing most is usually what we most need to do.',
       author: 'Tim Ferriss',
     ),
-     _CoverQuote(
-      text:
-          'Be brave enough to be bad at something new.',
+    _CoverQuote(
+      text: 'Be brave enough to be bad at something new.',
       author: 'Jon Acuff',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'We keep moving forward, opening new doors, and doing new things, because we’re curious.',
       author: 'Walt Disney',
     ),
-     _CoverQuote(
-      text:
-          'Fortune favors the bold.',
+    _CoverQuote(
+      text: 'Fortune favors the bold.',
       author: 'Virgil',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'He who is not courageous enough to take risks will accomplish nothing in life.',
       author: 'Muhammad Ali',
     ),
-     _CoverQuote(
-      text:
-          'If it scares you, it might be a good thing to try.',
+    _CoverQuote(
+      text: 'If it scares you, it might be a good thing to try.',
       author: 'Seth Godin',
     ),
-     _CoverQuote(
-      text:
-          'Start where you are. Use what you have. Do what you can.',
+    _CoverQuote(
+      text: 'Start where you are. Use what you have. Do what you can.',
       author: 'Arthur Ashe',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'The best time to plant a tree was 20 years ago. The second best time is now.',
       author: 'Chinese Proverb',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Only those who will risk going too far can possibly find out how far one can go.',
       author: 'T.S. Eliot',
-    ),      
-     _CoverQuote(
-      text:
-          'Opportunities multiply as they are seized.',
+    ),
+    _CoverQuote(
+      text: 'Opportunities multiply as they are seized.',
       author: 'Sun Tzu',
     ),
-     _CoverQuote(
-      text:
-          'The only impossible journey is the one you never begin.',
+    _CoverQuote(
+      text: 'The only impossible journey is the one you never begin.',
       author: 'Tony Robbins',
     ),
-     _CoverQuote(
-      text:
-          'The impulse to travel is one of the hopeful symptoms of life.',
+    _CoverQuote(
+      text: 'The impulse to travel is one of the hopeful symptoms of life.',
       author: 'Agnes Repplier',
     ),
-     _CoverQuote(
-      text:
-          'Once you have traveled, the voyage never ends.',
+    _CoverQuote(
+      text: 'Once you have traveled, the voyage never ends.',
       author: 'Pat Conroy',
     ),
-     _CoverQuote(
-      text:
-          'Travel and change of place impart new vigor to the mind.',
+    _CoverQuote(
+      text: 'Travel and change of place impart new vigor to the mind.',
       author: 'Seneca',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'A mind that is stretched by a new experience can never go back to its old dimensions.',
       author: 'Oliver Wendell Holmes Sr.',
     ),
-     _CoverQuote(
-      text:
-          'People don’t take trips; trips take people.',
+    _CoverQuote(
+      text: 'People don’t take trips; trips take people.',
       author: 'John Steinbeck',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'It is good to have an end to journey toward; but it is the journey that matters, in the end.',
       author: 'Ursula K. Le Guin',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'The more I traveled, the more I realized fear makes strangers of people who should be friends.',
       author: 'Shirley MacLaine',
     ),
-     _CoverQuote(
-      text:
-          'Wherever you go becomes a part of you somehow.',
+    _CoverQuote(
+      text: 'Wherever you go becomes a part of you somehow.',
       author: 'Anita Desai',
     ),
-     _CoverQuote(
+    _CoverQuote(
       text:
           'Exploration is wired into our brains. If we can see the horizon, we want to know what’s beyond.',
       author: 'Buzz Aldrin',
     ),
-     _CoverQuote(
-      text:'Adventure is allowing the unexpected to happen to you.',
+    _CoverQuote(
+      text: 'Adventure is allowing the unexpected to happen to you.',
       author: 'Richard Aldington',
     ),
-     _CoverQuote(
-      text:'We are all travelers in the wilderness of this world.',
+    _CoverQuote(
+      text: 'We are all travelers in the wilderness of this world.',
       author: 'Robert Louis Stevenson',
     ),
     _CoverQuote(
-      text:'The journey itself is my home.',
+      text: 'The journey itself is my home.',
       author: 'Matsuo Bashō',
     ),
     _CoverQuote(
-      text:'Surely, of all the wonders of the world, the horizon is the greatest.',
+      text:
+          'Surely, of all the wonders of the world, the horizon is the greatest.',
       author: 'Freya Stark',
     ),
     _CoverQuote(
-      text:'If happiness is the goal—and it should be—then adventures should be top priority.',
+      text:
+          'If happiness is the goal—and it should be—then adventures should be top priority.',
       author: 'Richard Branson',
     ),
     _CoverQuote(
-      text:'There’s a whole world out there, right outside your window. You’d be a fool to miss it.',
+      text:
+          'There’s a whole world out there, right outside your window. You’d be a fool to miss it.',
       author: 'Charlotte Eriksson',
     ),
     _CoverQuote(
-      text:'Once the travel bug bites, there is no known antidote.',
+      text: 'Once the travel bug bites, there is no known antidote.',
       author: 'Michael Palin',
     ),
     _CoverQuote(
-      text:'Travel makes a wise man better, and a fool worse.',
+      text: 'Travel makes a wise man better, and a fool worse.',
       author: 'Thomas Fuller',
     ),
     _CoverQuote(
-      text:'Exploration is curiosity put into action.',
+      text: 'Exploration is curiosity put into action.',
       author: 'Don Walsh',
     ),
     _CoverQuote(
-      text:'I took a walk in the woods and came out taller than the trees',
+      text: 'I took a walk in the woods and came out taller than the trees',
       author: 'Henry David Thoreau',
     ),
     _CoverQuote(
-      text:'Travel brings power and love back into your life.',
+      text: 'Travel brings power and love back into your life.',
       author: 'Rumi',
     ),
     _CoverQuote(
-      text:'One’s destination is never a place, but a new way of seeing things.',
+      text:
+          'One’s destination is never a place, but a new way of seeing things.',
       author: 'Henry Miller',
     ),
     _CoverQuote(
-      text:'We travel, initially, to lose ourselves; and we travel, next, to find ourselves.',
+      text:
+          'We travel, initially, to lose ourselves; and we travel, next, to find ourselves.',
       author: 'Pico Iyer',
     ),
     _CoverQuote(
-      text:'To my mind, the greatest reward and luxury of travel is to be able to experience everyday things as if for the first time.',
+      text:
+          'To my mind, the greatest reward and luxury of travel is to be able to experience everyday things as if for the first time.',
       author: 'Bill Bryson',
     ),
     _CoverQuote(
-      text:'The world is big and I want to have a good look at it before it gets dark.',
+      text:
+          'The world is big and I want to have a good look at it before it gets dark.',
       author: 'John Muir',
     ),
     _CoverQuote(
-      text:'We wander for distraction, but we travel for fulfillment.',
+      text: 'We wander for distraction, but we travel for fulfillment.',
       author: 'Hilaire Belloc',
     ),
     _CoverQuote(
-      text:'The greatest adventure is what lies ahead.',
+      text: 'The greatest adventure is what lies ahead.',
       author: 'J.R.R. Tolkien',
     ),
     _CoverQuote(
-      text:'Exploration is the engine that drives innovation.',
+      text: 'Exploration is the engine that drives innovation.',
       author: 'Edith Widder',
     ),
     _CoverQuote(
-      text:'Between every two pine trees there is a door leading to a new way of life.',
+      text:
+          'Between every two pine trees there is a door leading to a new way of life.',
       author: 'John Muir',
     ),
     _CoverQuote(
-      text:'The best education I have ever received was through travel.',
+      text: 'The best education I have ever received was through travel.',
       author: 'Lisa Ling',
     ),
     _CoverQuote(
-      text:'The purpose of life is to live it, to taste experience to the utmost.',
+      text:
+          'The purpose of life is to live it, to taste experience to the utmost.',
       author: 'Eleanor Roosevelt',
     ),
     _CoverQuote(
-      text:'Experience is the teacher of all things.',
+      text: 'Experience is the teacher of all things.',
       author: 'Julius Caesar',
     ),
     _CoverQuote(
-      text:'Experience is not what happens to you; it’s what you do with what happens to you.',
+      text:
+          'Experience is not what happens to you; it’s what you do with what happens to you.',
       author: 'Aldous Huxley',
     ),
     _CoverQuote(
-      text:'Without new experiences, something inside us sleeps. The sleeper must awaken.',
+      text:
+          'Without new experiences, something inside us sleeps. The sleeper must awaken.',
       author: 'Frank Herbert',
     ),
     _CoverQuote(
-      text:'The most difficult thing is the decision to act; the rest is merely tenacity.',
+      text:
+          'The most difficult thing is the decision to act; the rest is merely tenacity.',
       author: 'Amelia Earhart',
     ),
     _CoverQuote(
-      text:'Try new things and don’t be afraid to fail; it’s how you grow.',
+      text: 'Try new things and don’t be afraid to fail; it’s how you grow.',
       author: 'Indra Nooyi',
     ),
     _CoverQuote(
-      text:'Live as if you were to die tomorrow. Learn as if you were to live forever.',
+      text:
+          'Live as if you were to die tomorrow. Learn as if you were to live forever.',
       author: 'Mahatma Gandhi',
     ),
     _CoverQuote(
-      text:'Stuff your eyes with wonder.',
+      text: 'Stuff your eyes with wonder.',
       author: 'Ray Bradbury',
     ),
     _CoverQuote(
-      text:'Jobs fill your pockets, adventures fill your soul.',
+      text: 'Jobs fill your pockets, adventures fill your soul.',
       author: 'Jaime Lyn Beatty',
     ),
     _CoverQuote(
-      text:'Not I, nor anyone else can travel that road for you. You must travel it by yourself.',
+      text:
+          'Not I, nor anyone else can travel that road for you. You must travel it by yourself.',
       author: 'Walt Whitman',
     ),
     _CoverQuote(
-      text:'Travel changes you.',
+      text: 'Travel changes you.',
       author: 'Anthony Bourdain',
     ),
     _CoverQuote(
-      text:'Tell me, what is it you plan to do with your one wild and precious life?',
+      text:
+          'Tell me, what is it you plan to do with your one wild and precious life?',
       author: 'Mary Oliver',
     ),
     _CoverQuote(
-      text:'The discovery of a new dish does more for the happiness of mankind than the discovery of a star.',
+      text:
+          'The discovery of a new dish does more for the happiness of mankind than the discovery of a star.',
       author: 'Jean Anthelme Brillat-Savarin',
     ),
     _CoverQuote(
-      text:'One cannot think well, love well, sleep well, if one has not dined well.”',
+      text:
+          'One cannot think well, love well, sleep well, if one has not dined well.”',
       author: 'Virginia Woolf',
     ),
     _CoverQuote(
-      text:'Move, as far as you can—across the ocean or simply across town—and eat interesting food.',
+      text:
+          'Move, as far as you can—across the ocean or simply across town—and eat interesting food.',
       author: 'Anthony Bourdain',
     ),
     _CoverQuote(
-      text:'Pull up a chair. Take a taste. Come join us. Life is so endlessly delicious.',
+      text:
+          'Pull up a chair. Take a taste. Come join us. Life is so endlessly delicious.',
       author: 'Ruth Reichl',
     ),
     _CoverQuote(
-      text:'Variety’s the very spice of life.',
+      text: 'Variety’s the very spice of life.',
       author: 'William Cowper',
     ),
     _CoverQuote(
-      text:'If more of us valued food and cheer and song above hoarded gold, it would be a merrier world.',
+      text:
+          'If more of us valued food and cheer and song above hoarded gold, it would be a merrier world.',
       author: 'J.R.R. Tolkien',
     ),
     _CoverQuote(
-      text:'Everywhere is within walking distance if you have the time.',
+      text: 'Everywhere is within walking distance if you have the time.',
       author: 'Steven Wright',
     ),
     _CoverQuote(
-      text:'Every exit is an entrance somewhere else.',
+      text: 'Every exit is an entrance somewhere else.',
       author: 'Tom Stoppard',
     ),
     _CoverQuote(
-      text:'A city is a language, a reservoir of possibilities.',
+      text: 'A city is a language, a reservoir of possibilities.',
       author: 'Rebecca Solnit',
     ),
     // _CoverQuote(
@@ -595,6 +600,20 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<DiscoveryHelpTargetId>(
+      vsync: this,
+      content: discoveryHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: DiscoveryHelpTargetId.helpButton,
+      onModeChanged: HelpModeService.setActive,
+    );
+    HelpModeService.listenable.addListener(_onGlobalHelpModeChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onGlobalHelpModeChanged();
+      }
+    });
     _currentCoverQuote = _pickRandomCoverQuote();
     _prepareCoverBackgrounds();
     _initializeFeed();
@@ -625,7 +644,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _isCoverPageVisible = false;
         if (!value) {
           _currentCoverQuote = _pickRandomCoverQuote();
-          _isCoverImageLoaded = false; // Reset cover image loaded state when returning to cover
+          _isCoverImageLoaded =
+              false; // Reset cover image loaded state when returning to cover
           // Try to get a different preloaded cover image for variety
           _selectNewPreloadedCoverImage();
         }
@@ -650,8 +670,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   @override
   void dispose() {
+    HelpModeService.listenable.removeListener(_onGlobalHelpModeChanged);
+    _help.dispose();
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _onGlobalHelpModeChanged() {
+    final bool shouldBeActive = HelpModeService.isActive;
+    if (shouldBeActive == _help.isActive) {
+      return;
+    }
+    _help.toggleHelpMode(
+      withHaptic: false,
+      notify: false,
+      showInitialTarget: false,
+    );
   }
 
   @override
@@ -669,10 +703,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> refreshFeed() async {
     if (!mounted) return;
-    
+
     // Clear the public experiences cache to force fresh data
     _experienceService.clearPublicExperiencesCache();
-    
+
     setState(() {
       _publicExperiences.clear();
       _feedItems.clear();
@@ -1304,9 +1338,104 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _buildBody(),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.black,
+          body: Builder(
+            builder: (viewCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap:
+                  _help.isActive ? () => _handleHelpTapOnBody(viewCtx) : null,
+              child: _buildBody(),
+            ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Center(
+              child:
+                  SizedBox(key: _feedCenterHelpAnchorKey, width: 1, height: 1),
+            ),
+          ),
+        ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 8,
+          right: 8,
+          left: 8,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (_help.isActive)
+                Flexible(
+                  child: GestureDetector(
+                    onTap: _help.toggleHelpMode,
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.backgroundColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: AnimatedBuilder(
+                        animation: _help.spotlightController,
+                        builder: (context, child) {
+                          final opacity =
+                              0.6 + 0.4 * _help.spotlightController.value;
+                          return Opacity(opacity: opacity, child: child);
+                        },
+                        child: const Text(
+                          'Help mode is ON  •  Tap here to exit',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.teal,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              Container(
+                decoration: const BoxDecoration(
+                  color: Colors.black,
+                  shape: BoxShape.circle,
+                ),
+                child: _help.buildIconButton(
+                  activeColor: Colors.white,
+                  inactiveColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _handleHelpTapOnBody(BuildContext viewCtx) {
+    if (!_hasStartedDiscovering) {
+      final anchorCtx = _coverFeedHelpAnchorKey.currentContext;
+      _help.showTarget(
+        DiscoveryHelpTargetId.coverPage,
+        viewCtx,
+        bubbleCtx: anchorCtx,
+        withHaptic: true,
+      );
+      return;
+    }
+
+    _help.showTarget(
+      DiscoveryHelpTargetId.feedView,
+      viewCtx,
+      bubbleCtx: _feedCenterHelpAnchorKey.currentContext,
+      withHaptic: true,
     );
   }
 
@@ -1479,7 +1608,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   Future<void> _fetchCoverBackgrounds() async {
     try {
       final coverService = DiscoveryCoverService();
-      
+
       // First, try to get a preloaded cover URL from the service
       final preloadedUrl = coverService.getRandomPreloadedUrl();
       if (preloadedUrl != null) {
@@ -1492,9 +1621,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         }
         return;
       }
-      
+
       // Fallback: fetch from Firebase Storage if service doesn't have preloaded images
-      debugPrint('DiscoveryScreen: No preloaded images, fetching from Firebase Storage');
+      debugPrint(
+          'DiscoveryScreen: No preloaded images, fetching from Firebase Storage');
       final ListResult result =
           await FirebaseStorage.instance.ref(_coverBackgroundFolder).listAll();
       if (result.items.isEmpty) {
@@ -1505,7 +1635,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       }
       _coverBackgroundRefs = result.items;
       await _selectRandomCoverBackground();
-      
+
       // Pre-fetch additional cover backgrounds in the background for faster switching
       _prefetchAdditionalCoverBackgrounds();
     } catch (e, stackTrace) {
@@ -1514,26 +1644,29 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
   }
-  
+
   void _prefetchAdditionalCoverBackgrounds() {
     // Pre-fetch up to 2 additional random cover backgrounds in the background
     Future.microtask(() async {
       if (!mounted || _coverBackgroundRefs.length < 2) return;
-      
+
       final indicesToPrefetch = <int>{};
-      while (indicesToPrefetch.length < 2 && indicesToPrefetch.length < _coverBackgroundRefs.length) {
+      while (indicesToPrefetch.length < 2 &&
+          indicesToPrefetch.length < _coverBackgroundRefs.length) {
         indicesToPrefetch.add(_random.nextInt(_coverBackgroundRefs.length));
       }
-      
+
       for (final index in indicesToPrefetch) {
         if (!mounted) break;
         try {
           final url = await _coverBackgroundRefs[index].getDownloadURL();
           if (!mounted) break;
           await precacheImage(NetworkImage(url), context);
-          debugPrint('DiscoveryScreen: Pre-fetched cover background ${index + 1}/${_coverBackgroundRefs.length}');
+          debugPrint(
+              'DiscoveryScreen: Pre-fetched cover background ${index + 1}/${_coverBackgroundRefs.length}');
         } catch (e) {
-          debugPrint('DiscoveryScreen: Failed to pre-fetch cover background: $e');
+          debugPrint(
+              'DiscoveryScreen: Failed to pre-fetch cover background: $e');
         }
       }
     });
@@ -1591,8 +1724,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             fit: BoxFit.cover,
             color: Colors.black.withOpacity(0.45),
             colorBlendMode: BlendMode.darken,
-            fadeInDuration: const Duration(milliseconds: 150), // Fast fade for uncached images
-            fadeOutDuration: const Duration(milliseconds: 0), // Instant fade out
+            fadeInDuration: const Duration(
+                milliseconds: 150), // Fast fade for uncached images
+            fadeOutDuration:
+                const Duration(milliseconds: 0), // Instant fade out
             placeholder: (context, url) {
               // Show nothing while loading (background gradient will be visible)
               return const SizedBox.shrink();
@@ -1623,46 +1758,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       children: [
         background,
         if (coverImage != null) coverImage,
-        SafeArea(
-          child: Align(
-            alignment: Alignment.topRight,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 16, right: 16),
-              child: Tooltip(
-                message: 'View Map',
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(foregroundColor: Colors.white),
-                  icon: _isCoverImageLoaded
-                      ? Image.asset(
-                          'assets/icon/icon-cropped.png',
-                          width: 28,
-                          height: 28,
-                        )
-                      : const Icon(
-                          Icons.map_outlined,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                  label: Text(
-                    'Map',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const MapScreen(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ),
-        ),
         SafeArea(
           child: Center(
             child: Padding(
@@ -1719,8 +1814,26 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 25),
+                  SizedBox(
+                    key: _coverFeedHelpAnchorKey,
+                    width: 220,
+                    height: 40,
+                  ),
                   ElevatedButton(
+                    key: _startDiscoveringButtonKey,
                     onPressed: () {
+                      if (_help.isActive) {
+                        final buttonCtx =
+                            _startDiscoveringButtonKey.currentContext;
+                        if (buttonCtx != null) {
+                          _help.showTarget(
+                            DiscoveryHelpTargetId.startDiscoveringButton,
+                            buttonCtx,
+                            withHaptic: true,
+                          );
+                        }
+                        return;
+                      }
                       _setHasStartedDiscovering(true);
                     },
                     style: ElevatedButton.styleFrom(
@@ -1787,7 +1900,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
 
-
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -1839,7 +1951,18 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: withHeavyTap(() => _handleExperienceTap(experience)),
+      onTap: withHeavyTap(() {
+        if (_help.isActive) {
+          _help.showTarget(
+            DiscoveryHelpTargetId.feedView,
+            context,
+            bubbleCtx: _feedCenterHelpAnchorKey.currentContext,
+            withHaptic: true,
+          );
+          return;
+        }
+        _handleExperienceTap(experience);
+      }),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Column(
@@ -1865,19 +1988,33 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                     if (experiences == null || experiences.length <= 1) {
                       return const SizedBox.shrink();
                     }
-                    return TextButton(
-                      onPressed: () => _showLinkedExperiencesDialog(item),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        backgroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        minimumSize: const Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text(
-                        'and more',
-                        style: TextStyle(fontSize: 13),
+                    return Builder(
+                      builder: (andMoreCtx) => TextButton(
+                        onPressed: () {
+                          if (_help.isActive) {
+                            _help.showTarget(
+                              DiscoveryHelpTargetId.andMoreButton,
+                              andMoreCtx,
+                              bubbleCtx:
+                                  _feedCenterHelpAnchorKey.currentContext,
+                              withHaptic: true,
+                            );
+                            return;
+                          }
+                          _showLinkedExperiencesDialog(item);
+                        },
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.black,
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          minimumSize: const Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text(
+                          'and more',
+                          style: TextStyle(fontSize: 13),
+                        ),
                       ),
                     );
                   },
@@ -1903,10 +2040,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Widget _buildActionButtons(_DiscoveryFeedItem item) {
     final sourceButton = _buildSourceActionButton(item);
-    
+
     // Check if it's a TikTok preview
     final bool isTikTok = _classifyUrl(item.mediaUrl) == _MediaType.tiktok;
-    
+
     // For TikTok, use a shared container background for all buttons
     final Color? containerColor = isTikTok ? Colors.black : null;
     final Color? buttonBackgroundColor = isTikTok ? Colors.transparent : null;
@@ -1924,6 +2061,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           label: 'Share',
           backgroundColor: buttonBackgroundColor,
           onPressed: _isShareInProgress ? null : () => _handleShareTapped(item),
+          helpTarget: DiscoveryHelpTargetId.shareActionButton,
+          helpKey: _shareActionHelpKey,
         ),
         const SizedBox(height: 16),
         _buildActionButton(
@@ -1945,6 +2084,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               ),
             );
           },
+          helpTarget: DiscoveryHelpTargetId.locationActionButton,
+          helpKey: _locationActionHelpKey,
         ),
         const SizedBox(height: 16),
         ValueListenableBuilder<bool?>(
@@ -1957,6 +2098,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               backgroundColor: buttonBackgroundColor,
               onPressed:
                   resolvedSaved ? null : () => _handleBookmarkTapped(item),
+              helpTarget: DiscoveryHelpTargetId.saveActionButton,
+              helpKey: _saveActionHelpKey,
             );
           },
         ),
@@ -1966,10 +2109,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           label: 'More',
           backgroundColor: buttonBackgroundColor,
           onPressed: () => _showMoreOptions(item),
+          helpTarget: DiscoveryHelpTargetId.moreActionButton,
+          helpKey: _moreActionHelpKey,
         ),
       ],
     );
-    
+
     if (isTikTok) {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
@@ -1980,7 +2125,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         child: content,
       );
     }
-    
+
     return content;
   }
 
@@ -1990,6 +2135,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     required String label,
     Color? backgroundColor,
     VoidCallback? onPressed,
+    DiscoveryHelpTargetId? helpTarget,
+    GlobalKey? helpKey,
   }) {
     assert(icon != null || iconWidget != null,
         '_buildActionButton requires either an IconData or a Widget.');
@@ -1999,18 +2146,28 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          decoration: BoxDecoration(
-            color: backgroundColor ?? Colors.black45,
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: IconButton(
-            onPressed: wrappedOnPressed,
-            icon: iconContent,
-            iconSize: iconWidget == null ? 28 : 24,
-            splashRadius: 28,
-            color: Colors.white,
-            disabledColor: Colors.white70,
+        Builder(
+          builder: (buttonCtx) => Container(
+            key: helpKey,
+            decoration: BoxDecoration(
+              color: backgroundColor ?? Colors.black45,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: IconButton(
+              onPressed: _help.isActive && helpTarget != null
+                  ? () => _help.showTarget(
+                        helpTarget,
+                        buttonCtx,
+                        bubbleCtx: _feedCenterHelpAnchorKey.currentContext,
+                        withHaptic: true,
+                      )
+                  : wrappedOnPressed,
+              icon: iconContent,
+              iconSize: iconWidget == null ? 28 : 24,
+              splashRadius: 28,
+              color: Colors.white,
+              disabledColor: Colors.white70,
+            ),
           ),
         ),
         const SizedBox(height: 3),
@@ -2253,10 +2410,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       // Look up the SharedMediaItem to get the owner (user who saved this content)
       String? offenderId;
       try {
-        final sharedMediaItem = await _experienceService.findSharedMediaItemByPath(item.mediaUrl);
+        final sharedMediaItem =
+            await _experienceService.findSharedMediaItemByPath(item.mediaUrl);
         offenderId = sharedMediaItem?.ownerUserId;
       } catch (e) {
-        debugPrint('DiscoveryScreen: Failed to fetch SharedMediaItem for report: $e');
+        debugPrint(
+            'DiscoveryScreen: Failed to fetch SharedMediaItem for report: $e');
       }
 
       // Create the Report object
@@ -2265,7 +2424,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         userId: currentUser.uid,
         screenReported: 'discovery_screen',
         previewURL: item.mediaUrl,
-        experienceId: '', // Empty for discovery reports (public content, not a private experience)
+        experienceId:
+            '', // Empty for discovery reports (public content, not a private experience)
         reportType: selectedReason,
         details: explanationController.text.trim(),
         createdAt: DateTime.now(),
@@ -2483,6 +2643,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       label: config.label,
       backgroundColor: config.backgroundColor,
       onPressed: () => _launchUrl(item.mediaUrl),
+      helpTarget: DiscoveryHelpTargetId.sourceActionButton,
+      helpKey: _sourceActionHelpKey,
     );
   }
 
@@ -2532,7 +2694,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           createdBy: null, // Clear ownership
           editorUserIds: const [], // Clear editor list
           clearCategoryId: true, // Clear category (belongs to other user)
-          colorCategoryId: '', // Clear color category (empty string bypasses isNotEmpty check)
+          colorCategoryId:
+              '', // Clear color category (empty string bypasses isNotEmpty check)
           otherCategories: const [], // Clear other categories
           otherColorCategoryIds: const [], // Clear other color categories
         ));
@@ -2810,6 +2973,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 onWebViewCreated: (_) {},
                 onPageFinished: (_) {},
                 topPadding: 50,
+                overrideWebViewMode:
+                    _instagramWebViewOverrides.contains(url) ? true : null,
+                onRequestWebViewMode: () {
+                  if (_instagramWebViewOverrides.contains(url)) return;
+                  setState(() {
+                    _instagramWebViewOverrides.add(url);
+                  });
+                },
               );
 
         return SizedBox.expand(child: instagramWidget);
@@ -2917,7 +3088,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         return _buildFallbackPreview(
           icon: Icons.link_off,
           label: 'Preview unavailable',
-          description: 'This link cannot be previewed here. Tap the source button to open it externally.',
+          description:
+              'This link cannot be previewed here. Tap the source button to open it externally.',
         );
     }
   }
@@ -3022,7 +3194,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Future<DirectShareResult?> _shareDiscoveryItemWithFriends(_DiscoveryFeedItem item) async {
+  Future<DirectShareResult?> _shareDiscoveryItemWithFriends(
+      _DiscoveryFeedItem item) async {
     if (!mounted) return null;
 
     final Experience baseExperience =

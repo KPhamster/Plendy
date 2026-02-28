@@ -15,6 +15,9 @@ import '../services/category_share_service.dart';
 import '../providers/category_save_progress_notifier.dart';
 import 'auth_screen.dart';
 import 'main_screen.dart';
+import '../config/category_share_preview_help_content.dart';
+import '../models/category_share_preview_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class CategorySharePreviewScreen extends StatefulWidget {
   final String token;
@@ -26,14 +29,29 @@ class CategorySharePreviewScreen extends StatefulWidget {
       _CategorySharePreviewScreenState();
 }
 
-class _CategorySharePreviewScreenState
-    extends State<CategorySharePreviewScreen> {
+class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
+    with TickerProviderStateMixin {
+  late final ScreenHelpController<CategorySharePreviewHelpTargetId> _help;
+
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<CategorySharePreviewHelpTargetId>(
+      vsync: this,
+      content: categorySharePreviewHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: CategorySharePreviewHelpTargetId.helpButton,
+    );
     if (kIsWeb) {
       _tryOpenInAppOnIOS();
     }
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
   }
 
   void _tryOpenInAppOnIOS() {
@@ -71,54 +89,96 @@ class _CategorySharePreviewScreenState
         }
         _navigateToMain(context);
       },
-      child: Scaffold(
-        appBar: AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => _navigateToMain(context),
-          ),
-          title: const Text('Shared Category', style: TextStyle(fontSize: 16)),
-          actions: [
-            if (kIsWeb)
-              Padding(
-                padding: const EdgeInsets.only(right: 8.0),
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(foregroundColor: Colors.black),
-                  icon: const Icon(Icons.open_in_new, color: Colors.black),
-                  label: const Text('Open in Plendy',
-                      style: TextStyle(color: Colors.black)),
-                  onPressed: () => _handleOpenInApp(context),
+      child: Stack(
+        children: [
+          Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  if (_help.tryTap(
+                      CategorySharePreviewHelpTargetId.previewView, context)) {
+                    return;
+                  }
+                  _navigateToMain(context);
+                },
+              ),
+              title:
+                  const Text('Shared Category', style: TextStyle(fontSize: 16)),
+              actions: [
+                if (kIsWeb)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: TextButton.icon(
+                      style:
+                          TextButton.styleFrom(foregroundColor: Colors.black),
+                      icon: const Icon(Icons.open_in_new, color: Colors.black),
+                      label: const Text('Open in Plendy',
+                          style: TextStyle(color: Colors.black)),
+                      onPressed: () {
+                        if (_help.tryTap(
+                            CategorySharePreviewHelpTargetId.previewView,
+                            context)) {
+                          return;
+                        }
+                        _handleOpenInApp(context);
+                      },
+                    ),
+                  ),
+                _help.buildIconButton(inactiveColor: Colors.black87),
+              ],
+              bottom: _help.isActive
+                  ? PreferredSize(
+                      preferredSize: const Size.fromHeight(24),
+                      child: _help.buildExitBanner(),
+                    )
+                  : null,
+            ),
+            body: GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(
+                        CategorySharePreviewHelpTargetId.previewView,
+                        context,
+                      )
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: FutureBuilder<_CategoryPreviewPayload>(
+                  future: _fetchCategoryShare(widget.token),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Center(child: Text('Error: ${snapshot.error}'));
+                    }
+                    if (!snapshot.hasData) {
+                      return const Center(
+                          child: Text('This share isn\'t available.'));
+                    }
+                    final payload = snapshot.data!;
+                    if (payload.isMulti) {
+                      return _MultiCategoryPreviewList(payload: payload);
+                    }
+                    return _CategoryPreviewList(
+                      title: payload.categoryTitle,
+                      iconOrColor: payload.iconOrColor,
+                      experiences: payload.experiencesFuture,
+                      fromUserId: payload.fromUserId,
+                      accessMode: payload.accessMode,
+                      categoryId: payload.categoryId,
+                      isColorCategory: payload.isColorCategory,
+                    );
+                  },
                 ),
               ),
-          ],
-        ),
-        body: FutureBuilder<_CategoryPreviewPayload>(
-          future: _fetchCategoryShare(widget.token),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}'));
-            }
-            if (!snapshot.hasData) {
-              return const Center(child: Text('This share isn\'t available.'));
-            }
-            final payload = snapshot.data!;
-            if (payload.isMulti) {
-              return _MultiCategoryPreviewList(payload: payload);
-            }
-            return _CategoryPreviewList(
-              title: payload.categoryTitle,
-              iconOrColor: payload.iconOrColor,
-              experiences: payload.experiencesFuture,
-              fromUserId: payload.fromUserId,
-              accessMode: payload.accessMode,
-              categoryId: payload.categoryId,
-              isColorCategory: payload.isColorCategory,
-            );
-          },
-        ),
+            ),
+          ),
+          if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+        ],
       ),
     );
   }

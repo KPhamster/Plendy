@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:typed_data';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 class YouTubePreviewWidget extends StatefulWidget {
   final String url;
@@ -10,6 +11,8 @@ class YouTubePreviewWidget extends StatefulWidget {
   final bool showControls;
   final Function(InAppWebViewController)? onWebViewCreated;
   final double? height;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const YouTubePreviewWidget({
     super.key,
@@ -18,6 +21,8 @@ class YouTubePreviewWidget extends StatefulWidget {
     this.showControls = true,
     this.onWebViewCreated,
     this.height,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -29,6 +34,11 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
   bool _isLoading = true;
   bool _isDisposed = false;
   bool _isShort = false;
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
+  }
 
   @override
   void initState() {
@@ -224,24 +234,30 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const SizedBox(width: 48),
-                IconButton(
+                Builder(builder: (ctx) => IconButton(
                   icon: const FaIcon(FontAwesomeIcons.youtube),
                   color: Colors.red,
                   iconSize: 32,
                   tooltip: 'Open in YouTube',
                   constraints: const BoxConstraints(),
                   padding: EdgeInsets.zero,
-                  onPressed: _launchYouTubeUrl,
-                ),
-                IconButton(
+                  onPressed: () {
+                    if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+                    _launchYouTubeUrl();
+                  },
+                )),
+                Builder(builder: (ctx) => IconButton(
                   icon: const Icon(Icons.refresh),
                   iconSize: 24,
                   color: Colors.blue,
                   tooltip: 'Refresh',
                   constraints: const BoxConstraints(),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
-                  onPressed: refreshWebView,
-                ),
+                  onPressed: () {
+                    if (_helpTap(ReceiveShareHelpTargetId.previewRefreshButton, ctx)) return;
+                    refreshWebView();
+                  },
+                )),
               ],
             ),
           ),

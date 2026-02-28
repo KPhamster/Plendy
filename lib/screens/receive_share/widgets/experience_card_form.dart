@@ -21,9 +21,9 @@ import 'package:plendy/models/color_category.dart';
 import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder
 import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
 import 'package:plendy/widgets/privacy_toggle_button.dart';
-import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 // --- END ADDED ---
 
 // Define necessary callbacks
@@ -52,9 +52,13 @@ class ExperienceCardForm extends StatefulWidget {
   final OnUpdateCallback onUpdate; // Callback to parent (signature updated)
   final GlobalKey<FormState> formKey; // Pass form key down
   final void Function(String cardId)? onYelpButtonTapped; // ADDED
-  final VoidCallback? onEventSelect; // ADDED: Callback to show event selection dialog
-  final String? selectedEventTitle; // ADDED: Title of currently selected event (for indicator)
+  final VoidCallback?
+      onEventSelect; // ADDED: Callback to show event selection dialog
+  final String?
+      selectedEventTitle; // ADDED: Title of currently selected event (for indicator)
   final String? Function()? getDetectedEventName;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const ExperienceCardForm({
     super.key,
@@ -72,6 +76,8 @@ class ExperienceCardForm extends StatefulWidget {
     this.onEventSelect, // ADDED
     this.selectedEventTitle, // ADDED
     this.getDetectedEventName,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -80,9 +86,11 @@ class ExperienceCardForm extends StatefulWidget {
 
 class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // Local state for UI elements directly managed here
-  // REMOVED: _isExpanded and _locationEnabled are driven by cardData now
-  // bool _isExpanded = true;
-  // bool _locationEnabled = true;
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
+  }
 
   // Service needed for location updates if interaction happens within the form
   final GoogleMapsService _mapsService = GoogleMapsService();
@@ -346,8 +354,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           print('DEBUG YELP: Using deep link: $deepLink');
           try {
             // Try launching without canLaunchUrl check first
-            launched = await launchUrl(deepLink,
-                mode: LaunchMode.externalApplication);
+            launched =
+                await launchUrl(deepLink, mode: LaunchMode.externalApplication);
             print('DEBUG YELP: Deep link launch result: $launched');
             if (launched) {
               print('DEBUG YELP: Successfully launched via deep link');
@@ -394,13 +402,17 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     Location? location = widget.cardData.selectedLocation;
     String mapUrl;
 
-    if (location != null && location.latitude != 0.0 && location.longitude != 0.0) {
+    if (location != null &&
+        location.latitude != 0.0 &&
+        location.longitude != 0.0) {
       // Use the Google Maps search API with coordinates
       final lat = location.latitude;
       final lng = location.longitude;
-      final placeName = location.displayName ?? location.address ?? 'Selected Location';
+      final placeName =
+          location.displayName ?? location.address ?? 'Selected Location';
       if (location.placeId != null && location.placeId!.isNotEmpty) {
-        mapUrl = 'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
+        mapUrl =
+            'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
       } else {
         mapUrl = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
       }
@@ -425,7 +437,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   Future<void> _launchTicketmasterSearch() async {
     // Prioritize detected event name for the search (called at tap time to get latest value)
     String searchTerm = widget.getDetectedEventName?.call()?.trim() ?? '';
-    
+
     // Fall back to title field, then location name
     if (searchTerm.isEmpty) {
       searchTerm = widget.cardData.titleController.text.trim();
@@ -433,7 +445,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     if (searchTerm.isEmpty && widget.cardData.selectedLocation != null) {
       searchTerm = widget.cardData.selectedLocation!.displayName ?? '';
     }
-    
+
     // Build location string from the card's selected location
     String locationTerm = '';
     final location = widget.cardData.selectedLocation;
@@ -447,7 +459,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       }
       locationTerm = parts.join(', ');
     }
-    
+
     String ticketmasterUrl;
     if (searchTerm.isNotEmpty) {
       final searchQuery = Uri.encodeComponent(searchTerm);
@@ -685,7 +697,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                               style: Theme.of(context)
                                                   .textTheme
                                                   .bodySmall
-                                                  ?.copyWith(color: Colors.grey[600]),
+                                                  ?.copyWith(
+                                                      color: Colors.grey[600]),
                                             )
                                           : null,
                                       trailing: isSelected
@@ -694,7 +707,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           : null,
                                       onTap: withHeavyTap(() {
                                         FocusScope.of(dialogContext).unfocus();
-                                        Navigator.pop(dialogContext, category.id);
+                                        Navigator.pop(
+                                            dialogContext, category.id);
                                       }),
                                       visualDensity: VisualDensity.compact,
                                     );
@@ -1008,7 +1022,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                               style: Theme.of(context)
                                                   .textTheme
                                                   .bodySmall
-                                                  ?.copyWith(color: Colors.grey[600]),
+                                                  ?.copyWith(
+                                                      color: Colors.grey[600]),
                                             )
                                           : null,
                                       trailing: isSelected
@@ -1017,7 +1032,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           : null,
                                       onTap: withHeavyTap(() {
                                         FocusScope.of(dialogContext).unfocus();
-                                        Navigator.pop(dialogContext, category.id);
+                                        Navigator.pop(
+                                            dialogContext, category.id);
                                       }),
                                       visualDensity: VisualDensity.compact,
                                     );
@@ -1201,54 +1217,62 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           child: Column(
             children: [
               // Header row with expand/collapse and delete functionality
-              InkWell(
-                onTap: withHeavyTap(() {
-                  setState(() {
-                    widget.cardData.isExpanded = !widget.cardData.isExpanded;
-                    // Unfocus any active fields when collapsing
-                    if (!widget.cardData.isExpanded) {
-                      FocusManager.instance.primaryFocus?.unfocus();
-                    }
-                  });
-                }),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        widget.cardData
-                                .isExpanded // Read directly from cardData
-                            ? Icons.keyboard_arrow_up
-                            : Icons.keyboard_arrow_down,
-                        color: Colors.black,
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          titleController.text.isNotEmpty
-                              ? titleController.text
-                              : "New Experience",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+              Builder(builder: (headerCtx) {
+                return InkWell(
+                  onTap: withHeavyTap(() {
+                    if (_helpTap(
+                        ReceiveShareHelpTargetId.cardHeader, headerCtx)) return;
+                    setState(() {
+                      widget.cardData.isExpanded = !widget.cardData.isExpanded;
+                      if (!widget.cardData.isExpanded) {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                      }
+                    });
+                  }),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          widget.cardData.isExpanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          color: Colors.black,
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            titleController.text.isNotEmpty
+                                ? titleController.text
+                                : "New Experience",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
                           ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
                         ),
-                      ),
-                      // Use the passed flag to control delete button
-                      if (widget.canRemove)
-                        IconButton(
-                          icon: Icon(Icons.delete_outline,
-                              color: Colors.red[400]),
-                          onPressed: () => widget.onRemove(widget.cardData),
-                          tooltip: 'Remove experience',
-                        ),
-                    ],
+                        if (widget.canRemove)
+                          Builder(builder: (removeBtnCtx) {
+                            return IconButton(
+                              icon: Icon(Icons.delete_outline,
+                                  color: Colors.red[400]),
+                              onPressed: () {
+                                if (_helpTap(
+                                    ReceiveShareHelpTargetId.cardRemoveButton,
+                                    removeBtnCtx)) return;
+                                widget.onRemove(widget.cardData);
+                              },
+                              tooltip: 'Remove experience',
+                            );
+                          }),
+                      ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              }),
 
               // Expandable content
               if (widget.cardData.isExpanded) // Read directly from cardData
@@ -1263,20 +1287,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            PrivacyToggleButton(
-                              isPrivate: widget.cardData.isPrivate,
-                              onPressed: () {
-                                setState(() {
-                                  widget.cardData.isPrivate =
-                                      !widget.cardData.isPrivate;
-                                });
-                              },
-                            ),
-                            const SizedBox(width: 6),
-                            PrivacyTooltipIcon(
-                              message:
-                                  'Public experiences will show up in your public profile page (not yet implemented) to be viewed by others. Private experiences will only be visible to you.',
-                            ),
+                            Builder(builder: (privCtx) {
+                              return PrivacyToggleButton(
+                                isPrivate: widget.cardData.isPrivate,
+                                onPressed: () {
+                                  if (_helpTap(
+                                      ReceiveShareHelpTargetId
+                                          .cardPrivacyToggle,
+                                      privCtx)) return;
+                                  setState(() {
+                                    widget.cardData.isPrivate =
+                                        !widget.cardData.isPrivate;
+                                  });
+                                },
+                              );
+                            }),
                           ],
                         ),
                       ),
@@ -1289,65 +1314,83 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           children: [
                             Expanded(
                               flex: 1,
-                              child: OutlinedButton.icon(
-                                icon: Icon(
-                                  widget.selectedEventTitle != null
-                                      ? Icons.check_circle
-                                      : Icons.event,
-                                  color: widget.selectedEventTitle != null
-                                      ? AppColors.sage
-                                      : null,
-                                ),
-                                label: Text(
-                                  'Events',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                onPressed: widget.onEventSelect,
-                                style: OutlinedButton.styleFrom(
-                                  backgroundColor: widget.selectedEventTitle != null
-                                      ? AppColors.sage.withOpacity(0.1)
-                                      : Colors.white,
-                                  foregroundColor: widget.selectedEventTitle != null
-                                      ? AppColors.sage
-                                      : Theme.of(context).primaryColor,
-                                  side: BorderSide(
+                              child: Builder(builder: (eventCtx) {
+                                return OutlinedButton.icon(
+                                  icon: Icon(
+                                    widget.selectedEventTitle != null
+                                        ? Icons.check_circle
+                                        : Icons.event,
                                     color: widget.selectedEventTitle != null
                                         ? AppColors.sage
-                                        : Theme.of(context).primaryColor,
-                                    width: 2.0,
+                                        : null,
                                   ),
-                                  padding: EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 8),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                              ),
+                                  label: Text(
+                                    'Events',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onPressed: () {
+                                    if (_helpTap(
+                                        ReceiveShareHelpTargetId
+                                            .cardEventSelector,
+                                        eventCtx)) return;
+                                    widget.onEventSelect?.call();
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    backgroundColor:
+                                        widget.selectedEventTitle != null
+                                            ? AppColors.sage.withOpacity(0.1)
+                                            : Colors.white,
+                                    foregroundColor:
+                                        widget.selectedEventTitle != null
+                                            ? AppColors.sage
+                                            : Theme.of(context).primaryColor,
+                                    side: BorderSide(
+                                      color: widget.selectedEventTitle != null
+                                          ? AppColors.sage
+                                          : Theme.of(context).primaryColor,
+                                      width: 2.0,
+                                    ),
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                );
+                              }),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               flex: 2,
-                              child: OutlinedButton.icon(
-                                icon: Icon(Icons.bookmark_outline),
-                                label: Text(
-                                  'Choose a saved experience',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                onPressed: () => widget
-                                    .onSelectSavedExperience(widget.cardData),
-                                style: OutlinedButton.styleFrom(
-                                  backgroundColor: Colors.white,
-                                  foregroundColor:
-                                      Theme.of(context).primaryColor,
-                                  side: BorderSide(
-                                    color: Theme.of(context).primaryColor,
-                                    width: 2.0,
+                              child: Builder(builder: (savedExpCtx) {
+                                return OutlinedButton.icon(
+                                  icon: Icon(Icons.bookmark_outline),
+                                  label: Text(
+                                    'Choose a saved experience',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  padding: EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 8),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                              ),
+                                  onPressed: () {
+                                    if (_helpTap(
+                                        ReceiveShareHelpTargetId
+                                            .cardSavedExperienceChooser,
+                                        savedExpCtx)) return;
+                                    widget.onSelectSavedExperience(
+                                        widget.cardData);
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor:
+                                        Theme.of(context).primaryColor,
+                                    side: BorderSide(
+                                      color: Theme.of(context).primaryColor,
+                                      width: 2.0,
+                                    ),
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                );
+                              }),
                             ),
                           ],
                         ),
@@ -1359,172 +1402,221 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         builder: (context, isEnabled, child) {
                           final bool isLocationLoading =
                               widget.cardData.isSelectingLocation;
-                          return GestureDetector(
-                            // Call the parent's location selection logic
-                            onTap: withHeavyTap(isEnabled && !isLocationLoading
-                                ? () => widget.onLocationSelect(widget.cardData)
-                                : null),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                    color:
-                                        isEnabled // Use isEnabled from builder
-                                            ? AppColors.backgroundColorDark
-                                            : AppColors.backgroundColorDark),
-                                borderRadius: BorderRadius.circular(4),
-                                color: Colors.white,
-                              ),
-                              padding: EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 12),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.location_on,
+                          return Builder(builder: (locCtx) {
+                            return GestureDetector(
+                              onTap:
+                                  withHeavyTap(isEnabled && !isLocationLoading
+                                      ? () {
+                                          if (_helpTap(
+                                              ReceiveShareHelpTargetId
+                                                  .cardLocationArea,
+                                              locCtx)) return;
+                                          widget.onLocationSelect(
+                                              widget.cardData);
+                                        }
+                                      : null),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
                                       color:
                                           isEnabled // Use isEnabled from builder
-                                              ? Colors.grey[600]
-                                              : Colors.grey[400]),
-                                  SizedBox(width: 12),
-                                  Expanded(
-                                    child: currentLocation != null
-                                        ? Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              // Place name in bold
-                                              Text(
-                                                currentLocation.getPlaceName(),
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  color:
-                                                      isEnabled // Use isEnabled from builder
-                                                          ? Colors.black
-                                                          : Colors.grey[500],
-                                                ),
-                                              ),
-                                              // Address
-                                              if (currentLocation.address !=
-                                                  null)
+                                              ? AppColors.backgroundColorDark
+                                              : AppColors.backgroundColorDark),
+                                  borderRadius: BorderRadius.circular(4),
+                                  color: Colors.white,
+                                ),
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 12),
+                                child: Row(
+                                  children: [
+                                    Builder(builder: (locPickerCtx) {
+                                      return GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: withHeavyTap(
+                                            isEnabled && !isLocationLoading
+                                                ? () {
+                                                    if (_helpTap(
+                                                        ReceiveShareHelpTargetId
+                                                            .cardLocationPickerButton,
+                                                        locPickerCtx)) {
+                                                      return;
+                                                    }
+                                                    widget.onLocationSelect(
+                                                        widget.cardData);
+                                                  }
+                                                : null),
+                                        child: Icon(Icons.location_on,
+                                            color:
+                                                isEnabled // Use isEnabled from builder
+                                                    ? Colors.grey[600]
+                                                    : Colors.grey[400]),
+                                      );
+                                    }),
+                                    SizedBox(width: 12),
+                                    Expanded(
+                                      child: currentLocation != null
+                                          ? Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                // Place name in bold
                                                 Text(
-                                                  currentLocation.address!,
+                                                  currentLocation
+                                                      .getPlaceName(),
                                                   style: TextStyle(
-                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.bold,
                                                     color:
                                                         isEnabled // Use isEnabled from builder
-                                                            ? Colors.black87
+                                                            ? Colors.black
                                                             : Colors.grey[500],
                                                   ),
-                                                  maxLines:
-                                                      1, // Limit address lines
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
                                                 ),
-                                            ],
-                                          )
-                                        : Text(
-                                            'Select location',
-                                            style: TextStyle(
-                                                color:
-                                                    isEnabled // Use isEnabled from builder
-                                                        ? Colors.grey[600]
-                                                        : Colors.grey[400]),
-                                          ),
-                                  ),
-                                  if (isLocationLoading)
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 8.0),
-                                      child: SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor: AlwaysStoppedAnimation(
-                                            Theme.of(context).primaryColor,
+                                                // Address
+                                                if (currentLocation.address !=
+                                                    null)
+                                                  Text(
+                                                    currentLocation.address!,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color:
+                                                          isEnabled // Use isEnabled from builder
+                                                              ? Colors.black87
+                                                              : Colors
+                                                                  .grey[500],
+                                                    ),
+                                                    maxLines:
+                                                        1, // Limit address lines
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                              ],
+                                            )
+                                          : Text(
+                                              'Select location',
+                                              style: TextStyle(
+                                                  color:
+                                                      isEnabled // Use isEnabled from builder
+                                                          ? Colors.grey[600]
+                                                          : Colors.grey[400]),
+                                            ),
+                                    ),
+                                    if (isLocationLoading)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 8.0),
+                                        child: SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor: AlwaysStoppedAnimation(
+                                              Theme.of(context).primaryColor,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  // Toggle switch inside the location field
-                                  Transform.scale(
-                                    scale: 0.8,
-                                    child: Switch(
-                                      value:
-                                          isEnabled, // Use isEnabled from builder
-                                      onChanged: (value) {
-                                        widget.cardData.locationEnabled.value =
-                                            value; // Update model directly
-                                        // No widget.onUpdate() needed here for this toggle's visual state
-                                      },
-                                      activeColor:
-                                          const Color(0xFF2F6F6D),
-                                      materialTapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                  ),
-                                ],
+                                    // Toggle switch inside the location field
+                                    Builder(builder: (locToggleCtx) {
+                                      return Transform.scale(
+                                        scale: 0.8,
+                                        child: Switch(
+                                          value:
+                                              isEnabled, // Use isEnabled from builder
+                                          onChanged: (value) {
+                                            if (_helpTap(
+                                                ReceiveShareHelpTargetId
+                                                    .cardLocationToggle,
+                                                locToggleCtx)) {
+                                              return;
+                                            }
+                                            widget.cardData.locationEnabled
+                                                    .value =
+                                                value; // Update model directly
+                                            // No widget.onUpdate() needed here for this toggle's visual state
+                                          },
+                                          activeColor: const Color(0xFF2F6F6D),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                      );
+                                    }),
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
+                            );
+                          });
                         },
                       ),
                       SizedBox(height: 16),
 
                       // Experience title
-                      TextFormField(
-                        controller:
-                            titleController, // Use controller from widget
-                        focusNode: titleFocusNode, // Use focus node from widget
-                        decoration: InputDecoration(
-                          labelText: 'Experience Title',
-                          hintText: 'Enter title',
-                          border: OutlineInputBorder(),
-                          enabledBorder: const OutlineInputBorder(
-                            borderSide: BorderSide(
-                              color: AppColors.backgroundColorDark,
+                      Builder(builder: (titleFieldCtx) {
+                        return TextFormField(
+                          controller:
+                              titleController, // Use controller from widget
+                          focusNode:
+                              titleFocusNode, // Use focus node from widget
+                          readOnly: widget.isHelpMode,
+                          onTap: () {
+                            if (_helpTap(
+                                ReceiveShareHelpTargetId.cardTitleField,
+                                titleFieldCtx)) {
+                              return;
+                            }
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Experience Title',
+                            hintText: 'Enter title',
+                            border: OutlineInputBorder(),
+                            enabledBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: AppColors.backgroundColorDark,
+                              ),
                             ),
-                          ),
-                          focusedBorder: const OutlineInputBorder(
-                            borderSide: BorderSide(
-                              color: AppColors.backgroundColorDark,
-                              width: 2,
+                            focusedBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: AppColors.backgroundColorDark,
+                                width: 2,
+                              ),
                             ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            prefixIcon: Icon(Icons.title),
+                            suffixIcon: titleController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(Icons.clear, size: 18),
+                                    onPressed: () {
+                                      // Directly clear controller from widget.cardData
+                                      titleController.clear();
+                                      // Listener will call _triggerRebuild
+                                      widget.onUpdate(
+                                          refreshCategories:
+                                              false); // Notify parent, no refresh needed
+                                    },
+                                  )
+                                : null,
                           ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          prefixIcon: Icon(Icons.title),
-                          suffixIcon: titleController.text.isNotEmpty
-                              ? IconButton(
-                                  icon: Icon(Icons.clear, size: 18),
-                                  onPressed: () {
-                                    // Directly clear controller from widget.cardData
-                                    titleController.clear();
-                                    // Listener will call _triggerRebuild
-                                    widget.onUpdate(
-                                        refreshCategories:
-                                            false); // Notify parent, no refresh needed
-                                  },
-                                )
-                              : null,
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter a title';
-                          }
-                          return null;
-                        },
-                        onChanged: (value) {
-                          // Notify parent for UI updates (like header title) as user types,
-                          // but don't trigger duplicate check on every keystroke.
-                          widget.onUpdate(refreshCategories: false);
-                        },
-                        onFieldSubmitted: (value) {
-                          // When field is submitted (e.g., user presses done/next on keyboard),
-                          // trigger onUpdate with the new title to initiate duplicate check.
-                          widget.onUpdate(
-                              refreshCategories: false,
-                              newTitleFromCard: value.trim());
-                        },
-                      ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Please enter a title';
+                            }
+                            return null;
+                          },
+                          onChanged: (value) {
+                            // Notify parent for UI updates (like header title) as user types,
+                            // but don't trigger duplicate check on every keystroke.
+                            widget.onUpdate(refreshCategories: false);
+                          },
+                          onFieldSubmitted: (value) {
+                            // When field is submitted (e.g., user presses done/next on keyboard),
+                            // trigger onUpdate with the new title to initiate duplicate check.
+                            widget.onUpdate(
+                                refreshCategories: false,
+                                newTitleFromCard: value.trim());
+                          },
+                        );
+                      }),
                       SizedBox(height: 8),
 
                       Row(
@@ -1539,32 +1631,54 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 ?.copyWith(color: Colors.black87),
                           ),
                           const SizedBox(width: 6),
-                          InkWell(
-                            onTap: withHeavyTap(_launchYelpUrl),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(4.0),
-                              child: Icon(
-                                FontAwesomeIcons.yelp,
-                                size: 22,
-                                color: Colors.red[700],
+                          Builder(builder: (yelpBtnCtx) {
+                            return InkWell(
+                              onTap: withHeavyTap(() {
+                                if (_helpTap(
+                                    ReceiveShareHelpTargetId.cardYelpButton,
+                                    yelpBtnCtx)) {
+                                  return;
+                                }
+                                _launchYelpUrl();
+                              }),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: Icon(
+                                  FontAwesomeIcons.yelp,
+                                  size: 22,
+                                  color: Colors.red[700],
+                                ),
                               ),
-                            ),
-                          ),
+                            );
+                          }),
                           const SizedBox(width: 6),
-                          InkWell(
-                            onTap: withHeavyTap(_launchMapLocation),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(4.0),
-                              child: Icon(
-                                Icons.map_outlined,
-                                size: 22,
-                                color: const Color(0xFF6D8B74),
+                          Builder(builder: (mapsBtnCtx) {
+                            return InkWell(
+                              onTap: withHeavyTap(() {
+                                if (_helpTap(
+                                    ReceiveShareHelpTargetId
+                                        .cardGoogleMapsButton,
+                                    mapsBtnCtx)) {
+                                  return;
+                                }
+                                _launchMapLocation();
+                              }),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: Icon(
+                                  Icons.map_outlined,
+                                  size: 22,
+                                  color: const Color(0xFF6D8B74),
+                                ),
                               ),
-                            ),
-                          ),
-                          if ((widget.getDetectedEventName?.call()?.isNotEmpty ?? false) ||
+                            );
+                          }),
+                          if ((widget.getDetectedEventName
+                                      ?.call()
+                                      ?.isNotEmpty ??
+                                  false) ||
                               widget.selectedEventTitle != null) ...[
                             const SizedBox(width: 6),
                             InkWell(
@@ -1621,55 +1735,62 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             }
                           }
 
-                          return OutlinedButton(
-                            onPressed: _showCategorieselectionDialog,
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 15), // Adjust padding for height
-                              backgroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(
-                                    8.0), // Match field style
-                              ),
-                              side: BorderSide(
-                                  color: AppColors
-                                      .backgroundColorDark), // Match field border
-                              alignment:
-                                  Alignment.centerLeft, // Align content left
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment
-                                  .spaceBetween, // Space between content and arrow
-                              children: [
-                                // Display selected category icon and name
-                                Row(
-                                  children: [
-                                    Text(_getIconForSelectedCategory(),
-                                        style: const TextStyle(fontSize: 18)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      selectedCategoryObject?.name ??
-                                          'Select Primary Category',
-                                      style: TextStyle(
-                                        // Ensure text color matches default button text color or form field color
-                                        color: selectedCategoryObject != null
-                                            ? Theme.of(context)
-                                                .textTheme
-                                                .bodyLarge
-                                                ?.color
-                                            : Colors.grey[
-                                                600], // Hint color if nothing selected
-                                      ),
-                                    ),
-                                  ],
+                          return Builder(builder: (catBtnCtx) {
+                            return OutlinedButton(
+                              onPressed: () {
+                                if (_helpTap(
+                                    ReceiveShareHelpTargetId.cardCategoryButton,
+                                    catBtnCtx)) return;
+                                _showCategorieselectionDialog();
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 15), // Adjust padding for height
+                                backgroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                      8.0), // Match field style
                                 ),
-                                // Dropdown arrow indicator
-                                const Icon(Icons.arrow_drop_down,
-                                    color: Colors.grey),
-                              ],
-                            ),
-                          );
+                                side: BorderSide(
+                                    color: AppColors
+                                        .backgroundColorDark), // Match field border
+                                alignment:
+                                    Alignment.centerLeft, // Align content left
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment
+                                    .spaceBetween, // Space between content and arrow
+                                children: [
+                                  // Display selected category icon and name
+                                  Row(
+                                    children: [
+                                      Text(_getIconForSelectedCategory(),
+                                          style: const TextStyle(fontSize: 18)),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        selectedCategoryObject?.name ??
+                                            'Select Primary Category',
+                                        style: TextStyle(
+                                          // Ensure text color matches default button text color or form field color
+                                          color: selectedCategoryObject != null
+                                              ? Theme.of(context)
+                                                  .textTheme
+                                                  .bodyLarge
+                                                  ?.color
+                                              : Colors.grey[
+                                                  600], // Hint color if nothing selected
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  // Dropdown arrow indicator
+                                  const Icon(Icons.arrow_drop_down,
+                                      color: Colors.grey),
+                                ],
+                              ),
+                            );
+                          });
                         },
                       ),
                       // --- END REPLACEMENT (with wrapper) ---
@@ -1708,7 +1829,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   child: Wrap(
                                     spacing: 6.0,
                                     runSpacing: 6.0,
-                                    children: selectedCategories.map((category) {
+                                    children:
+                                        selectedCategories.map((category) {
                                       return Chip(
                                         backgroundColor: Colors.white,
                                         avatar: Text(category.icon,
@@ -1729,8 +1851,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 0),
                                         visualDensity: VisualDensity.compact,
-                                        labelPadding: const EdgeInsets.symmetric(
-                                            horizontal: 4.0),
+                                        labelPadding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: 4.0),
                                         deleteIconColor: Colors.grey[600],
                                         deleteButtonTooltipMessage:
                                             'Remove category',
@@ -1741,16 +1864,26 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 const SizedBox(height: 8),
                               ],
                               Center(
-                                child: TextButton.icon(
-                                  icon: const Icon(Icons.add, size: 20),
-                                  label: const Text('Assign more categories'),
-                                  onPressed: _showOtherCategoriesSelectionDialog,
-                                  style: TextButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12),
-                                  ),
-                                ),
+                                child: Builder(builder: (otherCatsBtnCtx) {
+                                  return TextButton.icon(
+                                    icon: const Icon(Icons.add, size: 20),
+                                    label: const Text('Assign more categories'),
+                                    onPressed: () {
+                                      if (_helpTap(
+                                          ReceiveShareHelpTargetId
+                                              .cardAssignMoreCategoriesButton,
+                                          otherCatsBtnCtx)) {
+                                        return;
+                                      }
+                                      _showOtherCategoriesSelectionDialog();
+                                    },
+                                    style: TextButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12),
+                                    ),
+                                  );
+                                }),
                               ),
                             ],
                           );
@@ -1772,58 +1905,67 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         builder: (context, currentColorCategoryList, child) {
                           // Note: currentColorCategoryList is available if needed, but button display
                           // mainly depends on _getSelectedColorCategoryObject() and widget.cardData.selectedColorCategoryId
-                          return OutlinedButton(
-                            onPressed:
-                                _showColorCategorySelectionDialog, // Call the new dialog function
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 15),
-                              backgroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8.0)),
-                              side: BorderSide(
-                                  color: AppColors.backgroundColorDark),
-                              alignment: Alignment.centerLeft,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    // Display selected category color circle
-                                    Container(
-                                      width: 18,
-                                      height: 18,
-                                      decoration: BoxDecoration(
-                                          color:
-                                              _getColorForSelectedCategory(), // Use helper
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                              color: Colors.grey.shade400,
-                                              width: 1)),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _getSelectedColorCategoryObject()?.name ??
-                                          'Select Color Category',
-                                      style: TextStyle(
-                                        color: widget.cardData
-                                                    .selectedColorCategoryId !=
-                                                null
-                                            ? Theme.of(context)
-                                                .textTheme
-                                                .bodyLarge
-                                                ?.color
-                                            : Colors.grey[600],
+                          return Builder(builder: (colorCatCtx) {
+                            return OutlinedButton(
+                              onPressed: () {
+                                if (_helpTap(
+                                    ReceiveShareHelpTargetId
+                                        .cardColorCategoryButton,
+                                    colorCatCtx)) return;
+                                _showColorCategorySelectionDialog();
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 15),
+                                backgroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8.0)),
+                                side: BorderSide(
+                                    color: AppColors.backgroundColorDark),
+                                alignment: Alignment.centerLeft,
+                              ),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      // Display selected category color circle
+                                      Container(
+                                        width: 18,
+                                        height: 18,
+                                        decoration: BoxDecoration(
+                                            color:
+                                                _getColorForSelectedCategory(), // Use helper
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                                color: Colors.grey.shade400,
+                                                width: 1)),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                                const Icon(Icons.arrow_drop_down,
-                                    color: Colors.grey),
-                              ],
-                            ),
-                          );
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        _getSelectedColorCategoryObject()
+                                                ?.name ??
+                                            'Select Color Category',
+                                        style: TextStyle(
+                                          color: widget.cardData
+                                                      .selectedColorCategoryId !=
+                                                  null
+                                              ? Theme.of(context)
+                                                  .textTheme
+                                                  .bodyLarge
+                                                  ?.color
+                                              : Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const Icon(Icons.arrow_drop_down,
+                                      color: Colors.grey),
+                                ],
+                              ),
+                            );
+                          });
                         },
                       ),
                       // --- END ADDED (with wrapper) ---
@@ -1833,11 +1975,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         valueListenable: widget.userColorCategoriesNotifier,
                         builder: (context, allColorCategories, child) {
                           final selectedColorCategories = allColorCategories
-                              .where((cat) => widget.cardData
-                                  .selectedOtherColorCategoryIds
+                              .where((cat) => widget
+                                  .cardData.selectedOtherColorCategoryIds
                                   .contains(cat.id))
                               .toList();
-                          final hasSelected = selectedColorCategories.isNotEmpty;
+                          final hasSelected =
+                              selectedColorCategories.isNotEmpty;
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1889,8 +2032,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 0),
                                         visualDensity: VisualDensity.compact,
-                                        labelPadding: const EdgeInsets.symmetric(
-                                            horizontal: 4.0),
+                                        labelPadding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: 4.0),
                                         deleteIconColor: Colors.grey[600],
                                         deleteButtonTooltipMessage:
                                             'Remove color category',
@@ -1901,18 +2045,27 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 const SizedBox(height: 8),
                               ],
                               Center(
-                                child: TextButton.icon(
-                                  icon: const Icon(Icons.add, size: 20),
-                                  label: const Text(
-                                      'Assign more color categories'),
-                                  onPressed:
-                                      _showOtherColorCategoriesSelectionDialog,
-                                  style: TextButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12),
-                                  ),
-                                ),
+                                child: Builder(builder: (otherCatsBtnCtx) {
+                                  return TextButton.icon(
+                                    icon: const Icon(Icons.add, size: 20),
+                                    label: const Text(
+                                        'Assign more color categories'),
+                                    onPressed: () {
+                                      if (_helpTap(
+                                          ReceiveShareHelpTargetId
+                                              .cardOtherCategoriesButton,
+                                          otherCatsBtnCtx)) {
+                                        return;
+                                      }
+                                      _showOtherColorCategoriesSelectionDialog();
+                                    },
+                                    style: TextButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12),
+                                    ),
+                                  );
+                                }),
                               ),
                             ],
                           );
@@ -1923,171 +2076,211 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       SizedBox(height: 16),
 
                       // Official website
-                      TextFormField(
-                        controller:
-                            websiteController, // Use controller from widget
-                        decoration: InputDecoration(
-                          labelText: 'Official Website (optional)',
-                          hintText: 'https://...',
-                          border: OutlineInputBorder(),
-                          enabledBorder: const OutlineInputBorder(
-                            borderSide: BorderSide(
-                              color: AppColors.backgroundColorDark,
+                      Builder(builder: (websiteFieldCtx) {
+                        return TextFormField(
+                          controller:
+                              websiteController, // Use controller from widget
+                          readOnly: widget.isHelpMode,
+                          onTap: () {
+                            if (_helpTap(
+                                ReceiveShareHelpTargetId.cardWebsiteField,
+                                websiteFieldCtx)) {
+                              return;
+                            }
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Official Website (optional)',
+                            hintText: 'https://...',
+                            border: OutlineInputBorder(),
+                            enabledBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: AppColors.backgroundColorDark,
+                              ),
                             ),
-                          ),
-                          focusedBorder: const OutlineInputBorder(
-                            borderSide: BorderSide(
-                              color: AppColors.backgroundColorDark,
-                              width: 2,
+                            focusedBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: AppColors.backgroundColorDark,
+                                width: 2,
+                              ),
                             ),
-                          ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          prefixIcon: Icon(Icons.language),
-                          // --- MODIFIED: Add Paste button to suffix ---
-                          suffixIconConstraints: BoxConstraints.tightFor(
-                              width: 110, // Keep width for three icons
-                              height: 48),
-                          suffixIcon: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: <Widget>[
-                              // Clear button (first)
-                              if (websiteController.text.isNotEmpty)
-                                InkWell(
-                                  onTap: withHeavyTap(() {
-                                    websiteController.clear();
-                                    widget.onUpdate(refreshCategories: false);
-                                  }),
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(4.0),
-                                    child: Icon(Icons.clear, size: 22),
+                            filled: true,
+                            fillColor: Colors.white,
+                            prefixIcon: Icon(Icons.language),
+                            // --- MODIFIED: Add Paste button to suffix ---
+                            suffixIconConstraints: BoxConstraints.tightFor(
+                                width: 110, // Keep width for three icons
+                                height: 48),
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: <Widget>[
+                                // Clear button (first)
+                                if (websiteController.text.isNotEmpty)
+                                  InkWell(
+                                    onTap: withHeavyTap(() {
+                                      websiteController.clear();
+                                      widget.onUpdate(refreshCategories: false);
+                                    }),
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4.0),
+                                      child: Icon(Icons.clear, size: 22),
+                                    ),
                                   ),
-                                ),
-                              // Spacer
-                              if (websiteController.text.isNotEmpty)
+                                // Spacer
+                                if (websiteController.text.isNotEmpty)
+                                  const SizedBox(width: 4),
+
+                                // Paste button (second)
+                                Builder(builder: (websitePasteCtx) {
+                                  return InkWell(
+                                    onTap: withHeavyTap(() {
+                                      if (_helpTap(
+                                          ReceiveShareHelpTargetId
+                                              .cardWebsitePasteButton,
+                                          websitePasteCtx)) {
+                                        return;
+                                      }
+                                      _pasteWebsiteUrlFromClipboard();
+                                    }),
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4.0),
+                                      child: const Icon(Icons.content_paste,
+                                          size: 22, color: Color(0xFF1F2A44)),
+                                    ),
+                                  );
+                                }),
+
+                                // Spacer
                                 const SizedBox(width: 4),
 
-                              // Paste button (second)
-                              InkWell(
-                                onTap: withHeavyTap(_pasteWebsiteUrlFromClipboard),
-                                borderRadius: BorderRadius.circular(16),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(4.0),
-                                  child: const Icon(Icons.content_paste,
-                                      size: 22, color: Color(0xFF1F2A44)),
-                                ),
-                              ),
-
-                              // Spacer
-                              const SizedBox(width: 4),
-
-                              // Launch button (last)
-                              InkWell(
-                                onTap: withHeavyTap(websiteController.text.isNotEmpty &&
-                                        _isValidUrl(
-                                            websiteController.text.trim())
-                                    ? () async {
-                                        String urlString =
-                                            websiteController.text.trim();
-                                        // No need to re-validate here, already checked in condition
-                                        try {
-                                          await launchUrl(
-                                            Uri.parse(urlString),
-                                            mode:
-                                                LaunchMode.externalApplication,
+                                // Launch button (last)
+                                Builder(builder: (websiteLaunchCtx) {
+                                  return InkWell(
+                                    onTap: withHeavyTap(() async {
+                                      if (_helpTap(
+                                          ReceiveShareHelpTargetId
+                                              .cardWebsiteLaunchButton,
+                                          websiteLaunchCtx)) {
+                                        return;
+                                      }
+                                      if (websiteController.text.isEmpty ||
+                                          !_isValidUrl(
+                                              websiteController.text.trim())) {
+                                        return;
+                                      }
+                                      final urlString =
+                                          websiteController.text.trim();
+                                      try {
+                                        await launchUrl(
+                                          Uri.parse(urlString),
+                                          mode: LaunchMode.externalApplication,
+                                        );
+                                      } catch (e) {
+                                        if (mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                                content: Text(
+                                                    'Error opening link: $e')),
                                           );
-                                        } catch (e) {
-                                          if (mounted) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                  content: Text(
-                                                      'Error opening link: $e')),
-                                            );
-                                          }
                                         }
                                       }
-                                    : null),
-                                borderRadius: BorderRadius.circular(16),
-                                child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                      4.0, 4.0, 8.0, 4.0),
-                                  child: Icon(Icons.launch, // Use launch icon
-                                      size: 22,
-                                      color: websiteController
-                                                  .text.isNotEmpty &&
-                                              _isValidUrl(
-                                                  websiteController.text.trim())
-                                          ? AppColors.teal
-                                          : Colors.grey),
-                                ),
-                              ),
-                            ],
+                                    }),
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          4.0, 4.0, 8.0, 4.0),
+                                      child: Icon(
+                                        Icons.launch, // Use launch icon
+                                        size: 22,
+                                        color:
+                                            websiteController.text.isNotEmpty &&
+                                                    _isValidUrl(
+                                                        websiteController.text
+                                                            .trim())
+                                                ? AppColors.teal
+                                                : Colors.grey,
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                            // --- END MODIFICATION ---
                           ),
-                          // --- END MODIFICATION ---
-                        ),
-                        keyboardType: TextInputType.url,
-                        validator: (value) {
-                          if (value != null && value.isNotEmpty) {
-                            if (!_isValidUrl(value)) {
-                              return 'Please enter a valid URL (http/https)';
+                          keyboardType: TextInputType.url,
+                          validator: (value) {
+                            if (value != null && value.isNotEmpty) {
+                              if (!_isValidUrl(value)) {
+                                return 'Please enter a valid URL (http/https)';
+                              }
                             }
-                          }
-                          return null;
-                        },
-                        onChanged: (value) {
-                          // REMOVED Listener calls _triggerRebuild if needed
-                          // widget.onUpdate();
-                        },
-                      ),
+                            return null;
+                          },
+                          onChanged: (value) {
+                            // REMOVED Listener calls _triggerRebuild if needed
+                            // widget.onUpdate();
+                          },
+                        );
+                      }),
                       SizedBox(height: 16),
 
                       // Notes field
-                      TextFormField(
-                        controller: widget
-                            .cardData.notesController, // Use notes controller
-                        decoration: InputDecoration(
-                          labelText: 'Notes (optional)',
-                          hintText: 'Enter any additional notes...',
-                          border: OutlineInputBorder(),
-                          enabledBorder: const OutlineInputBorder(
-                            borderSide: BorderSide(
-                              color: AppColors.backgroundColorDark,
+                      Builder(builder: (notesFieldCtx) {
+                        return TextFormField(
+                          controller: widget
+                              .cardData.notesController, // Use notes controller
+                          readOnly: widget.isHelpMode,
+                          onTap: () {
+                            if (_helpTap(
+                                ReceiveShareHelpTargetId.cardNotesField,
+                                notesFieldCtx)) {
+                              return;
+                            }
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Notes (optional)',
+                            hintText: 'Enter any additional notes...',
+                            border: OutlineInputBorder(),
+                            enabledBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: AppColors.backgroundColorDark,
+                              ),
                             ),
-                          ),
-                          focusedBorder: const OutlineInputBorder(
-                            borderSide: BorderSide(
-                              color: AppColors.backgroundColorDark,
-                              width: 2,
+                            focusedBorder: const OutlineInputBorder(
+                              borderSide: BorderSide(
+                                color: AppColors.backgroundColorDark,
+                                width: 2,
+                              ),
                             ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            prefixIcon: Icon(Icons.notes),
+                            alignLabelWithHint:
+                                true, // Align label top-left for multi-line
+                            suffixIcon: widget
+                                    .cardData.notesController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(Icons.clear, size: 18),
+                                    onPressed: () {
+                                      widget.cardData.notesController.clear();
+                                      widget.onUpdate(refreshCategories: false);
+                                    },
+                                  )
+                                : null,
                           ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          prefixIcon: Icon(Icons.notes),
-                          alignLabelWithHint:
-                              true, // Align label top-left for multi-line
-                          suffixIcon: widget
-                                  .cardData.notesController.text.isNotEmpty
-                              ? IconButton(
-                                  icon: Icon(Icons.clear, size: 18),
-                                  onPressed: () {
-                                    widget.cardData.notesController.clear();
-                                    widget.onUpdate(refreshCategories: false);
-                                  },
-                                )
-                              : null,
-                        ),
-                        keyboardType: TextInputType.multiline,
-                        minLines: 3, // Start with 3 lines height
-                        maxLines: null, // Allow unlimited lines
-                        // No validator needed as it's optional
-                        onChanged: (value) {
-                          // Trigger rebuild if suffix icon logic depends on it
-                          widget.onUpdate(refreshCategories: false);
-                        },
-                      ),
+                          keyboardType: TextInputType.multiline,
+                          minLines: 3, // Start with 3 lines height
+                          maxLines: null, // Allow unlimited lines
+                          // No validator needed as it's optional
+                          onChanged: (value) {
+                            // Trigger rebuild if suffix icon logic depends on it
+                            widget.onUpdate(refreshCategories: false);
+                          },
+                        );
+                      }),
                     ],
                   ),
                 ),
@@ -2097,7 +2290,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       ),
     );
   }
-
 }
 
 // --- ADDED: Dialog for selecting 'Other' categories ---
@@ -2250,8 +2442,8 @@ class _OtherCategoriesSelectionDialogState
                             final category = filteredCategories[index];
                             final bool isSelected =
                                 _selectedIds.contains(category.id);
-                            final sharedLabel =
-                                _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                            final sharedLabel = _sharedOwnerLabel(
+                                category.sharedOwnerDisplayName);
                             return CheckboxListTile(
                               title: Text(category.name),
                               subtitle: sharedLabel != null
@@ -2488,8 +2680,8 @@ class _OtherColorCategoriesSelectionDialogState
                             final category = filteredCategories[index];
                             final bool isSelected =
                                 _selectedIds.contains(category.id);
-                            final sharedLabel =
-                                _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                            final sharedLabel = _sharedOwnerLabel(
+                                category.sharedOwnerDisplayName);
                             return CheckboxListTile(
                               title: Text(category.name),
                               subtitle: sharedLabel != null
@@ -2507,7 +2699,8 @@ class _OtherColorCategoriesSelectionDialogState
                                 decoration: BoxDecoration(
                                   color: category.color,
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.grey.shade400),
+                                  border:
+                                      Border.all(color: Colors.grey.shade400),
                                 ),
                               ),
                               value: isSelected,

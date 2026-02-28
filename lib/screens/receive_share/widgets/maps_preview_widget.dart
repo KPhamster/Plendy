@@ -5,6 +5,7 @@ import '../../../models/experience.dart';
 // Assuming ExperienceCardData might be needed later
 import '../../../services/google_maps_service.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 class MapsPreviewWidget extends StatefulWidget {
   final String mapsUrl;
@@ -13,6 +14,8 @@ class MapsPreviewWidget extends StatefulWidget {
   final Future<Map<String, dynamic>?> Function(String) getLocationFromMapsUrl;
   final Future<void> Function(String) launchUrlCallback;
   final GoogleMapsService mapsService;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const MapsPreviewWidget({
     super.key,
@@ -21,6 +24,8 @@ class MapsPreviewWidget extends StatefulWidget {
     required this.getLocationFromMapsUrl,
     required this.launchUrlCallback,
     required this.mapsService,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -28,6 +33,11 @@ class MapsPreviewWidget extends StatefulWidget {
 }
 
 class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     // Create a stable key for the FutureBuilder to prevent unnecessary rebuilds
@@ -208,8 +218,11 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
       mainAxisSize: MainAxisSize.min,
       children: [
         // Preview container with tap functionality
-        InkWell(
-          onTap: withHeavyTap(() => widget.launchUrlCallback(mapsUrl)), // Use callback
+        Builder(builder: (ctx) => InkWell(
+          onTap: withHeavyTap(() {
+            if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+            widget.launchUrlCallback(mapsUrl);
+          }),
           borderRadius: BorderRadius.circular(8),
           child: Container(
             width: double.infinity,
@@ -423,7 +436,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
               ],
             ),
           ),
-        ),
+        )),
       ],
     );
   }
@@ -555,8 +568,11 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
       mainAxisSize: MainAxisSize.min,
       children: [
         // Fallback container with Maps styling
-        InkWell(
-          onTap: withHeavyTap(() => widget.launchUrlCallback(url)), // Use callback
+        Builder(builder: (ctx) => InkWell(
+          onTap: withHeavyTap(() {
+            if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+            widget.launchUrlCallback(url);
+          }),
           borderRadius: BorderRadius.circular(8),
           child: Container(
             width: double.infinity,
@@ -623,7 +639,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
               ),
             ),
           ),
-        ),
+        )),
         SizedBox(height: 8), // Consistent spacing below
       ],
     );

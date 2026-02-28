@@ -23,6 +23,218 @@ import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:plendy/config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
 
+const String addColorCategoryDialogValue = '__add_new_color_category__';
+const String editColorCategoriesDialogValue = '__edit_color_categories__';
+
+Future<String?> showColorCategorySelectionDialog({
+  required BuildContext context,
+  required List<ColorCategory> categories,
+  required String? selectedColorCategoryId,
+  bool includeManagementActions = true,
+}) async {
+  FocusScope.of(context).unfocus(); // Dismiss keyboard before opening dialog
+  final searchController = TextEditingController();
+
+  return showDialog<String>(
+    context: context,
+    builder: (BuildContext dialogContext) {
+      String searchQuery = '';
+      return StatefulBuilder(
+        builder: (stfContext, stfSetState) {
+          final List<ColorCategory> categoriesToShow = List.from(categories);
+          final filteredCategories = searchQuery.isEmpty
+              ? categoriesToShow
+              : categoriesToShow
+                  .where((cat) => cat.name
+                      .toLowerCase()
+                      .contains(searchQuery.toLowerCase()))
+                  .toList();
+
+          return Dialog(
+            backgroundColor: AppColors.backgroundColor,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16.0)),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(stfContext).size.height * 0.8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                    child: Text(
+                      'Select Color Category',
+                      style: Theme.of(stfContext).textTheme.titleLarge,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: TextField(
+                      controller: searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search color categories...',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: searchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 20),
+                                onPressed: () {
+                                  searchController.clear();
+                                  stfSetState(() {
+                                    searchQuery = '';
+                                  });
+                                },
+                              )
+                            : null,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        filled: true,
+                        fillColor: AppColors.backgroundColorDark,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppColors.backgroundColorDark,
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppColors.backgroundColorDark,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppColors.backgroundColorDark,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        stfSetState(() {
+                          searchQuery = value;
+                        });
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: filteredCategories.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Text(
+                                'No color categories found',
+                                style: TextStyle(color: Colors.grey[600]),
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: filteredCategories.length,
+                            itemBuilder: (context, index) {
+                              final category = filteredCategories[index];
+                              final bool isSelected =
+                                  category.id == selectedColorCategoryId;
+                              final sharedLabel = _sharedOwnerLabel(
+                                  category.sharedOwnerDisplayName);
+                              return ListTile(
+                                leading: Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                      color: category.color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.grey.shade400,
+                                          width: 1)),
+                                ),
+                                title: Text(category.name),
+                                subtitle: sharedLabel != null
+                                    ? Text(
+                                        sharedLabel,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.grey[600]),
+                                      )
+                                    : null,
+                                trailing: isSelected
+                                    ? const Icon(Icons.check,
+                                        color: Colors.blue)
+                                    : null,
+                                onTap: withHeavyTap(() {
+                                  FocusScope.of(dialogContext).unfocus();
+                                  Navigator.pop(dialogContext, category.id);
+                                }),
+                                visualDensity: VisualDensity.compact,
+                              );
+                            },
+                          ),
+                  ),
+                  if (includeManagementActions) ...[
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8.0, vertical: 8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextButton.icon(
+                            icon: Icon(Icons.add_circle_outline,
+                                size: 20, color: Colors.blue[700]),
+                            label: Text(
+                              'Add New Color Category',
+                              style: TextStyle(color: Colors.blue[700]),
+                            ),
+                            onPressed: () {
+                              FocusScope.of(dialogContext).unfocus();
+                              Navigator.pop(
+                                  dialogContext, addColorCategoryDialogValue);
+                            },
+                            style: TextButton.styleFrom(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 12)),
+                          ),
+                          TextButton.icon(
+                            icon: Icon(Icons.edit_outlined,
+                                size: 20, color: Colors.orange[700]),
+                            label: Text(
+                              'Edit Color Categories',
+                              style: TextStyle(color: Colors.orange[700]),
+                            ),
+                            onPressed: () {
+                              FocusScope.of(dialogContext).unfocus();
+                              Navigator.pop(dialogContext,
+                                  editColorCategoriesDialogValue);
+                            },
+                            style: TextButton.styleFrom(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 12)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+String? _sharedOwnerLabel(String? ownerName) {
+  if (ownerName == null) return null;
+  final trimmed = ownerName.trim();
+  if (trimmed.isEmpty) return null;
+  return 'Shared by $trimmed';
+}
+
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
   final List<UserCategory> userCategories;
@@ -66,11 +278,6 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   // --- ADDED: ValueNotifiers for reactive category updates ---
   late ValueNotifier<List<UserCategory>> _userCategoriesNotifier;
   late ValueNotifier<List<ColorCategory>> _colorCategoriesNotifier;
-  // --- END ADDED ---
-
-  // --- ADDED Color Category constants ---
-  static const String _addColorCategoryValue = '__add_new_color_category__';
-  static const String _editColorCategoriesValue = '__edit_color_categories__';
   // --- END ADDED ---
 
   final GlobalKey<ScaffoldMessengerState> _localMessengerKey =
@@ -226,31 +433,20 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _colorCategoriesNotifier.value = filteredColorCategories;
   }
 
-  String? _sharedOwnerLabel(String? ownerName) {
-    if (ownerName == null) return null;
-    final trimmed = ownerName.trim();
-    if (trimmed.isEmpty) return null;
-    return 'Shared by $trimmed';
-  }
-  // --- END ADDED ---
-
   // --- ADDED: Methods to load categories locally ---
   Future<void> _loadAllCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final categoryResultFuture =
-          _experienceService.getUserCategoriesWithMeta(
+      final categoryResultFuture = _experienceService.getUserCategoriesWithMeta(
         includeSharedEditable: true,
       );
-      final colorCategoriesFuture =
-          _experienceService.getUserColorCategories(
+      final colorCategoriesFuture = _experienceService.getUserColorCategories(
         includeSharedEditable: true,
       );
       final permissionsFuture =
           _experienceService.getEditableCategoryPermissionsMap();
 
-      final UserCategoryFetchResult categoryResult =
-          await categoryResultFuture;
+      final UserCategoryFetchResult categoryResult = await categoryResultFuture;
       Map<String, SharePermission> editablePermissions = {};
       try {
         editablePermissions = await permissionsFuture;
@@ -376,14 +572,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // Simplified version for targeted refresh
     setState(() => _isLoadingCategories = true);
     try {
-      final categoryResultFuture =
-          _experienceService.getUserCategoriesWithMeta(
+      final categoryResultFuture = _experienceService.getUserCategoriesWithMeta(
         includeSharedEditable: true,
       );
       final permissionsFuture =
           _experienceService.getEditableCategoryPermissionsMap();
-      final UserCategoryFetchResult categoryResult =
-          await categoryResultFuture;
+      final UserCategoryFetchResult categoryResult = await categoryResultFuture;
       Map<String, SharePermission> editablePermissions = {};
       try {
         editablePermissions = await permissionsFuture;
@@ -682,11 +876,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                           style: Theme.of(context)
                                               .textTheme
                                               .bodySmall
-                                              ?.copyWith(color: Colors.grey[600]),
+                                              ?.copyWith(
+                                                  color: Colors.grey[600]),
                                         )
                                       : null,
                                   trailing: isSelected
-                                      ? const Icon(Icons.check, color: Colors.blue)
+                                      ? const Icon(Icons.check,
+                                          color: Colors.blue)
                                       : null,
                                   onTap: withHeavyTap(() {
                                     FocusScope.of(dialogContext).unfocus();
@@ -723,12 +919,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                 ),
                               );
                               if (newCategory != null && mounted) {
-              print(
-                  "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
-              setState(() {
-                _cardData.selectedCategoryId = newCategory.id;
-              });
-              await _loadUserCategories();
+                                print(
+                                    "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
+                                setState(() {
+                                  _cardData.selectedCategoryId = newCategory.id;
+                                });
+                                await _loadUserCategories();
                                 // Refresh the dialog
                                 stfSetState(() {});
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -928,13 +1124,17 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     Location? location = _cardData.selectedLocation;
     String mapUrl;
 
-    if (location != null && location.latitude != 0.0 && location.longitude != 0.0) {
+    if (location != null &&
+        location.latitude != 0.0 &&
+        location.longitude != 0.0) {
       // Use the Google Maps search API with coordinates
       final lat = location.latitude;
       final lng = location.longitude;
-      final placeName = location.displayName ?? location.address ?? 'Selected Location';
+      final placeName =
+          location.displayName ?? location.address ?? 'Selected Location';
       if (location.placeId != null && location.placeId!.isNotEmpty) {
-        mapUrl = 'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
+        mapUrl =
+            'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
       } else {
         mapUrl = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
       }
@@ -1086,209 +1286,19 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
   // Function to show the color category selection dialog
   Future<void> _showColorCategorySelectionDialog() async {
-    FocusScope.of(context).unfocus(); // Dismiss keyboard
-
-    final searchController = TextEditingController();
-
-    final String? selectedValue = await showDialog<String>(
+    final String? selectedValue = await showColorCategorySelectionDialog(
       context: context,
-      builder: (BuildContext dialogContext) {
-        String searchQuery = '';
-        return StatefulBuilder(
-          builder: (stfContext, stfSetState) {
-            // Use the list passed to the modal
-            final List<ColorCategory> categoriesToShow =
-                List.from(_currentColorCategories);
-
-            // Filter categories based on search query
-            final filteredCategories = searchQuery.isEmpty
-                ? categoriesToShow
-                : categoriesToShow
-                    .where((cat) => cat.name
-                        .toLowerCase()
-                        .contains(searchQuery.toLowerCase()))
-                    .toList();
-
-            return Dialog(
-              backgroundColor: AppColors.backgroundColor,
-              shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(stfContext).size.height * 0.8),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                      child: Text(
-                        'Select Color Category',
-                        style: Theme.of(stfContext).textTheme.titleLarge,
-                      ),
-                    ),
-                    // Search bar
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: TextField(
-                        controller: searchController,
-                        decoration: InputDecoration(
-                          hintText: 'Search color categories...',
-                          prefixIcon: const Icon(Icons.search, size: 20),
-                          suffixIcon: searchQuery.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(Icons.clear, size: 20),
-                                  onPressed: () {
-                                    searchController.clear();
-                                    stfSetState(() {
-                                      searchQuery = '';
-                                    });
-                                  },
-                                )
-                              : null,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          filled: true,
-                          fillColor: AppColors.backgroundColorDark,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: AppColors.backgroundColorDark,
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: AppColors.backgroundColorDark,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                              color: AppColors.backgroundColorDark,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                        onChanged: (value) {
-                          stfSetState(() {
-                            searchQuery = value;
-                          });
-                        },
-                      ),
-                    ),
-                    Expanded(
-                      child: filteredCategories.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Text(
-                                  'No color categories found',
-                                  style: TextStyle(color: Colors.grey[600]),
-                                ),
-                              ),
-                            )
-                          : ListView.builder(
-                              shrinkWrap: true,
-                              itemCount: filteredCategories.length,
-                              itemBuilder: (context, index) {
-                                final category = filteredCategories[index];
-                                final bool isSelected = category.id ==
-                                    _cardData.selectedColorCategoryId; // Use _cardData
-                                final sharedLabel =
-                                    _sharedOwnerLabel(category.sharedOwnerDisplayName);
-                                return ListTile(
-                                  leading: Container(
-                                    width: 24,
-                                    height: 24,
-                                    decoration: BoxDecoration(
-                                        color: category.color,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color: Colors.grey.shade400, width: 1)),
-                                  ),
-                                  title: Text(category.name),
-                                  subtitle: sharedLabel != null
-                                      ? Text(
-                                          sharedLabel,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.copyWith(color: Colors.grey[600]),
-                                        )
-                                      : null,
-                                  trailing: isSelected
-                                      ? const Icon(Icons.check, color: Colors.blue)
-                                      : null,
-                                  onTap: withHeavyTap(() {
-                                    FocusScope.of(dialogContext).unfocus();
-                                    Navigator.pop(
-                                        dialogContext, category.id); // Return category ID
-                                  }),
-                                  visualDensity: VisualDensity.compact,
-                                );
-                              },
-                            ),
-                    ),
-                    const Divider(height: 1),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8.0, vertical: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          TextButton.icon(
-                            icon: Icon(Icons.add_circle_outline,
-                                size: 20, color: Colors.blue[700]),
-                            label: Text('Add New Color Category',
-                                style: TextStyle(color: Colors.blue[700])),
-                            onPressed: () {
-                              FocusScope.of(dialogContext).unfocus();
-                              Navigator.pop(
-                                  dialogContext, _addColorCategoryValue); // Use constant
-                            },
-                            style: TextButton.styleFrom(
-                                alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 12)),
-                          ),
-                          TextButton.icon(
-                            icon: Icon(Icons.edit_outlined,
-                                size: 20, color: Colors.orange[700]),
-                            label: Text('Edit Color Categories',
-                                style: TextStyle(color: Colors.orange[700])),
-                            onPressed: () {
-                              FocusScope.of(dialogContext).unfocus();
-                              Navigator.pop(dialogContext,
-                                  _editColorCategoriesValue); // Use constant
-                            },
-                            style: TextButton.styleFrom(
-                                alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 12)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      categories: _currentColorCategories,
+      selectedColorCategoryId: _cardData.selectedColorCategoryId,
+      includeManagementActions: true,
     );
-
-    // Note: searchController will be garbage collected - don't dispose synchronously
-    // as animations may still be running after unfocus
 
     // Handle the dialog result
     if (selectedValue != null) {
-      if (selectedValue == _addColorCategoryValue) {
-        _handleAddColorCategory(); // Call handler
-      } else if (selectedValue == _editColorCategoriesValue) {
-        _handleEditColorCategories(); // Call handler
+      if (selectedValue == addColorCategoryDialogValue) {
+        await _handleAddColorCategory();
+      } else if (selectedValue == editColorCategoriesDialogValue) {
+        await _handleEditColorCategories();
       } else {
         // User selected an actual category ID
         if (_cardData.selectedColorCategoryId != selectedValue) {
@@ -1396,8 +1406,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           initiallySelectedIds: _cardData.selectedOtherColorCategoryIds,
           primaryColorCategoryId: _cardData.selectedColorCategoryId,
           onEditColorCategories: () async {
-            final bool? categoriesChanged =
-                await _handleEditColorCategories();
+            final bool? categoriesChanged = await _handleEditColorCategories();
             if (categoriesChanged == true && mounted) {
               _showOtherColorCategoriesSelectionDialog();
             }
@@ -1492,18 +1501,18 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       return;
     }
     final String message = _buildCategoryWarningMessage();
-    final ScaffoldMessengerState? messenger =
-        _localMessengerKey.currentState ??
-            widget.scaffoldMessenger ??
-            ScaffoldMessenger.maybeOf(context);
+    final ScaffoldMessengerState? messenger = _localMessengerKey.currentState ??
+        widget.scaffoldMessenger ??
+        ScaffoldMessenger.maybeOf(context);
     if (messenger == null) {
       return;
     }
     messenger.hideCurrentSnackBar();
     final mediaQuery = MediaQuery.maybeOf(context);
     final double bottomInset = mediaQuery?.viewInsets.bottom ?? 0.0;
-    final double bottomMargin =
-        bottomInset > 0 ? bottomInset + 16.0 : 16.0; // keep visible inside sheet
+    final double bottomMargin = bottomInset > 0
+        ? bottomInset + 16.0
+        : 16.0; // keep visible inside sheet
     messenger.showSnackBar(
       SnackBar(
         content: Text(message),
@@ -1543,10 +1552,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                 children: [
                   Expanded(
                     child: Padding(
-                      padding: const EdgeInsets.only(
-                          left: 16,
-                          right: 16,
-                          top: 16),
+                      padding:
+                          const EdgeInsets.only(left: 16, right: 16, top: 16),
                       child: SingleChildScrollView(
                         child: Form(
                           key: _formKey,
@@ -1554,586 +1561,693 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                    const SizedBox(height: 16), // Padding above header
-                    // Modal Title
-                    Text(
-                      'Edit Experience',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: PrivacyToggleButton(
-                        isPrivate: _cardData.isPrivate,
-                        onPressed: () {
-                          setState(() {
-                            _cardData.isPrivate = !_cardData.isPrivate;
-                          });
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                // --- Form Fields (Similar to ExperienceCardForm) ---
-
-                // Location selection (using adapted widget/logic)
-                GestureDetector(
-                  onTap: withHeavyTap((_cardData.locationEnabled.value &&
-                          !_cardData.isSelectingLocation)
-                      ? _showLocationPicker
-                      : null),
-                  child: Container(
-                    decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(
-                        color: _cardData.locationEnabled.value
-                            ? AppColors.backgroundColorDark
-                            : AppColors.backgroundColorDark),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    child: Row(
-                      children: [
-                        Icon(Icons.location_on,
-                            color: _cardData.locationEnabled.value
-                                ? Colors.grey[600]
-                                : Colors.grey[400]),
-                        SizedBox(width: 12),
-                        Expanded(
-                          child: _cardData.selectedLocation != null &&
-                                  _cardData.selectedLocation!.latitude != 0.0
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _cardData.selectedLocation!
-                                          .getPlaceName(), // Use helper
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: _cardData.locationEnabled.value
-                                              ? Colors.black
-                                              : Colors.grey[500]),
+                              const SizedBox(
+                                  height: 16), // Padding above header
+                              // Modal Title
+                              Text(
+                                'Edit Experience',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineSmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
                                     ),
-                                    if (_cardData.selectedLocation!.address !=
-                                        null)
-                                      Text(
-                                        _cardData.selectedLocation!.address!,
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color:
-                                                _cardData.locationEnabled.value
-                                                    ? Colors.black87
-                                                    : Colors.grey[500]),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 20),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: PrivacyToggleButton(
+                                  isPrivate: _cardData.isPrivate,
+                                  onPressed: () {
+                                    setState(() {
+                                      _cardData.isPrivate =
+                                          !_cardData.isPrivate;
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+
+                              // --- Form Fields (Similar to ExperienceCardForm) ---
+
+                              // Location selection (using adapted widget/logic)
+                              GestureDetector(
+                                onTap: withHeavyTap(
+                                    (_cardData.locationEnabled.value &&
+                                            !_cardData.isSelectingLocation)
+                                        ? _showLocationPicker
+                                        : null),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    border: Border.all(
+                                        color: _cardData.locationEnabled.value
+                                            ? AppColors.backgroundColorDark
+                                            : AppColors.backgroundColorDark),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 12),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.location_on,
+                                          color: _cardData.locationEnabled.value
+                                              ? Colors.grey[600]
+                                              : Colors.grey[400]),
+                                      SizedBox(width: 12),
+                                      Expanded(
+                                        child: _cardData.selectedLocation !=
+                                                    null &&
+                                                _cardData.selectedLocation!
+                                                        .latitude !=
+                                                    0.0
+                                            ? Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    _cardData.selectedLocation!
+                                                        .getPlaceName(), // Use helper
+                                                    style: TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        color: _cardData
+                                                                .locationEnabled
+                                                                .value
+                                                            ? Colors.black
+                                                            : Colors.grey[500]),
+                                                  ),
+                                                  if (_cardData
+                                                          .selectedLocation!
+                                                          .address !=
+                                                      null)
+                                                    Text(
+                                                      _cardData
+                                                          .selectedLocation!
+                                                          .address!,
+                                                      style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: _cardData
+                                                                  .locationEnabled
+                                                                  .value
+                                                              ? Colors.black87
+                                                              : Colors
+                                                                  .grey[500]),
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                ],
+                                              )
+                                            : Text(
+                                                'Select location',
+                                                style: TextStyle(
+                                                    color: _cardData
+                                                            .locationEnabled
+                                                            .value
+                                                        ? Colors.grey[600]
+                                                        : Colors.grey[400]),
+                                              ),
                                       ),
-                                  ],
-                                )
-                              : Text(
-                                  'Select location',
-                                  style: TextStyle(
-                                      color: _cardData.locationEnabled.value
-                                          ? Colors.grey[600]
-                                          : Colors.grey[400]),
-                                ),
-                        ),
-                        if (_cardData.isSelectingLocation)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(
-                                  Theme.of(context).primaryColor,
+                                      if (_cardData.isSelectingLocation)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(right: 8.0),
+                                          child: SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation(
+                                                Theme.of(context).primaryColor,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      Transform.scale(
+                                        // Toggle switch
+                                        scale: 0.8,
+                                        child: Switch(
+                                          value:
+                                              _cardData.locationEnabled.value,
+                                          onChanged: (value) {
+                                            setState(() {
+                                              _cardData.locationEnabled.value =
+                                                  value;
+                                            });
+                                          },
+                                          activeColor: const Color(0xFF2F6F6D),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        Transform.scale(
-                          // Toggle switch
-                          scale: 0.8,
-                          child: Switch(
-                            value: _cardData.locationEnabled.value,
-                            onChanged: (value) {
-                              setState(() {
-                                _cardData.locationEnabled.value = value;
-                              });
-                            },
-                            activeColor: const Color(0xFF2F6F6D),
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                SizedBox(height: 16),
+                              SizedBox(height: 16),
 
-                // Experience title
-                TextFormField(
-                  controller: _cardData.titleController,
-                  decoration: InputDecoration(
-                    labelText: 'Experience Title',
-                    border: OutlineInputBorder(),
-                    enabledBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: AppColors.backgroundColorDark,
-                      ),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: AppColors.backgroundColorDark,
-                        width: 2,
-                      ),
-                    ),
-                    prefixIcon: Icon(Icons.title),
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter a title';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: 8),
+                              // Experience title
+                              TextFormField(
+                                controller: _cardData.titleController,
+                                decoration: InputDecoration(
+                                  labelText: 'Experience Title',
+                                  border: OutlineInputBorder(),
+                                  enabledBorder: const OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: AppColors.backgroundColorDark,
+                                    ),
+                                  ),
+                                  focusedBorder: const OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: AppColors.backgroundColorDark,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  prefixIcon: Icon(Icons.title),
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Please enter a title';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              SizedBox(height: 8),
 
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Text(
-                      'For reference',
-                      textAlign: TextAlign.right,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(color: Colors.black87),
-                    ),
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: withHeavyTap(_launchYelpUrl),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                        child: Icon(
-                          FontAwesomeIcons.yelp,
-                          size: 22,
-                          color: Colors.red.shade700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: withHeavyTap(_launchMapLocation),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                      child: Icon(
-                        Icons.map_outlined,
-                        size: 22,
-                        color: const Color(0xFF6D8B74),
-                      ),
-                    ),
-                  ),
-                  ],
-                ),
-                SizedBox(height: 16),
-
-                // Category Selection Button
-                Text('Primary Category',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: Colors.grey[600])),
-                const SizedBox(height: 4),
-                OutlinedButton(
-                  onPressed: _isLoadingCategories
-                      ? null
-                      : _showCategorieselectionDialog,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 15),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.0)),
-                    side: BorderSide(color: AppColors.backgroundColorDark),
-                    alignment: Alignment.centerLeft,
-                    backgroundColor: Colors.white,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Text(_getIconForSelectedCategory(),
-                              style: const TextStyle(fontSize: 18)),
-                          const SizedBox(width: 8),
-                          Text(
-                            _currentUserCategories
-                                    .firstWhereOrNull((cat) =>
-                                        cat.id == _cardData.selectedCategoryId)
-                                    ?.name ??
-                                'Select Category',
-                            style: TextStyle(
-                                color: _cardData.selectedCategoryId != null
-                                    ? Theme.of(context)
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'For reference',
+                                    textAlign: TextAlign.right,
+                                    style: Theme.of(context)
                                         .textTheme
-                                        .bodyLarge
-                                        ?.color
-                                    : Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                      const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                    ],
-                  ),
-                ),
-                // TODO: Add validation message display if needed
-                SizedBox(height: _cardData.selectedOtherCategoryIds.isNotEmpty ? 16 : 1),
+                                        .bodyMedium
+                                        ?.copyWith(color: Colors.black87),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  InkWell(
+                                    onTap: withHeavyTap(_launchYelpUrl),
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4.0),
+                                      child: Icon(
+                                        FontAwesomeIcons.yelp,
+                                        size: 22,
+                                        color: Colors.red.shade700,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  InkWell(
+                                    onTap: withHeavyTap(_launchMapLocation),
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4.0),
+                                      child: Icon(
+                                        Icons.map_outlined,
+                                        size: 22,
+                                        color: const Color(0xFF6D8B74),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 16),
 
-                // --- ADDED: Other Categories Selection ---
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_cardData.selectedOtherCategoryIds.isNotEmpty) ...[
-                      Text('Other Categories',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: Colors.grey[600])),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12.0),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(
-                              color: AppColors.backgroundColorDark),
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
-                        child: Wrap(
-                          spacing: 6.0,
-                          runSpacing: 6.0,
-                          children: _cardData.selectedOtherCategoryIds
-                              .map((categoryId) {
-                            final category = _currentUserCategories
-                                .firstWhereOrNull((cat) => cat.id == categoryId);
-                            if (category == null) return const SizedBox.shrink();
-                            return Chip(
-                              backgroundColor: Colors.white,
-                              avatar: Text(category.icon,
-                                  style: const TextStyle(fontSize: 14)),
-                              label: Text(category.name),
-                              onDeleted: () {
-                                setState(() {
-                                  _cardData.selectedOtherCategoryIds
-                                      .remove(categoryId);
-                                });
-                              },
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 0),
-                              visualDensity: VisualDensity.compact,
-                              labelPadding:
-                                  const EdgeInsets.symmetric(horizontal: 4.0),
-                              deleteIconColor: Colors.grey[600],
-                              deleteButtonTooltipMessage: 'Remove category',
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    Center(
-                      child: TextButton.icon(
-                        icon: const Icon(Icons.add, size: 20),
-                        label: const Text('Assign more categories'),
-                        onPressed: _showOtherCategoriesSelectionDialog,
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                // --- END ADDED ---
-
-                SizedBox(height: 16),
-
-                // Color Category Selection Button
-                Text('Color Category',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: Colors.grey[600])),
-                const SizedBox(height: 4),
-                OutlinedButton(
-                  onPressed: _isLoadingCategories
-                      ? null
-                      : _showColorCategorySelectionDialog,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 15),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.0)),
-                    side: BorderSide(color: AppColors.backgroundColorDark),
-                    alignment: Alignment.centerLeft,
-                    backgroundColor: Colors.white,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          // Display selected category color circle
-                          Container(
-                            width: 18,
-                            height: 18,
-                            decoration: BoxDecoration(
-                                color:
-                                    _getColorForSelectedCategory(), // Use helper
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                    color: Colors.grey.shade400, width: 1)),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _getSelectedColorCategoryObject()?.name ??
-                                'Select Color Category',
-                            style: TextStyle(
-                              color: _cardData.selectedColorCategoryId != null
-                                  ? Theme.of(context).textTheme.bodyLarge?.color
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                    ],
-                  ),
-                ),
-                SizedBox(height: _cardData.selectedOtherColorCategoryIds.isNotEmpty ? 16 : 1),
-
-                // --- ADDED: Other Color Categories Selection ---
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_cardData.selectedOtherColorCategoryIds.isNotEmpty) ...[
-                      Text('Other Color Categories',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: Colors.grey[600])),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12.0),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(
-                              color: AppColors.backgroundColorDark),
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
-                        child: Wrap(
-                          spacing: 6.0,
-                          runSpacing: 6.0,
-                          children: _cardData.selectedOtherColorCategoryIds
-                              .map((colorCategoryId) {
-                            final colorCategory = _currentColorCategories
-                                .firstWhereOrNull(
-                                    (cat) => cat.id == colorCategoryId);
-                            if (colorCategory == null) {
-                              return const SizedBox.shrink();
-                            }
-                            return Chip(
-                              backgroundColor: Colors.white,
-                              avatar: Container(
-                                width: 18,
-                                height: 18,
-                                decoration: BoxDecoration(
-                                  color: colorCategory.color,
-                                  shape: BoxShape.circle,
+                              // Category Selection Button
+                              Text('Primary Category',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(color: Colors.grey[600])),
+                              const SizedBox(height: 4),
+                              OutlinedButton(
+                                onPressed: _isLoadingCategories
+                                    ? null
+                                    : _showCategorieselectionDialog,
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 15),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8.0)),
+                                  side: BorderSide(
+                                      color: AppColors.backgroundColorDark),
+                                  alignment: Alignment.centerLeft,
+                                  backgroundColor: Colors.white,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(_getIconForSelectedCategory(),
+                                            style:
+                                                const TextStyle(fontSize: 18)),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          _currentUserCategories
+                                                  .firstWhereOrNull((cat) =>
+                                                      cat.id ==
+                                                      _cardData
+                                                          .selectedCategoryId)
+                                                  ?.name ??
+                                              'Select Category',
+                                          style: TextStyle(
+                                              color: _cardData
+                                                          .selectedCategoryId !=
+                                                      null
+                                                  ? Theme.of(context)
+                                                      .textTheme
+                                                      .bodyLarge
+                                                      ?.color
+                                                  : Colors.grey[600]),
+                                        ),
+                                      ],
+                                    ),
+                                    const Icon(Icons.arrow_drop_down,
+                                        color: Colors.grey),
+                                  ],
                                 ),
                               ),
-                              label: Text(colorCategory.name),
-                              onDeleted: () {
-                                setState(() {
-                                  _cardData.selectedOtherColorCategoryIds
-                                      .remove(colorCategoryId);
-                                });
-                              },
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 0),
-                              visualDensity: VisualDensity.compact,
-                              labelPadding:
-                                  const EdgeInsets.symmetric(horizontal: 4.0),
-                              deleteIconColor: Colors.grey[600],
-                              deleteButtonTooltipMessage:
-                                  'Remove color category',
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    Center(
-                      child: TextButton.icon(
-                        icon: const Icon(Icons.add, size: 20),
-                        label:
-                            const Text('Assign more color categories'),
-                        onPressed: _showOtherColorCategoriesSelectionDialog,
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                // --- END ADDED ---
+                              // TODO: Add validation message display if needed
+                              SizedBox(
+                                  height: _cardData
+                                          .selectedOtherCategoryIds.isNotEmpty
+                                      ? 16
+                                      : 1),
 
-                SizedBox(height: 16),
-
-                // Official website
-                TextFormField(
-                  controller: _cardData.websiteController,
-                  decoration: InputDecoration(
-                      labelText: 'Official Website (optional)',
-                      border: OutlineInputBorder(),
-                      enabledBorder: const OutlineInputBorder(
-                        borderSide: BorderSide(
-                          color: AppColors.backgroundColorDark,
-                        ),
-                      ),
-                      focusedBorder: const OutlineInputBorder(
-                        borderSide: BorderSide(
-                          color: AppColors.backgroundColorDark,
-                          width: 2,
-                        ),
-                      ),
-                      prefixIcon: Icon(
-                        Icons.language,
-                        color: _cardData.websiteController.text.isNotEmpty
-                            ? AppColors.teal
-                            : null,
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                      // --- MODIFIED: Add Paste button to suffix ---
-                      suffixIconConstraints: BoxConstraints.tightFor(
-                          width: 110, // Keep width for three icons
-                          height: 48),
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: <Widget>[
-                          // Clear button (first)
-                          if (_cardData.websiteController.text.isNotEmpty)
-                            InkWell(
-                              onTap: withHeavyTap(() {
-                                _cardData.websiteController.clear();
-                              }),
-                              borderRadius: BorderRadius.circular(16),
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: Icon(Icons.clear, size: 22),
+                              // --- ADDED: Other Categories Selection ---
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (_cardData
+                                      .selectedOtherCategoryIds.isNotEmpty) ...[
+                                    Text('Other Categories',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                                color: Colors.grey[600])),
+                                    const SizedBox(height: 4),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12.0),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        border: Border.all(
+                                            color:
+                                                AppColors.backgroundColorDark),
+                                        borderRadius:
+                                            BorderRadius.circular(8.0),
+                                      ),
+                                      child: Wrap(
+                                        spacing: 6.0,
+                                        runSpacing: 6.0,
+                                        children: _cardData
+                                            .selectedOtherCategoryIds
+                                            .map((categoryId) {
+                                          final category =
+                                              _currentUserCategories
+                                                  .firstWhereOrNull((cat) =>
+                                                      cat.id == categoryId);
+                                          if (category == null)
+                                            return const SizedBox.shrink();
+                                          return Chip(
+                                            backgroundColor: Colors.white,
+                                            avatar: Text(category.icon,
+                                                style: const TextStyle(
+                                                    fontSize: 14)),
+                                            label: Text(category.name),
+                                            onDeleted: () {
+                                              setState(() {
+                                                _cardData
+                                                    .selectedOtherCategoryIds
+                                                    .remove(categoryId);
+                                              });
+                                            },
+                                            materialTapTargetSize:
+                                                MaterialTapTargetSize
+                                                    .shrinkWrap,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 0),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            labelPadding:
+                                                const EdgeInsets.symmetric(
+                                                    horizontal: 4.0),
+                                            deleteIconColor: Colors.grey[600],
+                                            deleteButtonTooltipMessage:
+                                                'Remove category',
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
+                                  Center(
+                                    child: TextButton.icon(
+                                      icon: const Icon(Icons.add, size: 20),
+                                      label:
+                                          const Text('Assign more categories'),
+                                      onPressed:
+                                          _showOtherCategoriesSelectionDialog,
+                                      style: TextButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          // Spacer
-                          if (_cardData.websiteController.text.isNotEmpty)
-                            const SizedBox(width: 4),
+                              // --- END ADDED ---
 
-                          // Paste button (second)
-                          InkWell(
-                            onTap: withHeavyTap(_pasteWebsiteUrlFromClipboard),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(4.0),
-                              child: Icon(Icons.content_paste,
-                                  size: 22, color: Color(0xFF1F2A44)),
-                            ),
-                          ),
+                              SizedBox(height: 16),
 
-                          // Spacer
-                          const SizedBox(width: 4),
+                              // Color Category Selection Button
+                              Text('Color Category',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(color: Colors.grey[600])),
+                              const SizedBox(height: 4),
+                              OutlinedButton(
+                                onPressed: _isLoadingCategories
+                                    ? null
+                                    : _showColorCategorySelectionDialog,
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 15),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8.0)),
+                                  side: BorderSide(
+                                      color: AppColors.backgroundColorDark),
+                                  alignment: Alignment.centerLeft,
+                                  backgroundColor: Colors.white,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        // Display selected category color circle
+                                        Container(
+                                          width: 18,
+                                          height: 18,
+                                          decoration: BoxDecoration(
+                                              color:
+                                                  _getColorForSelectedCategory(), // Use helper
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                  color: Colors.grey.shade400,
+                                                  width: 1)),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          _getSelectedColorCategoryObject()
+                                                  ?.name ??
+                                              'Select Color Category',
+                                          style: TextStyle(
+                                            color: _cardData
+                                                        .selectedColorCategoryId !=
+                                                    null
+                                                ? Theme.of(context)
+                                                    .textTheme
+                                                    .bodyLarge
+                                                    ?.color
+                                                : Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const Icon(Icons.arrow_drop_down,
+                                        color: Colors.grey),
+                                  ],
+                                ),
+                              ),
+                              SizedBox(
+                                  height: _cardData
+                                          .selectedOtherColorCategoryIds
+                                          .isNotEmpty
+                                      ? 16
+                                      : 1),
 
-                          // Launch button (last)
-                          InkWell(
-                            onTap: withHeavyTap(_cardData
-                                        .websiteController.text.isNotEmpty &&
-                                    _isValidUrl(
-                                        _cardData.websiteController.text.trim())
-                                ? () => _launchUrl(
-                                    _cardData.websiteController.text.trim())
-                                : null),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
-                              child: Icon(Icons.launch,
-                                  size: 22,
-                                  color: _cardData.websiteController.text
-                                              .isNotEmpty &&
-                                          _isValidUrl(_cardData
-                                              .websiteController.text
-                                              .trim())
-                                      ? AppColors.teal
-                                      : Colors.grey),
-                            ),
-                          ),
-                        ],
-                      )
-                      // --- END MODIFICATION ---
-                      ),
-                  keyboardType: TextInputType.url,
-                  validator: (value) {
-                    if (value != null &&
-                        value.isNotEmpty &&
-                        !_isValidUrl(value)) {
-                      return 'Please enter a valid URL (http/https)';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: 16),
+                              // --- ADDED: Other Color Categories Selection ---
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (_cardData.selectedOtherColorCategoryIds
+                                      .isNotEmpty) ...[
+                                    Text('Other Color Categories',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                                color: Colors.grey[600])),
+                                    const SizedBox(height: 4),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12.0),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        border: Border.all(
+                                            color:
+                                                AppColors.backgroundColorDark),
+                                        borderRadius:
+                                            BorderRadius.circular(8.0),
+                                      ),
+                                      child: Wrap(
+                                        spacing: 6.0,
+                                        runSpacing: 6.0,
+                                        children: _cardData
+                                            .selectedOtherColorCategoryIds
+                                            .map((colorCategoryId) {
+                                          final colorCategory =
+                                              _currentColorCategories
+                                                  .firstWhereOrNull((cat) =>
+                                                      cat.id ==
+                                                      colorCategoryId);
+                                          if (colorCategory == null) {
+                                            return const SizedBox.shrink();
+                                          }
+                                          return Chip(
+                                            backgroundColor: Colors.white,
+                                            avatar: Container(
+                                              width: 18,
+                                              height: 18,
+                                              decoration: BoxDecoration(
+                                                color: colorCategory.color,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            label: Text(colorCategory.name),
+                                            onDeleted: () {
+                                              setState(() {
+                                                _cardData
+                                                    .selectedOtherColorCategoryIds
+                                                    .remove(colorCategoryId);
+                                              });
+                                            },
+                                            materialTapTargetSize:
+                                                MaterialTapTargetSize
+                                                    .shrinkWrap,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 0),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            labelPadding:
+                                                const EdgeInsets.symmetric(
+                                                    horizontal: 4.0),
+                                            deleteIconColor: Colors.grey[600],
+                                            deleteButtonTooltipMessage:
+                                                'Remove color category',
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
+                                  Center(
+                                    child: TextButton.icon(
+                                      icon: const Icon(Icons.add, size: 20),
+                                      label: const Text(
+                                          'Assign more color categories'),
+                                      onPressed:
+                                          _showOtherColorCategoriesSelectionDialog,
+                                      style: TextButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              // --- END ADDED ---
 
-                // Notes field (using description/additionalNotes)
-                TextFormField(
-                  controller: _cardData.notesController,
-                  decoration: InputDecoration(
-                    labelText: 'Notes (optional)', // Or 'Description'
-                    border: OutlineInputBorder(),
-                    enabledBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: AppColors.backgroundColorDark,
-                      ),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: AppColors.backgroundColorDark,
-                        width: 2,
-                      ),
-                    ),
-                    prefixIcon: Icon(Icons.notes),
-                    alignLabelWithHint: true,
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                  keyboardType: TextInputType.multiline,
-                  minLines: 3,
-                  maxLines: null,
-                ),
-                const SizedBox(height: 16), // Bottom padding for scroll content
+                              SizedBox(height: 16),
+
+                              // Official website
+                              TextFormField(
+                                controller: _cardData.websiteController,
+                                decoration: InputDecoration(
+                                    labelText: 'Official Website (optional)',
+                                    border: OutlineInputBorder(),
+                                    enabledBorder: const OutlineInputBorder(
+                                      borderSide: BorderSide(
+                                        color: AppColors.backgroundColorDark,
+                                      ),
+                                    ),
+                                    focusedBorder: const OutlineInputBorder(
+                                      borderSide: BorderSide(
+                                        color: AppColors.backgroundColorDark,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    prefixIcon: Icon(
+                                      Icons.language,
+                                      color: _cardData
+                                              .websiteController.text.isNotEmpty
+                                          ? AppColors.teal
+                                          : null,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                    // --- MODIFIED: Add Paste button to suffix ---
+                                    suffixIconConstraints:
+                                        BoxConstraints.tightFor(
+                                            width:
+                                                110, // Keep width for three icons
+                                            height: 48),
+                                    suffixIcon: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment: MainAxisAlignment.end,
+                                      children: <Widget>[
+                                        // Clear button (first)
+                                        if (_cardData
+                                            .websiteController.text.isNotEmpty)
+                                          InkWell(
+                                            onTap: withHeavyTap(() {
+                                              _cardData.websiteController
+                                                  .clear();
+                                            }),
+                                            borderRadius:
+                                                BorderRadius.circular(16),
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.all(4.0),
+                                              child:
+                                                  Icon(Icons.clear, size: 22),
+                                            ),
+                                          ),
+                                        // Spacer
+                                        if (_cardData
+                                            .websiteController.text.isNotEmpty)
+                                          const SizedBox(width: 4),
+
+                                        // Paste button (second)
+                                        InkWell(
+                                          onTap: withHeavyTap(
+                                              _pasteWebsiteUrlFromClipboard),
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(4.0),
+                                            child: Icon(Icons.content_paste,
+                                                size: 22,
+                                                color: Color(0xFF1F2A44)),
+                                          ),
+                                        ),
+
+                                        // Spacer
+                                        const SizedBox(width: 4),
+
+                                        // Launch button (last)
+                                        InkWell(
+                                          onTap: withHeavyTap(_cardData
+                                                      .websiteController
+                                                      .text
+                                                      .isNotEmpty &&
+                                                  _isValidUrl(_cardData
+                                                      .websiteController.text
+                                                      .trim())
+                                              ? () => _launchUrl(_cardData
+                                                  .websiteController.text
+                                                  .trim())
+                                              : null),
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                          child: Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                                4.0, 4.0, 8.0, 4.0),
+                                            child: Icon(Icons.launch,
+                                                size: 22,
+                                                color: _cardData
+                                                            .websiteController
+                                                            .text
+                                                            .isNotEmpty &&
+                                                        _isValidUrl(_cardData
+                                                            .websiteController
+                                                            .text
+                                                            .trim())
+                                                    ? AppColors.teal
+                                                    : Colors.grey),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                    // --- END MODIFICATION ---
+                                    ),
+                                keyboardType: TextInputType.url,
+                                validator: (value) {
+                                  if (value != null &&
+                                      value.isNotEmpty &&
+                                      !_isValidUrl(value)) {
+                                    return 'Please enter a valid URL (http/https)';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              SizedBox(height: 16),
+
+                              // Notes field (using description/additionalNotes)
+                              TextFormField(
+                                controller: _cardData.notesController,
+                                decoration: InputDecoration(
+                                  labelText:
+                                      'Notes (optional)', // Or 'Description'
+                                  border: OutlineInputBorder(),
+                                  enabledBorder: const OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: AppColors.backgroundColorDark,
+                                    ),
+                                  ),
+                                  focusedBorder: const OutlineInputBorder(
+                                    borderSide: BorderSide(
+                                      color: AppColors.backgroundColorDark,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  prefixIcon: Icon(Icons.notes),
+                                  alignLabelWithHint: true,
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                ),
+                                keyboardType: TextInputType.multiline,
+                                minLines: 3,
+                                maxLines: null,
+                              ),
+                              const SizedBox(
+                                  height:
+                                      16), // Bottom padding for scroll content
                             ],
                           ),
                         ),
@@ -2142,7 +2256,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   ),
                   // --- Fixed Action Buttons at Bottom ---
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
                       color: AppColors.backgroundColor,
                       boxShadow: [
@@ -2395,8 +2510,8 @@ class _OtherCategoriesSelectionDialogState
                             final category = filteredCategories[index];
                             final bool isSelected =
                                 _selectedIds.contains(category.id);
-                            final sharedLabel =
-                                _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                            final sharedLabel = _sharedOwnerLabel(
+                                category.sharedOwnerDisplayName);
                             return CheckboxListTile(
                               title: Text(category.name),
                               subtitle: sharedLabel != null
@@ -2640,8 +2755,8 @@ class _OtherColorCategoriesSelectionDialogState
                             final category = filteredCategories[index];
                             final bool isSelected =
                                 _selectedIds.contains(category.id);
-                            final sharedLabel =
-                                _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                            final sharedLabel = _sharedOwnerLabel(
+                                category.sharedOwnerDisplayName);
                             return CheckboxListTile(
                               title: Text(category.name),
                               subtitle: sharedLabel != null
@@ -2659,7 +2774,8 @@ class _OtherColorCategoriesSelectionDialogState
                                 decoration: BoxDecoration(
                                   color: category.color,
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.grey.shade400),
+                                  border:
+                                      Border.all(color: Colors.grey.shade400),
                                 ),
                               ),
                               value: isSelected,

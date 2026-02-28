@@ -23,6 +23,9 @@ import 'experience_page_screen.dart';
 import 'public_profile_screen.dart';
 import 'share_preview_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/chat_help_content.dart';
+import '../models/chat_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -38,7 +41,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   late final MessageService _messageService;
   late final ExperienceService _experienceService;
   final TextEditingController _messageController = TextEditingController();
@@ -48,6 +51,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _isEditingTitle = false;
   bool _isSavingTitle = false;
+  late final ScreenHelpController<ChatHelpTargetId> _help;
 
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
@@ -56,6 +60,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<ChatHelpTargetId>(
+      vsync: this,
+      content: chatHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: ChatHelpTargetId.helpButton,
+    );
     _messageService = MessageService();
     _experienceService = ExperienceService();
 
@@ -65,6 +76,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _help.dispose();
     _messageController.dispose();
     _titleController.dispose();
     _scrollController.dispose();
@@ -264,138 +276,171 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context, threadSnapshot) {
         final thread = threadSnapshot.data ?? widget.thread;
         final title = _buildTitle(thread);
-        return Scaffold(
-          backgroundColor: AppColors.backgroundColorDark,
-          appBar: AppBar(
-            backgroundColor: AppColors.backgroundColorDark,
-            foregroundColor: Colors.black,
-            leading: BackButton(onPressed: _handleBackPressed),
-            title: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              child: _isEditingTitle
-                  ? SizedBox(
-                      key: const ValueKey('editingTitleField'),
-                      height: 40,
-                      child: Focus(
-                        onFocusChange: (hasFocus) {
-                          if (!hasFocus) {
-                            _saveThreadTitle(thread);
-                          }
-                        },
-                        child: TextField(
-                          controller: _titleController,
-                          focusNode: _titleFocusNode,
-                          autofocus: true,
-                          enabled: !_isSavingTitle,
-                          textInputAction: TextInputAction.done,
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                            hintText: 'Name this chat',
-                            isDense: true,
-                          ),
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          onSubmitted: (_) => _saveThreadTitle(thread),
-                        ),
-                      ),
-                    )
-                  : GestureDetector(
-                      key: const ValueKey('displayTitle'),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: withHeavyTap(() => _startEditingTitle(title)),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              title,
-                              overflow: TextOverflow.ellipsis,
+        return Stack(
+          children: [
+            Scaffold(
+              backgroundColor: AppColors.backgroundColorDark,
+              appBar: AppBar(
+                backgroundColor: AppColors.backgroundColorDark,
+                foregroundColor: Colors.black,
+                leading: BackButton(onPressed: _handleBackPressed),
+                title: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: _isEditingTitle
+                      ? SizedBox(
+                          key: const ValueKey('editingTitleField'),
+                          height: 40,
+                          child: Focus(
+                            onFocusChange: (hasFocus) {
+                              if (!hasFocus) {
+                                _saveThreadTitle(thread);
+                              }
+                            },
+                            child: TextField(
+                              controller: _titleController,
+                              focusNode: _titleFocusNode,
+                              autofocus: true,
+                              enabled: !_isSavingTitle,
+                              textInputAction: TextInputAction.done,
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                hintText: 'Name this chat',
+                                isDense: true,
+                              ),
                               style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w600,
                               ),
+                              onSubmitted: (_) => _saveThreadTitle(thread),
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.edit,
-                            size: 16,
-                            color: Colors.grey.shade600,
+                        )
+                      : GestureDetector(
+                          key: const ValueKey('displayTitle'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: withHeavyTap(() => _startEditingTitle(title)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.edit,
+                                size: 16,
+                                color: Colors.grey.shade600,
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
+                ),
+                actions: [
+                  if (_isEditingTitle)
+                    IconButton(
+                      icon: _isSavingTitle
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check),
+                      onPressed: _isSavingTitle
+                          ? null
+                          : () => _saveThreadTitle(thread),
+                    ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.people,
+                      color: Colors.black,
+                    ),
+                    tooltip: 'Chat members',
+                    onPressed: () => _showParticipantsDialog(thread),
+                  ),
+                  _help.buildIconButton(inactiveColor: Colors.black87),
+                ],
+                bottom: _help.isActive
+                    ? PreferredSize(
+                        preferredSize: const Size.fromHeight(24),
+                        child: _help.buildExitBanner(),
+                      )
+                    : null,
+              ),
+              body: Column(
+                children: [
+                  Expanded(
+                    child: Builder(
+                      builder: (listCtx) => GestureDetector(
+                        behavior: _help.isActive
+                            ? HitTestBehavior.translucent
+                            : HitTestBehavior.deferToChild,
+                        onTap: _help.isActive
+                            ? () => _help.tryTap(
+                                ChatHelpTargetId.messageList, listCtx)
+                            : null,
+                        child: StreamBuilder<List<ChatMessage>>(
+                          stream: _messageService.watchMessages(thread.id),
+                          builder: (context, snapshot) {
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Text(
+                                    'Something went wrong: ${snapshot.error}'),
+                              );
+                            }
+
+                            if (!snapshot.hasData) {
+                              return const Center(
+                                  child: CircularProgressIndicator());
+                            }
+
+                            final messages = snapshot.data!;
+                            if (messages.isEmpty) {
+                              return _buildEmptyThread(thread);
+                            }
+
+                            // Use reverse: true so the list starts at the bottom
+                            // and new messages appear at the bottom naturally
+                            return ListView.builder(
+                              controller: _scrollController,
+                              reverse: true,
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 12, horizontal: 16),
+                              itemCount: messages.length,
+                              itemBuilder: (context, index) {
+                                // Since reverse is true, we need to reverse the index
+                                // to display messages in chronological order (oldest at top)
+                                final reversedIndex =
+                                    messages.length - 1 - index;
+                                final message = messages[reversedIndex];
+                                final isMine =
+                                    message.senderId == widget.currentUserId;
+                                final sender =
+                                    thread.participant(message.senderId);
+                                return _buildMessageHelpTapRegion(
+                                  message: message,
+                                  child: _buildMessageBubble(
+                                      message, isMine, sender),
+                                );
+                              },
+                            );
+                          },
+                        ),
                       ),
                     ),
+                  ),
+                  _buildInputArea(),
+                ],
+              ),
             ),
-            actions: [
-              if (_isEditingTitle)
-                IconButton(
-                  icon: _isSavingTitle
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.check),
-                  onPressed:
-                      _isSavingTitle ? null : () => _saveThreadTitle(thread),
-                ),
-              IconButton(
-                icon: const Icon(
-                  Icons.people,
-                  color: Colors.black,
-                ),
-                tooltip: 'Chat members',
-                onPressed: () => _showParticipantsDialog(thread),
-              ),
-            ],
-          ),
-          body: Column(
-            children: [
-              Expanded(
-                child: StreamBuilder<List<ChatMessage>>(
-                  stream: _messageService.watchMessages(thread.id),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: Text('Something went wrong: ${snapshot.error}'),
-                      );
-                    }
-
-                    if (!snapshot.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    final messages = snapshot.data!;
-                    if (messages.isEmpty) {
-                      return _buildEmptyThread(thread);
-                    }
-
-                    // Use reverse: true so the list starts at the bottom
-                    // and new messages appear at the bottom naturally
-                    return ListView.builder(
-                      controller: _scrollController,
-                      reverse: true,
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 12, horizontal: 16),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        // Since reverse is true, we need to reverse the index
-                        // to display messages in chronological order (oldest at top)
-                        final reversedIndex = messages.length - 1 - index;
-                        final message = messages[reversedIndex];
-                        final isMine = message.senderId == widget.currentUserId;
-                        final sender = thread.participant(message.senderId);
-                        return _buildMessageBubble(message, isMine, sender);
-                      },
-                    );
-                  },
-                ),
-              ),
-              _buildInputArea(),
-            ],
-          ),
+            if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+          ],
         );
       },
     );
@@ -418,6 +463,42 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _buildMessageHelpTapRegion({
+    required ChatMessage message,
+    required Widget child,
+  }) {
+    final target = _helpTargetForMessageType(message.type);
+    return Builder(
+      builder: (targetCtx) => GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _help.isActive ? () => _help.tryTap(target, targetCtx) : null,
+        child: IgnorePointer(
+          ignoring: _help.isActive,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  ChatHelpTargetId _helpTargetForMessageType(MessageType type) {
+    switch (type) {
+      case MessageType.experienceShare:
+        return ChatHelpTargetId.experienceShareMessage;
+      case MessageType.multiExperienceShare:
+        return ChatHelpTargetId.multiExperienceShareMessage;
+      case MessageType.categoryShare:
+        return ChatHelpTargetId.categoryShareMessage;
+      case MessageType.multiCategoryShare:
+        return ChatHelpTargetId.multiCategoryShareMessage;
+      case MessageType.eventShare:
+        return ChatHelpTargetId.eventShareMessage;
+      case MessageType.profileShare:
+        return ChatHelpTargetId.profileShareMessage;
+      case MessageType.text:
+        return ChatHelpTargetId.textMessage;
+    }
+  }
+
   Widget _buildMessageBubble(
     ChatMessage message,
     bool isMine,
@@ -427,27 +508,27 @@ class _ChatScreenState extends State<ChatScreen> {
     if (message.isProfileShare) {
       return _buildProfileShareCard(message, isMine, sender);
     }
-    
+
     // For multi-experience share messages, use a special card layout
     if (message.isMultiExperienceShare) {
       return _buildMultiExperienceShareCard(message, isMine, sender);
     }
-    
+
     // For multi-category share messages, use a special card layout
     if (message.isMultiCategoryShare) {
       return _buildMultiCategoryShareCard(message, isMine, sender);
     }
-    
+
     // For category share messages, use a special card layout
     if (message.isCategoryShare) {
       return _buildCategoryShareCard(message, isMine, sender);
     }
-    
+
     // For event share messages, use a special card layout
     if (message.isEventShare) {
       return _buildEventShareCard(message, isMine, sender);
     }
-    
+
     // For single experience share messages, use a special card layout
     if (message.isExperienceShare) {
       return _buildExperienceShareCard(message, isMine, sender);
@@ -534,7 +615,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-
   Widget _buildProfileShareCard(
     ChatMessage message,
     bool isMine,
@@ -568,9 +648,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final String profileName = displayName?.isNotEmpty == true
         ? displayName!
         : (username?.isNotEmpty == true ? '@$username' : 'Plendy User');
-    final String? subtitleText = displayName?.isNotEmpty == true && username?.isNotEmpty == true
-        ? '@$username'
-        : null;
+    final String? subtitleText =
+        displayName?.isNotEmpty == true && username?.isNotEmpty == true
+            ? '@$username'
+            : null;
 
     final card = Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -596,9 +677,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           Card(
             elevation: 2,
-            color: isMine
-                ? Theme.of(context).primaryColor
-                : Colors.grey.shade100,
+            color:
+                isMine ? Theme.of(context).primaryColor : Colors.grey.shade100,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
@@ -644,9 +724,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: isMine
-                                ? Colors.white70
-                                : Colors.grey.shade600,
+                            color:
+                                isMine ? Colors.white70 : Colors.grey.shade600,
                             letterSpacing: 0.5,
                           ),
                         ),
@@ -755,327 +834,328 @@ class _ChatScreenState extends State<ChatScreen> {
     bool isMine,
     MessageThreadParticipant? sender,
   ) {
-  final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
-  final snapshot = message.experienceSnapshot;
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshot = message.experienceSnapshot;
 
-  if (snapshot == null) {
-    // Fallback if snapshot is missing
-    return Align(
-      alignment: alignment,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(12),
+    if (snapshot == null) {
+      // Fallback if snapshot is missing
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text('Shared an experience'),
         ),
-        child: const Text('Shared an experience'),
-      ),
-    );
-  }
-
-  final experienceName = snapshot['name'] as String? ?? 'Experience';
-  final locationData = snapshot['location'] as Map<String, dynamic>?;
-
-  // Check if this is a discovery preview share (has highlightedMediaUrl)
-  final highlightedMediaUrl = snapshot['highlightedMediaUrl'] as String?;
-  final isDiscoveryPreview =
-      highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
-
-  // Use highlighted media URL for discovery shares, otherwise use the main image
-  final imageUrl = isDiscoveryPreview
-      ? highlightedMediaUrl
-      : (snapshot['image'] as String?);
-
-  // Build location subtitle
-  final List<String> locationParts = [];
-  if (locationData != null) {
-    final city = locationData['city'] as String?;
-    final state = locationData['state'] as String?;
-    if (city != null && city.isNotEmpty) {
-      locationParts.add(city);
+      );
     }
-    if (state != null && state.isNotEmpty) {
-      locationParts.add(state);
+
+    final experienceName = snapshot['name'] as String? ?? 'Experience';
+    final locationData = snapshot['location'] as Map<String, dynamic>?;
+
+    // Check if this is a discovery preview share (has highlightedMediaUrl)
+    final highlightedMediaUrl = snapshot['highlightedMediaUrl'] as String?;
+    final isDiscoveryPreview =
+        highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
+
+    // Use highlighted media URL for discovery shares, otherwise use the main image
+    final imageUrl = isDiscoveryPreview
+        ? highlightedMediaUrl
+        : (snapshot['image'] as String?);
+
+    // Build location subtitle
+    final List<String> locationParts = [];
+    if (locationData != null) {
+      final city = locationData['city'] as String?;
+      final state = locationData['state'] as String?;
+      if (city != null && city.isNotEmpty) {
+        locationParts.add(city);
+      }
+      if (state != null && state.isNotEmpty) {
+        locationParts.add(state);
+      }
     }
-  }
-  final locationText = locationParts.join(', ');
+    final locationText = locationParts.join(', ');
 
     final card = Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
-    constraints: BoxConstraints(
-      maxWidth: MediaQuery.of(context).size.width * 0.75,
-    ),
-    child: Column(
-      crossAxisAlignment:
-          isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (!isMine)
-          Padding(
-            padding: const EdgeInsets.only(left: 8, bottom: 4),
-            child: Row(
-              children: [
-                Text(
-                  '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black54,
-                  ),
-                ),
-                if (isDiscoveryPreview) ...[
-                  const SizedBox(width: 4),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.purple.shade100,
-                      borderRadius: BorderRadius.circular(8),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Row(
+                children: [
+                  Text(
+                    '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black54,
                     ),
-                    child: Text(
-                      'Discovery',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.purple.shade700,
+                  ),
+                  if (isDiscoveryPreview) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.shade100,
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        Card(
-          elevation: 2,
-          color: isMine
-              ? Theme.of(context).primaryColor
-              : Colors.grey.shade300,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Stack(
-            children: [
-              InkWell(
-                onLongPress: message.shareId != null && message.shareId!.isNotEmpty
-                    ? () => _copyShareLinkToClipboard(
-                          'https://plendy.app/shared/${message.shareId}',
-                          'Experience',
-                        )
-                    : null,
-                onTap: withHeavyTap(() async {
-                  if (isDiscoveryPreview) {
-                    // Discovery preview: show media preview modal
-                    await _showMediaPreviewModal(
-                      experienceName: experienceName,
-                      mediaUrl: highlightedMediaUrl,
-                      experienceSnapshot: snapshot,
-                    );
-                  } else {
-                    // Full experience share: open experience directly
-                    final experience = Experience(
-                      id: snapshot['id'] as String? ??
-                          'preview_${DateTime.now().millisecondsSinceEpoch}',
-                      name: experienceName,
-                      description: snapshot['description'] as String? ?? '',
-                      location: Location.fromMap(
-                          snapshot['location'] as Map<String, dynamic>? ??
-                              {}),
-                      createdAt: DateTime.now(),
-                      updatedAt: DateTime.now(),
-                      editorUserIds:
-                          (snapshot['editorUserIds'] as List<dynamic>?)
-                                  ?.map((e) => e.toString())
-                                  .toList() ??
-                              [],
-                      createdBy: snapshot['createdBy'] as String?,
-                      sharedMediaItemIds:
-                          (snapshot['sharedMediaItemIds'] as List<dynamic>?)
-                                  ?.cast<String>() ??
-                              [],
-                    );
-
-                    // Build media items from mediaUrls in snapshot for public content
-                    final mediaUrls =
-                        (snapshot['mediaUrls'] as List<dynamic>?)
-                                ?.cast<String>() ??
-                            [];
-                    final List<SharedMediaItem> fullExperienceMediaItems = [];
-
-                    if (mediaUrls.isNotEmpty) {
-                      for (int i = 0; i < mediaUrls.length; i++) {
-                        fullExperienceMediaItems.add(SharedMediaItem(
-                          id: 'preview_${experience.id}_$i',
-                          path: mediaUrls[i],
-                          createdAt: DateTime.now().subtract(
-                              Duration(seconds: mediaUrls.length - i)),
-                          ownerUserId: 'public_discovery',
-                          experienceIds: [],
-                        ));
-                      }
-                    }
-
-                    await _handleViewExperience(
-                        experience, snapshot, fullExperienceMediaItems);
-                  }
-                }),
-                borderRadius: BorderRadius.circular(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (imageUrl != null && imageUrl.isNotEmpty)
-                      if (isDiscoveryPreview)
-                        GestureDetector(
-                          onTap: withHeavyTap(() => _openLink(Uri.parse(imageUrl))),
-                          child: Container(
-                            height: 120,
-                            decoration: BoxDecoration(
-                              color: AppColors.backgroundColor,
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(12),
-                              ),
-                            ),
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  FaIcon(
-                                    _getMediaIcon(imageUrl),
-                                    size: 56,
-                                    color: _getMediaIconColor(imageUrl),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Open in ${_getMediaLabel(imageUrl)}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                      color: _getMediaIconColor(imageUrl),
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        )
-                      else
-                        ClipRRect(
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(12),
-                          ),
-                          child: Image.network(
-                            imageUrl,
-                            height: 180,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                height: 180,
-                                color: Colors.grey.shade300,
-                                child: const Icon(
-                                  Icons.image_not_supported,
-                                  size: 48,
-                                  color: Colors.grey,
-                                ),
-                              );
-                            },
-                          ),
+                      child: Text(
+                        'Discovery',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.purple.shade700,
                         ),
-                    Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Header
-                          Text(
-                            isDiscoveryPreview ? 'Shared Discovery' : 'Shared Experience',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: isMine
-                                  ? Colors.white70
-                                  : Colors.grey.shade600,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  experienceName,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: isMine
-                                        ? Colors.white
-                                        : Colors.black,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Icon(
-                                Icons.arrow_forward_ios,
-                                size: 16,
-                                color: isMine ? Colors.white : Colors.grey,
-                              ),
-                            ],
-                          ),
-                          if (locationText.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.place_outlined,
-                                  size: 14,
-                                  color:
-                                      isMine ? Colors.white : Colors.grey,
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    locationText,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: isMine
-                                          ? Colors.white
-                                          : Colors.grey.shade700,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
                       ),
                     ),
                   ],
-                ),
+                ],
               ),
-            ],
+            ),
+          Card(
+            elevation: 2,
+            color:
+                isMine ? Theme.of(context).primaryColor : Colors.grey.shade300,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Stack(
+              children: [
+                InkWell(
+                  onLongPress:
+                      message.shareId != null && message.shareId!.isNotEmpty
+                          ? () => _copyShareLinkToClipboard(
+                                'https://plendy.app/shared/${message.shareId}',
+                                'Experience',
+                              )
+                          : null,
+                  onTap: withHeavyTap(() async {
+                    if (isDiscoveryPreview) {
+                      // Discovery preview: show media preview modal
+                      await _showMediaPreviewModal(
+                        experienceName: experienceName,
+                        mediaUrl: highlightedMediaUrl,
+                        experienceSnapshot: snapshot,
+                      );
+                    } else {
+                      // Full experience share: open experience directly
+                      final experience = Experience(
+                        id: snapshot['id'] as String? ??
+                            'preview_${DateTime.now().millisecondsSinceEpoch}',
+                        name: experienceName,
+                        description: snapshot['description'] as String? ?? '',
+                        location: Location.fromMap(
+                            snapshot['location'] as Map<String, dynamic>? ??
+                                {}),
+                        createdAt: DateTime.now(),
+                        updatedAt: DateTime.now(),
+                        editorUserIds:
+                            (snapshot['editorUserIds'] as List<dynamic>?)
+                                    ?.map((e) => e.toString())
+                                    .toList() ??
+                                [],
+                        createdBy: snapshot['createdBy'] as String?,
+                        sharedMediaItemIds:
+                            (snapshot['sharedMediaItemIds'] as List<dynamic>?)
+                                    ?.cast<String>() ??
+                                [],
+                      );
+
+                      // Build media items from mediaUrls in snapshot for public content
+                      final mediaUrls =
+                          (snapshot['mediaUrls'] as List<dynamic>?)
+                                  ?.cast<String>() ??
+                              [];
+                      final List<SharedMediaItem> fullExperienceMediaItems = [];
+
+                      if (mediaUrls.isNotEmpty) {
+                        for (int i = 0; i < mediaUrls.length; i++) {
+                          fullExperienceMediaItems.add(SharedMediaItem(
+                            id: 'preview_${experience.id}_$i',
+                            path: mediaUrls[i],
+                            createdAt: DateTime.now().subtract(
+                                Duration(seconds: mediaUrls.length - i)),
+                            ownerUserId: 'public_discovery',
+                            experienceIds: [],
+                          ));
+                        }
+                      }
+
+                      await _handleViewExperience(
+                          experience, snapshot, fullExperienceMediaItems);
+                    }
+                  }),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (imageUrl != null && imageUrl.isNotEmpty)
+                        if (isDiscoveryPreview)
+                          GestureDetector(
+                            onTap: withHeavyTap(
+                                () => _openLink(Uri.parse(imageUrl))),
+                            child: Container(
+                              height: 120,
+                              decoration: BoxDecoration(
+                                color: AppColors.backgroundColor,
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(12),
+                                ),
+                              ),
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    FaIcon(
+                                      _getMediaIcon(imageUrl),
+                                      size: 56,
+                                      color: _getMediaIconColor(imageUrl),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Open in ${_getMediaLabel(imageUrl)}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: _getMediaIconColor(imageUrl),
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          ClipRRect(
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(12),
+                            ),
+                            child: Image.network(
+                              imageUrl,
+                              height: 180,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  height: 180,
+                                  color: Colors.grey.shade300,
+                                  child: const Icon(
+                                    Icons.image_not_supported,
+                                    size: 48,
+                                    color: Colors.grey,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                      Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header
+                            Text(
+                              isDiscoveryPreview
+                                  ? 'Shared Discovery'
+                                  : 'Shared Experience',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    experienceName,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color:
+                                          isMine ? Colors.white : Colors.black,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 16,
+                                  color: isMine ? Colors.white : Colors.grey,
+                                ),
+                              ],
+                            ),
+                            if (locationText.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.place_outlined,
+                                    size: 14,
+                                    color: isMine ? Colors.white : Colors.grey,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      locationText,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: isMine
+                                            ? Colors.white
+                                            : Colors.grey.shade700,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
-
-  if (isMine) {
-    return Align(
-      alignment: alignment,
-      child: card,
+        ],
+      ),
     );
-  }
 
-  final avatarParticipant =
-      sender ?? MessageThreadParticipant(id: message.senderId);
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: card,
+      );
+    }
 
-  return Align(
-    alignment: Alignment.centerLeft,
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1088,9 +1168,9 @@ class _ChatScreenState extends State<ChatScreen> {
           const SizedBox(width: 8),
           Flexible(child: card),
         ],
-    ),
-  );
-}
+      ),
+    );
+  }
 
   Widget _buildMultiExperienceShareCard(
     ChatMessage message,
@@ -1117,16 +1197,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final int count = snapshots.length;
-    
+
     // Get the first 3 experience names for preview
-    final previewNames = snapshots
-        .take(3)
-        .map((s) {
-          final snap = s['snapshot'] as Map<String, dynamic>?;
-          return snap?['name'] as String? ?? 'Experience';
-        })
-        .toList();
-    
+    final previewNames = snapshots.take(3).map((s) {
+      final snap = s['snapshot'] as Map<String, dynamic>?;
+      return snap?['name'] as String? ?? 'Experience';
+    }).toList();
+
     // Get first experience's image for the card thumbnail
     String? thumbnailUrl;
     String? firstIcon;
@@ -1172,20 +1249,21 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           Card(
             elevation: 2,
-            color: isMine
-                ? Theme.of(context).primaryColor
-                : Colors.grey.shade300,
+            color:
+                isMine ? Theme.of(context).primaryColor : Colors.grey.shade300,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: withHeavyTap(() => _openMultiExperiencePreview(message.shareId, snapshots, message.senderId)),
-              onLongPress: message.shareId != null && message.shareId!.isNotEmpty
-                  ? () => _copyShareLinkToClipboard(
-                        'https://plendy.app/shared/${message.shareId}',
-                        'Experiences',
-                      )
-                  : null,
+              onTap: withHeavyTap(() => _openMultiExperiencePreview(
+                  message.shareId, snapshots, message.senderId)),
+              onLongPress:
+                  message.shareId != null && message.shareId!.isNotEmpty
+                      ? () => _copyShareLinkToClipboard(
+                            'https://plendy.app/shared/${message.shareId}',
+                            'Experiences',
+                          )
+                      : null,
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1254,9 +1332,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: isMine
-                                ? Colors.white70
-                                : Colors.grey.shade600,
+                            color:
+                                isMine ? Colors.white70 : Colors.grey.shade600,
                             letterSpacing: 0.5,
                           ),
                         ),
@@ -1271,33 +1348,33 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(height: 4),
                         ...previewNames.map((name) => Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.place_outlined,
-                                size: 14,
-                                color: isMine
-                                    ? Colors.white70
-                                    : Colors.grey.shade600,
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  name,
-                                  style: TextStyle(
-                                    fontSize: 13,
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.place_outlined,
+                                    size: 14,
                                     color: isMine
                                         ? Colors.white70
-                                        : Colors.grey.shade700,
+                                        : Colors.grey.shade600,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      name,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: isMine
+                                            ? Colors.white70
+                                            : Colors.grey.shade700,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        )),
+                            )),
                         if (count > 3)
                           Padding(
                             padding: const EdgeInsets.only(top: 4),
@@ -1417,7 +1494,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final int? colorValue = snapshot['color'] as int?;
     final String categoryType = snapshot['categoryType'] as String? ?? 'user';
     final String accessMode = snapshot['accessMode'] as String? ?? 'view';
-    final List<dynamic> experiences = snapshot['experiences'] as List<dynamic>? ?? [];
+    final List<dynamic> experiences =
+        snapshot['experiences'] as List<dynamic>? ?? [];
     final int experienceCount = experiences.length;
 
     // Determine display color
@@ -1452,18 +1530,21 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           Card(
             elevation: 2,
-            color: isMine ? Theme.of(context).primaryColor : Colors.grey.shade100,
+            color:
+                isMine ? Theme.of(context).primaryColor : Colors.grey.shade100,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: withHeavyTap(() => _openCategoryPreview(message.shareId, snapshot)),
-              onLongPress: message.shareId != null && message.shareId!.isNotEmpty
-                  ? () => _copyShareLinkToClipboard(
-                        'https://plendy.app/shared-category/${message.shareId}',
-                        'Category',
-                      )
-                  : null,
+              onTap: withHeavyTap(
+                  () => _openCategoryPreview(message.shareId, snapshot)),
+              onLongPress:
+                  message.shareId != null && message.shareId!.isNotEmpty
+                      ? () => _copyShareLinkToClipboard(
+                            'https://plendy.app/shared-category/${message.shareId}',
+                            'Category',
+                          )
+                      : null,
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1512,13 +1593,14 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         // Header
                         Text(
-                          categoryType == 'color' ? 'Shared Color Category' : 'Shared Category',
+                          categoryType == 'color'
+                              ? 'Shared Color Category'
+                              : 'Shared Category',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: isMine
-                                ? Colors.white70
-                                : Colors.grey.shade600,
+                            color:
+                                isMine ? Colors.white70 : Colors.grey.shade600,
                             letterSpacing: 0.5,
                           ),
                         ),
@@ -1559,7 +1641,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         Row(
                           children: [
                             Icon(
-                              accessMode == 'edit' ? Icons.edit_outlined : Icons.visibility_outlined,
+                              accessMode == 'edit'
+                                  ? Icons.edit_outlined
+                                  : Icons.visibility_outlined,
                               size: 14,
                               color: isMine
                                   ? Colors.white70
@@ -1567,7 +1651,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              accessMode == 'edit' ? 'Edit access' : 'View access',
+                              accessMode == 'edit'
+                                  ? 'Edit access'
+                                  : 'View access',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isMine
@@ -1642,11 +1728,14 @@ class _ChatScreenState extends State<ChatScreen> {
     // For now, show a snackbar indicating this feature is coming
     // In the future, this could navigate to a category preview screen
     final String categoryName = snapshot['name'] as String? ?? 'Category';
-    final List<dynamic> experiences = snapshot['experiences'] as List<dynamic>? ?? [];
-    
+    final List<dynamic> experiences =
+        snapshot['experiences'] as List<dynamic>? ?? [];
+
     if (experiences.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Category "$categoryName" has no experiences to show')),
+        SnackBar(
+            content:
+                Text('Category "$categoryName" has no experiences to show')),
       );
       return;
     }
@@ -1686,7 +1775,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    
+
     // Navigate to SharePreviewScreen with pre-loaded snapshots
     // This avoids the need to fetch from Firestore again
     Navigator.of(context).push(
@@ -1724,13 +1813,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final int count = snapshots.length;
-    
+
     // Get the first 3 category names for preview
     final previewNames = snapshots
         .take(3)
         .map((s) => s['name'] as String? ?? 'Category')
         .toList();
-    
+
     // Get first category's icon/color for the card header
     String? firstIcon;
     Color? firstColor;
@@ -1767,20 +1856,21 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           Card(
             elevation: 2,
-            color: isMine
-                ? Theme.of(context).primaryColor
-                : Colors.grey.shade100,
+            color:
+                isMine ? Theme.of(context).primaryColor : Colors.grey.shade100,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: withHeavyTap(() => _openMultiCategoryPreview(message.shareId, snapshots)),
-              onLongPress: message.shareId != null && message.shareId!.isNotEmpty
-                  ? () => _copyShareLinkToClipboard(
-                        'https://plendy.app/shared-category/${message.shareId}',
-                        'Categories',
-                      )
-                  : null,
+              onTap: withHeavyTap(
+                  () => _openMultiCategoryPreview(message.shareId, snapshots)),
+              onLongPress:
+                  message.shareId != null && message.shareId!.isNotEmpty
+                      ? () => _copyShareLinkToClipboard(
+                            'https://plendy.app/shared-category/${message.shareId}',
+                            'Categories',
+                          )
+                      : null,
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1849,9 +1939,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: isMine
-                                ? Colors.white70
-                                : Colors.grey.shade600,
+                            color:
+                                isMine ? Colors.white70 : Colors.grey.shade600,
                             letterSpacing: 0.5,
                           ),
                         ),
@@ -1866,33 +1955,33 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(height: 4),
                         ...previewNames.map((name) => Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.folder_outlined,
-                                size: 14,
-                                color: isMine
-                                    ? Colors.white70
-                                    : Colors.grey.shade600,
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  name,
-                                  style: TextStyle(
-                                    fontSize: 13,
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.folder_outlined,
+                                    size: 14,
                                     color: isMine
                                         ? Colors.white70
-                                        : Colors.grey.shade700,
+                                        : Colors.grey.shade600,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      name,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: isMine
+                                            ? Colors.white70
+                                            : Colors.grey.shade700,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        )),
+                            )),
                         if (count > 3)
                           Padding(
                             padding: const EdgeInsets.only(top: 4),
@@ -1968,7 +2057,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _openMultiCategoryPreview(String? shareId, List<Map<String, dynamic>> snapshots) {
+  void _openMultiCategoryPreview(
+      String? shareId, List<Map<String, dynamic>> snapshots) {
     if (snapshots.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No categories to display')),
@@ -1979,7 +2069,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // Combine all experiences from all categories
     final List<Map<String, dynamic>> allExperiences = [];
     for (final categorySnapshot in snapshots) {
-      final experiences = categorySnapshot['experiences'] as List<dynamic>? ?? [];
+      final experiences =
+          categorySnapshot['experiences'] as List<dynamic>? ?? [];
       for (final exp in experiences) {
         if (exp is Map<String, dynamic>) {
           allExperiences.add({
@@ -1992,7 +2083,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (allExperiences.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No experiences in the shared categories')),
+        const SnackBar(
+            content: Text('No experiences in the shared categories')),
       );
       return;
     }
@@ -2038,7 +2130,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final String? eventDescription = snapshot['description'] as String?;
     final String? startDateStr = snapshot['startDate'] as String?;
     final String? endDateStr = snapshot['endDate'] as String?;
-    final List<dynamic> experiences = snapshot['experiences'] as List<dynamic>? ?? [];
+    final List<dynamic> experiences =
+        snapshot['experiences'] as List<dynamic>? ?? [];
     final int experienceCount = experiences.length;
 
     // Parse date for display
@@ -2046,11 +2139,26 @@ class _ChatScreenState extends State<ChatScreen> {
     if (startDateStr != null) {
       try {
         final startDate = DateTime.parse(startDateStr);
-        final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        dateDisplay = '${months[startDate.month - 1]} ${startDate.day}, ${startDate.year}';
+        final months = [
+          'Jan',
+          'Feb',
+          'Mar',
+          'Apr',
+          'May',
+          'Jun',
+          'Jul',
+          'Aug',
+          'Sep',
+          'Oct',
+          'Nov',
+          'Dec'
+        ];
+        dateDisplay =
+            '${months[startDate.month - 1]} ${startDate.day}, ${startDate.year}';
         if (endDateStr != null && endDateStr != startDateStr) {
           final endDate = DateTime.parse(endDateStr);
-          dateDisplay += ' - ${months[endDate.month - 1]} ${endDate.day}, ${endDate.year}';
+          dateDisplay +=
+              ' - ${months[endDate.month - 1]} ${endDate.day}, ${endDate.year}';
         }
       } catch (_) {
         // Keep dateDisplay empty if parsing fails
@@ -2081,14 +2189,14 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           Card(
             elevation: 2,
-            color: isMine
-                ? Theme.of(context).primaryColor
-                : Colors.grey.shade100,
+            color:
+                isMine ? Theme.of(context).primaryColor : Colors.grey.shade100,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: withHeavyTap(() => _openEventPreview(message.shareId, snapshot)),
+              onTap: withHeavyTap(
+                  () => _openEventPreview(message.shareId, snapshot)),
               onLongPress: () {
                 // Use shareToken from event snapshot if available
                 final String? shareToken = snapshot['shareToken'] as String?;
@@ -2097,7 +2205,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     'https://plendy.app/shared-event/$shareToken',
                     'Event',
                   );
-                } else if (message.shareId != null && message.shareId!.isNotEmpty) {
+                } else if (message.shareId != null &&
+                    message.shareId!.isNotEmpty) {
                   _copyShareLinkToClipboard(
                     'https://plendy.app/shared-event/${message.shareId}',
                     'Event',
@@ -2150,9 +2259,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: isMine
-                                ? Colors.white70
-                                : Colors.grey.shade600,
+                            color:
+                                isMine ? Colors.white70 : Colors.grey.shade600,
                             letterSpacing: 0.5,
                           ),
                         ),
@@ -2195,7 +2303,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           ),
                         ],
-                        if (eventDescription != null && eventDescription.isNotEmpty) ...[
+                        if (eventDescription != null &&
+                            eventDescription.isNotEmpty) ...[
                           const SizedBox(height: 4),
                           Text(
                             eventDescription,
@@ -2348,7 +2457,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
       List<Experience> experiences = [];
       if (experienceIds.isNotEmpty) {
-        experiences = await experienceService.getExperiencesByIds(experienceIds);
+        experiences =
+            await experienceService.getExperiencesByIds(experienceIds);
       }
 
       // Fetch the planner's categories for proper category icon display
@@ -2368,19 +2478,24 @@ class _ChatScreenState extends State<ChatScreen> {
         if (exp.colorCategoryId != null && exp.colorCategoryId!.isNotEmpty) {
           colorCategoryIds.add(exp.colorCategoryId!);
         }
-        colorCategoryIds.addAll(exp.otherColorCategoryIds.where((id) => id.isNotEmpty));
+        colorCategoryIds
+            .addAll(exp.otherColorCategoryIds.where((id) => id.isNotEmpty));
       }
 
       for (final entry in event.experiences) {
-        if (entry.inlineCategoryId != null && entry.inlineCategoryId!.isNotEmpty) {
+        if (entry.inlineCategoryId != null &&
+            entry.inlineCategoryId!.isNotEmpty) {
           categoryIds.add(entry.inlineCategoryId!);
         }
-        categoryIds.addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+        categoryIds
+            .addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
 
-        if (entry.inlineColorCategoryId != null && entry.inlineColorCategoryId!.isNotEmpty) {
+        if (entry.inlineColorCategoryId != null &&
+            entry.inlineColorCategoryId!.isNotEmpty) {
           colorCategoryIds.add(entry.inlineColorCategoryId!);
         }
-        colorCategoryIds.addAll(entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
+        colorCategoryIds.addAll(
+            entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
       }
 
       // Fetch the planner's categories by IDs
@@ -2392,18 +2507,21 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
       } catch (e) {
-        debugPrint('ChatScreen: Failed to fetch planner categories for event ${event.id}: $e');
+        debugPrint(
+            'ChatScreen: Failed to fetch planner categories for event ${event.id}: $e');
       }
 
       try {
         if (colorCategoryIds.isNotEmpty) {
-          colorCategories = await experienceService.getColorCategoriesByOwnerAndIds(
+          colorCategories =
+              await experienceService.getColorCategoriesByOwnerAndIds(
             event.plannerUserId,
             colorCategoryIds.toList(),
           );
         }
       } catch (e) {
-        debugPrint('ChatScreen: Failed to fetch planner color categories for event ${event.id}: $e');
+        debugPrint(
+            'ChatScreen: Failed to fetch planner color categories for event ${event.id}: $e');
       }
 
       if (mounted) {
@@ -2483,28 +2601,46 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _messageController,
-                minLines: 1,
-                maxLines: 5,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _sendMessage(),
-                decoration: const InputDecoration(
-                  hintText: 'Type a message',
-                  border: InputBorder.none,
+              child: Builder(
+                builder: (composerCtx) => GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _help.isActive
+                      ? () => _help.tryTap(
+                            ChatHelpTargetId.messageComposer,
+                            composerCtx,
+                          )
+                      : null,
+                  child: IgnorePointer(
+                    ignoring: _help.isActive,
+                    child: TextField(
+                      controller: _messageController,
+                      minLines: 1,
+                      maxLines: 5,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _sendMessage(),
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message',
+                        border: InputBorder.none,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-            IconButton(
-              icon: _sending
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.send),
-              color: Theme.of(context).primaryColor,
-              onPressed: _sending ? null : _sendMessage,
+            Builder(
+              builder: (sendCtx) => IconButton(
+                icon: _sending
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send),
+                color: Theme.of(context).primaryColor,
+                onPressed: _help.isActive
+                    ? () => _help.tryTap(ChatHelpTargetId.sendButton, sendCtx)
+                    : (_sending ? null : _sendMessage),
+              ),
             ),
           ],
         ),

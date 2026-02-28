@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 /// Displays a lightweight placeholder for Yelp links.
 ///
@@ -13,13 +14,22 @@ class YelpPreviewWidget extends StatelessWidget {
   final String yelpUrl;
   final Future<void> Function(String url)? launchUrlCallback;
   final EdgeInsetsGeometry padding;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const YelpPreviewWidget({
     super.key,
     required this.yelpUrl,
     this.launchUrlCallback,
     this.padding = const EdgeInsets.all(16),
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (onHelpTap != null) return onHelpTap!(id, ctx);
+    return false;
+  }
 
   Future<void> _handleTap(BuildContext context) async {
     final callback = launchUrlCallback;
@@ -66,8 +76,11 @@ class YelpPreviewWidget extends StatelessWidget {
     return Semantics(
       button: true,
       label: 'Tap to open Yelp link',
-      child: InkWell(
-        onTap: withHeavyTap(() => _handleTap(context)),
+      child: Builder(builder: (ctx) => InkWell(
+        onTap: withHeavyTap(() {
+          if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+          _handleTap(ctx);
+        }),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           width: double.infinity,
@@ -118,7 +131,7 @@ class YelpPreviewWidget extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      )),
     );
   }
 }

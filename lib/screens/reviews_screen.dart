@@ -14,6 +14,9 @@ import '../services/experience_service.dart';
 import '../widgets/write_review_modal.dart';
 import 'experience_page_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/reviews_help_content.dart';
+import '../models/reviews_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -38,7 +41,8 @@ class ReviewsScreen extends StatefulWidget {
   State<ReviewsScreen> createState() => _ReviewsScreenState();
 }
 
-class _ReviewsScreenState extends State<ReviewsScreen> {
+class _ReviewsScreenState extends State<ReviewsScreen>
+    with TickerProviderStateMixin {
   final ExperienceService _experienceService = ExperienceService();
 
   List<Review> _userReviews = [];
@@ -51,12 +55,26 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   final Map<String, ColorCategory> _colorCategoryCache = {};
 
   String? _currentUserId;
+  late final ScreenHelpController<ReviewsHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<ReviewsHelpTargetId>(
+      vsync: this,
+      content: reviewsHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: ReviewsHelpTargetId.helpButton,
+    );
     _currentUserId = FirebaseAuth.instance.currentUser?.uid;
     _loadUserReviews();
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
   }
 
   /// Load reviews posted by the current user
@@ -66,7 +84,8 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final reviews = await _experienceService.getReviewsByUser(_currentUserId!);
+      final reviews =
+          await _experienceService.getReviewsByUser(_currentUserId!);
 
       // Fetch experience data for each review
       final Set<String> experienceIds = reviews
@@ -256,9 +275,11 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 // Tappable experience info
                 Expanded(
                   child: InkWell(
-                    onTap: withHeavyTap(experience != null
-                        ? () => _navigateToExperience(experience)
-                        : null),
+                    onTap: withHeavyTap(
+                      !_help.isActive && experience != null
+                          ? () => _navigateToExperience(experience)
+                          : null,
+                    ),
                     borderRadius: BorderRadius.circular(8),
                     child: Row(
                       children: [
@@ -331,6 +352,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                       ),
                     // Three-dot menu for edit/delete
                     PopupMenuButton<String>(
+                      enabled: !_help.isActive,
                       color: Colors.white,
                       icon: const Icon(Icons.more_vert, size: 20),
                       onSelected: (value) {
@@ -357,7 +379,8 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                             children: [
                               Icon(Icons.delete, size: 18, color: Colors.red),
                               SizedBox(width: 8),
-                              Text('Delete', style: TextStyle(color: Colors.red)),
+                              Text('Delete',
+                                  style: TextStyle(color: Colors.red)),
                             ],
                           ),
                         ),
@@ -443,7 +466,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
         itemCount: imageUrls.length,
         itemBuilder: (context, index) {
           return GestureDetector(
-            onTap: withHeavyTap(() => _showFullScreenImage(imageUrls, index)),
+            onTap: _help.isActive
+                ? null
+                : withHeavyTap(() => _showFullScreenImage(imageUrls, index)),
             child: Container(
               width: 80,
               height: 80,
@@ -517,13 +542,15 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
         initialImageUrls: review.imageUrls,
         isEditing: true,
         onSubmit: (isPositive, content, newImages, existingImageUrls) =>
-            _handleReviewUpdate(review, isPositive, content, newImages, existingImageUrls),
+            _handleReviewUpdate(
+                review, isPositive, content, newImages, existingImageUrls),
       ),
     );
   }
 
   /// Uploads review images to Firebase Storage and returns the download URLs
-  Future<List<String>> _uploadReviewImages(List<File> images, String reviewId) async {
+  Future<List<String>> _uploadReviewImages(
+      List<File> images, String reviewId) async {
     final List<String> uploadedUrls = [];
 
     for (int i = 0; i < images.length; i++) {
@@ -632,54 +659,75 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: AppColors.backgroundColor,
-        foregroundColor: Colors.black,
-        title: const Text('My Reviews'),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _userReviews.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.rate_review_outlined,
-                          size: 48, color: Colors.grey[400]),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No reviews yet',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[600],
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.backgroundColor,
+          appBar: AppBar(
+            backgroundColor: AppColors.backgroundColor,
+            foregroundColor: Colors.black,
+            title: const Text('My Reviews'),
+            actions: [_help.buildIconButton(inactiveColor: Colors.black87)],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          body: GestureDetector(
+            behavior: _help.isActive
+                ? HitTestBehavior.opaque
+                : HitTestBehavior.deferToChild,
+            onTap: _help.isActive
+                ? () => _help.tryTap(ReviewsHelpTargetId.reviewsList, context)
+                : null,
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _userReviews.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.rate_review_outlined,
+                                size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No reviews yet',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Reviews you write will appear here',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _loadUserReviews,
+                        child: ListView.builder(
+                          itemCount: _userReviews.length + 1,
+                          itemBuilder: (context, index) {
+                            if (index == 0) {
+                              return _buildReviewCountHeader(
+                                  _userReviews.length);
+                            }
+                            final review = _userReviews[index - 1];
+                            return _buildReviewCard(review);
+                          },
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Reviews you write will appear here',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[500],
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadUserReviews,
-                  child: ListView.builder(
-                    itemCount: _userReviews.length + 1,
-                    itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return _buildReviewCountHeader(_userReviews.length);
-                      }
-                      final review = _userReviews[index - 1];
-                      return _buildReviewCard(review);
-                    },
-                  ),
-                ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 }

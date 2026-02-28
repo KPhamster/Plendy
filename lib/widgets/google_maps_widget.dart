@@ -54,7 +54,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   @override
   void initState() {
     super.initState();
-    _updateInternalMarkers(); // Initialize markers from props first
+    _syncMarkers();
 
     // Determine initial camera position SYNCHRONOUSLY if possible
     if (widget.initialLocation != null) {
@@ -105,36 +105,46 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   @override
   void didUpdateWidget(covariant GoogleMapsWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    print(
-        "📍 GOOGLE MAPS WIDGET: didUpdateWidget called."); // Log widget update
-    // Update markers if the additionalMarkers prop changes
-    if (widget.additionalMarkers != oldWidget.additionalMarkers) {
-      print(
-          "📍 GOOGLE MAPS WIDGET: additionalMarkers prop changed, calling _updateInternalMarkers.");
-      _updateInternalMarkers();
-    }
-    // Optionally, update camera if initialLocation changes, though MapScreen manages this now
-    // if (widget.initialLocation != oldWidget.initialLocation && widget.initialLocation != null) {
-    //    _animateToLocation(widget.initialLocation!); // Needs _animateToLocation re-added
-    // }
+    _syncMarkers();
   }
 
-  // Helper to update internal markers from props
-  void _updateInternalMarkers() {
-    print("📍 GOOGLE MAPS WIDGET: Updating internal markers.");
-    _markers.clear();
-    if (widget.additionalMarkers != null) {
-      print(
-          "📍 GOOGLE MAPS WIDGET: Received ${widget.additionalMarkers!.length} additional markers:");
-      widget.additionalMarkers!.forEach((id, marker) {
-        //print("  - Adding marker ID: $id at ${marker.position}");
-        _markers[MarkerId(id)] = marker;
-      });
-    } else {
-      print("📍 GOOGLE MAPS WIDGET: additionalMarkers is null.");
+  /// Incrementally sync internal markers with the incoming prop so that the
+  /// native GoogleMap only sees actual additions / removals / changes instead
+  /// of a full clear-and-readd on every parent rebuild.
+  void _syncMarkers() {
+    final incoming = widget.additionalMarkers;
+    if (incoming == null) {
+      if (_markers.isNotEmpty) {
+        _markers.clear();
+        if (mounted) setState(() {});
+      }
+      return;
     }
-    // Avoid calling setState if widget is disposed or not mounted
-    if (mounted) {
+
+    bool changed = false;
+    final incomingKeys = <MarkerId>{};
+
+    for (final entry in incoming.entries) {
+      final key = MarkerId(entry.key);
+      incomingKeys.add(key);
+      final existing = _markers[key];
+      if (existing == null || existing != entry.value) {
+        _markers[key] = entry.value;
+        changed = true;
+      }
+    }
+
+    // Remove markers that are no longer present.
+    final staleKeys =
+        _markers.keys.where((k) => !incomingKeys.contains(k)).toList();
+    if (staleKeys.isNotEmpty) {
+      for (final k in staleKeys) {
+        _markers.remove(k);
+      }
+      changed = true;
+    }
+
+    if (changed && mounted) {
       setState(() {});
     }
   }

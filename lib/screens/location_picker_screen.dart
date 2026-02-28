@@ -6,6 +6,9 @@ import '../models/experience.dart';
 import '../services/google_maps_service.dart';
 import 'dart:async';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/location_picker_help_content.dart';
+import '../models/location_picker_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class LocationPickerScreen extends StatefulWidget {
   final Location? initialLocation;
@@ -27,10 +30,12 @@ class LocationPickerScreen extends StatefulWidget {
   _LocationPickerScreenState createState() => _LocationPickerScreenState();
 }
 
-class _LocationPickerScreenState extends State<LocationPickerScreen> {
+class _LocationPickerScreenState extends State<LocationPickerScreen>
+    with TickerProviderStateMixin {
   final GoogleMapsService _mapsService = GoogleMapsService();
   Location? _selectedLocation;
-  String? _selectedLocationBusinessStatus; // ADDED: business status for selected location
+  String?
+      _selectedLocationBusinessStatus; // ADDED: business status for selected location
   bool? _selectedLocationOpenNow; // ADDED: open-now status
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
@@ -43,12 +48,21 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   final GlobalKey _mapKey = GlobalKey(); // Preserve map state across rebuilds
   bool _mapInitialized = false; // Track if map has been initialized
   Location? _initialMapLocation; // Store initial location
+  late final ScreenHelpController<LocationPickerHelpTargetId> _help;
 
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<LocationPickerHelpTargetId>(
+      vsync: this,
+      content: locationPickerHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: LocationPickerHelpTargetId.helpButton,
+    );
     _selectedLocation = widget.initialLocation;
-    _initialMapLocation = widget.initialLocation; // Store for map initialization
+    _initialMapLocation =
+        widget.initialLocation; // Store for map initialization
     _updateSelectedLocationMarker();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       FocusScope.of(context).requestFocus(_searchFocusNode);
@@ -57,6 +71,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
 
   @override
   void dispose() {
+    _help.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _debounce?.cancel();
@@ -102,17 +117,22 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
 
         // Sort results based on text priority first, then by distance
         results.sort((a, b) {
-          final String nameA = (a['description'] ?? '').toString().toLowerCase();
-          final String nameB = (b['description'] ?? '').toString().toLowerCase();
+          final String nameA =
+              (a['description'] ?? '').toString().toLowerCase();
+          final String nameB =
+              (b['description'] ?? '').toString().toLowerCase();
           final String queryLower = query.toLowerCase();
-          final String? hintLower = widget.isFromYelpShare && widget.businessNameHint != null
-              ? widget.businessNameHint!.toLowerCase()
-              : null;
+          final String? hintLower =
+              widget.isFromYelpShare && widget.businessNameHint != null
+                  ? widget.businessNameHint!.toLowerCase()
+                  : null;
 
           int getScore(String name, String currentQuery, String? currentHint) {
             int score = 0;
             // Priority 1: Business Hint Matching (highest)
-            if (currentHint != null && currentHint.isNotEmpty && name.contains(currentHint)) {
+            if (currentHint != null &&
+                currentHint.isNotEmpty &&
+                name.contains(currentHint)) {
               score += 10000;
             }
             // Priority 2: Exact match with query
@@ -152,7 +172,11 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
           final double? latB = b['latitude'];
           final double? lngB = b['longitude'];
 
-          if (mapCenter != null && latA != null && lngA != null && latB != null && lngB != null) {
+          if (mapCenter != null &&
+              latA != null &&
+              lngA != null &&
+              latB != null &&
+              lngB != null) {
             final distanceA = _calculateDistance(
                 mapCenter.latitude, mapCenter.longitude, latA, lngA);
             final distanceB = _calculateDistance(
@@ -216,64 +240,65 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
         openNow = null;
       }
 
-    // First update state WITHOUT markers to avoid rebuild
-    setState(() {
-      _selectedLocation = location;
-      _searchController.text =
-          location.displayName ?? location.address ?? 'Selected Location';
-      _showSearchResults = false;
-      _isSearching = false;
-      _selectedLocationBusinessStatus = businessStatus; // ADDED
-      _selectedLocationOpenNow = openNow; // ADDED
-    });
+      // First update state WITHOUT markers to avoid rebuild
+      setState(() {
+        _selectedLocation = location;
+        _searchController.text =
+            location.displayName ?? location.address ?? 'Selected Location';
+        _showSearchResults = false;
+        _isSearching = false;
+        _selectedLocationBusinessStatus = businessStatus; // ADDED
+        _selectedLocationOpenNow = openNow; // ADDED
+      });
 
-    // Animate camera FIRST, then update markers
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      
-      // Try multiple times to ensure the controller is ready and animate camera
-      bool animationSuccess = false;
-      for (int i = 0; i < 5; i++) {
-        if (_mapController != null && mounted) {
-          try {
-            await _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
-                    LatLng(location.latitude, location.longitude),
-                    16.0) // Zoom in closer
-                );
-            print('📍 PICKER: Camera animated to ${location.getPlaceName()}');
-            animationSuccess = true;
-            break; // Success, exit loop
-          } catch (e) {
-            print('📍 PICKER: Camera animation attempt ${i + 1} failed: $e');
-            if (i < 4) await Future.delayed(Duration(milliseconds: 100));
+      // Animate camera FIRST, then update markers
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+
+        // Try multiple times to ensure the controller is ready and animate camera
+        bool animationSuccess = false;
+        for (int i = 0; i < 5; i++) {
+          if (_mapController != null && mounted) {
+            try {
+              await _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
+                      LatLng(location.latitude, location.longitude),
+                      16.0) // Zoom in closer
+                  );
+              print('📍 PICKER: Camera animated to ${location.getPlaceName()}');
+              animationSuccess = true;
+              break; // Success, exit loop
+            } catch (e) {
+              print('📍 PICKER: Camera animation attempt ${i + 1} failed: $e');
+              if (i < 4) await Future.delayed(Duration(milliseconds: 100));
+            }
+          } else {
+            await Future.delayed(Duration(milliseconds: 100));
           }
-        } else {
-          await Future.delayed(Duration(milliseconds: 100));
         }
-      }
-      
-      // After camera animation completes, update markers
-      if (mounted && animationSuccess) {
-        final Map<String, Marker> newMarkers = {};
-        final markerId = MarkerId('selected_location');
-        newMarkers[markerId.value] = Marker(
-          markerId: markerId,
-          position: LatLng(location.latitude, location.longitude),
-          infoWindow: InfoWindow(
-            title: location.getPlaceName(),
-            snippet: location.address,
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
-        );
-        
-        setState(() {
-          _mapMarkers.clear();
-          _mapMarkers.addAll(newMarkers);
-        });
-      }
-    });
 
-    // Don't call onLocationSelected here - only call it when user confirms with button
+        // After camera animation completes, update markers
+        if (mounted && animationSuccess) {
+          final Map<String, Marker> newMarkers = {};
+          final markerId = MarkerId('selected_location');
+          newMarkers[markerId.value] = Marker(
+            markerId: markerId,
+            position: LatLng(location.latitude, location.longitude),
+            infoWindow: InfoWindow(
+              title: location.getPlaceName(),
+              snippet: location.address,
+            ),
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueViolet),
+          );
+
+          setState(() {
+            _mapMarkers.clear();
+            _mapMarkers.addAll(newMarkers);
+          });
+        }
+      });
+
+      // Don't call onLocationSelected here - only call it when user confirms with button
     } catch (e) {
       print('Error getting place details: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -312,8 +337,10 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     String? businessStatus;
     bool? openNow;
     try {
-      if (detailedLocation.placeId != null && detailedLocation.placeId!.isNotEmpty) {
-        final detailsMap = await _mapsService.fetchPlaceDetailsData(detailedLocation.placeId!);
+      if (detailedLocation.placeId != null &&
+          detailedLocation.placeId!.isNotEmpty) {
+        final detailsMap =
+            await _mapsService.fetchPlaceDetailsData(detailedLocation.placeId!);
         businessStatus = detailsMap?['businessStatus'] as String?;
         openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
       }
@@ -335,7 +362,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     // Animate camera FIRST, then update markers
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      
+
       // Try multiple times to ensure the controller is ready and animate camera
       bool animationSuccess = false;
       for (int i = 0; i < 5; i++) {
@@ -354,21 +381,23 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
           await Future.delayed(Duration(milliseconds: 100));
         }
       }
-      
+
       // After camera animation completes, update markers
       if (mounted && animationSuccess) {
         final Map<String, Marker> newMarkers = {};
         final markerId = MarkerId('selected_location');
         newMarkers[markerId.value] = Marker(
           markerId: markerId,
-          position: LatLng(detailedLocation.latitude, detailedLocation.longitude),
+          position:
+              LatLng(detailedLocation.latitude, detailedLocation.longitude),
           infoWindow: InfoWindow(
             title: detailedLocation.getPlaceName(),
             snippet: detailedLocation.address,
           ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+          icon:
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
         );
-        
+
         setState(() {
           _mapMarkers.clear();
           _mapMarkers.addAll(newMarkers);
@@ -428,7 +457,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     }
 
     // Allocate more space to the results on iOS when keyboard is visible
-    final bool giveResultsMoreSpace = isIOS && isKeyboardVisible && _showSearchResults;
+    final bool giveResultsMoreSpace =
+        isIOS && isKeyboardVisible && _showSearchResults;
 
     // Prebuild search results container to allow platform-specific wrapping
     final Widget searchResultsContainer = Container(
@@ -561,326 +591,390 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       ),
     );
 
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.white,
-        title: Text(widget.title),
-        actions: [
-          if (_selectedLocation != null)
-            IconButton(
-              icon: Icon(Icons.check),
-              onPressed: () {
-                widget.onLocationSelected(_selectedLocation!);
-                Navigator.of(context).pop({
-                  'location': _selectedLocation,
-                  'shouldUpdateYelpInfo': widget.isFromYelpShare
-                });
-              },
-            ),
-        ],
-      ),
-      // Fixed bottom button that's always visible
-      bottomNavigationBar: _selectedLocation != null && !(isIOS && isKeyboardVisible)
-          ? Container(
-              padding: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 8,
-                    offset: Offset(0, -3),
-                  ),
-                ],
-              ),
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Theme.of(context).primaryColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+    return Stack(
+      children: [
+        Scaffold(
+          resizeToAvoidBottomInset: true,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: Colors.white,
+            title: Text(widget.title),
+            actions: [
+              if (_selectedLocation != null)
+                Builder(
+                  builder: (confirmCtx) => IconButton(
+                    icon: Icon(Icons.check),
+                    onPressed: () {
+                      if (_help.tryTap(LocationPickerHelpTargetId.confirmButton,
+                          confirmCtx)) {
+                        return;
+                      }
+                      widget.onLocationSelected(_selectedLocation!);
+                      Navigator.of(context).pop({
+                        'location': _selectedLocation,
+                        'shouldUpdateYelpInfo': widget.isFromYelpShare
+                      });
+                    },
                   ),
                 ),
-                onPressed: () {
-                  widget.onLocationSelected(_selectedLocation!);
-                  Navigator.of(context).pop({
-                    'location': _selectedLocation,
-                    'shouldUpdateYelpInfo': widget.isFromYelpShare
-                  });
-                },
-                child: Text(
-                  'Confirm Location',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            )
-          : null,
-      body: Container(
-        color: Colors.white,
-        child: SafeArea(
-          child: Column(
-          children: [
-            // Search bar
-            Container(
-              color: Colors.white,
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Card(
-                  color: Colors.white,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: TextField(
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    decoration: InputDecoration(
-                      hintText: 'Search for a place',
-                      border: InputBorder.none,
-                      filled: true,
-                      fillColor: Colors.white,
-                      prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
-                      suffixIcon: _isSearching
-                          ? SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : _searchController.text.isNotEmpty
-                              ? IconButton(
-                                  icon: Icon(Icons.clear),
-                                  onPressed: () {
-                                    setState(() {
-                                      _searchController.clear();
-                                      _searchResults = [];
-                                      _showSearchResults = false;
-                                    });
-                                  },
-                                )
-                              : null,
-                    ),
-                    onChanged: _searchPlaces,
-                  ),
-                ),
-              ),
-            ),
-            ),
-
-            // Search results
-            if (_showSearchResults)
-              (giveResultsMoreSpace
-                  ? Expanded(flex: 3, child: searchResultsContainer)
-                  : (isIOS
-                      ? Flexible(child: searchResultsContainer)
-                      : searchResultsContainer)),
-
-            // Map takes the remaining space
-            (giveResultsMoreSpace
-                ? Flexible(
-                    flex: 1,
-                    child: Stack(
-                      children: [
-                        GoogleMapsWidget(
-                          key: _mapKey, // Use key to preserve state
-                          initialLocation: _initialMapLocation, // Always use the original initial location
-                          showUserLocation: true,
-                          allowSelection: true,
-                          onLocationSelected: _onLocationSelected,
-                          // Pass a copy of the map - GoogleMap now has stable key so won't reset
-                          additionalMarkers: Map.of(_mapMarkers),
-                          onMapControllerCreated: (controller) {
-                            _mapController = controller;
-                            if (!_mapInitialized) {
-                              _mapInitialized = true; // Mark as initialized only first time
-                            }
-                          },
-                        ),
-                      ],
-                    ),
+              _help.buildIconButton(inactiveColor: Colors.black87),
+            ],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
                   )
-                : Expanded(
-                    child: Stack(
-                      children: [
-                        GoogleMapsWidget(
-                          key: _mapKey, // Use key to preserve state
-                          initialLocation: _initialMapLocation, // Always use the original initial location
-                          showUserLocation: true,
-                          allowSelection: true,
-                          onLocationSelected: _onLocationSelected,
-                          // Pass a copy of the map - GoogleMap now has stable key so won't reset
-                          additionalMarkers: Map.of(_mapMarkers),
-                          onMapControllerCreated: (controller) {
-                            _mapController = controller;
-                            if (!_mapInitialized) {
-                              _mapInitialized = true; // Mark as initialized only first time
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  )),
-
-            // Information about selected location - only when keyboard is not visible
-            if (_selectedLocation != null && !isKeyboardVisible)
-              Container(
-                width: double.infinity,
-                padding: EdgeInsets.all(16),
-                color: Colors.white,
-                child: Stack(
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Selected Location',
-                          style: TextStyle(
-                            fontWeight: FontWeight.normal,
-                            fontSize: 14,
-                            color: Colors.grey[800],
-                          ),
-                        ),
-                        SizedBox(height: 12),
-
-                        // Place name
-                        Text(
-                          _selectedLocation!.getPlaceName(),
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 16,
-                          ),
-                        ),
-                        SizedBox(height: 8),
-
-                        // Full address
-                        if (_selectedLocation!.address != null && _selectedLocation!.address!.isNotEmpty) ...[
-                          Text(
-                            _selectedLocation!.address!,
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                          SizedBox(height: 8),
-                        ],
-                        // Star Rating
-                        if (_selectedLocation!.rating != null) ...[
-                          Row(
-                            children: [
-                              ...List.generate(5, (i) {
-                                final ratingValue = _selectedLocation!.rating!;
-                                return Icon(
-                                  i < ratingValue.floor()
-                                      ? Icons.star
-                                      : (i < ratingValue)
-                                          ? Icons.star_half
-                                          : Icons.star_border,
-                                  size: 18, // Adjusted size for this context
-                                  color: Colors.amber,
-                                );
-                              }),
-                              SizedBox(width: 8),
-                              if (_selectedLocation!.userRatingCount != null && _selectedLocation!.userRatingCount! > 0)
-                                Text(
-                                  '(${_selectedLocation!.userRatingCount})',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontSize: 13,
-                                  ),
-                                ),
-                            ],
-                          ),
-                          SizedBox(height: 8),
-                        ],
-
-                        // ADDED: Business/open-now status beneath rating
-                        Builder(builder: (context) {
-                          String? statusText;
-                          Color statusColor = Colors.grey;
-                          if (_selectedLocationBusinessStatus == 'CLOSED_PERMANENTLY') {
-                            statusText = 'Closed Permanently';
-                            statusColor = Colors.red[700]!;
-                          } else if (_selectedLocationBusinessStatus == 'CLOSED_TEMPORARILY') {
-                            statusText = 'Closed Temporarily';
-                            statusColor = Colors.red[700]!;
-                          } else if (_selectedLocationOpenNow != null) {
-                            if (_selectedLocationOpenNow == true) {
-                              statusText = 'Open now';
-                              statusColor = Colors.green[700]!;
-                            } else {
-                              statusText = 'Closed now';
-                              statusColor = Colors.red[700]!;
-                            }
-                          } else if (_selectedLocationBusinessStatus == 'OPERATIONAL') {
-                            statusText = 'Operational';
-                            statusColor = Colors.grey;
-                          }
-                          if (statusText == null) return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(Icons.info_outline, size: 18.0, color: Colors.black54),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    statusText,
-                                    style: TextStyle(
-                                      color: statusColor,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-
-                    // Get Directions button positioned at top-right
-                    Positioned(
-                      top: -8,
-                      right: -8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            onPressed: () {
-                              if (_selectedLocation != null) {
-                                _launchMapLocation(_selectedLocation!);
-                              }
-                            },
-                            icon: Icon(Icons.map_outlined,
-                                color: Colors.green[700], size: 28),
-                            tooltip: 'Open in map app',
-                            padding: const EdgeInsets.all(8),
-                            constraints: const BoxConstraints(),
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            onPressed: _openDirectionsInGoogleMaps,
-                            icon: Icon(Icons.directions,
-                                color: Colors.blue, size: 28),
-                            tooltip: 'Get Directions',
-                            padding: const EdgeInsets.all(8),
-                            constraints: const BoxConstraints(),
+                : null,
+          ),
+          // Fixed bottom button that's always visible
+          bottomNavigationBar:
+              _selectedLocation != null && !(isIOS && isKeyboardVisible)
+                  ? Container(
+                      padding: EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: Offset(0, -3),
                           ),
                         ],
                       ),
-                    ),
-                  ],
+                      child: Builder(
+                        builder: (confirmButtonCtx) => ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            backgroundColor: Theme.of(context).primaryColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          onPressed: () {
+                            if (_help.tryTap(
+                                LocationPickerHelpTargetId.confirmButton,
+                                confirmButtonCtx)) {
+                              return;
+                            }
+                            widget.onLocationSelected(_selectedLocation!);
+                            Navigator.of(context).pop({
+                              'location': _selectedLocation,
+                              'shouldUpdateYelpInfo': widget.isFromYelpShare
+                            });
+                          },
+                          child: Text(
+                            'Confirm Location',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : null,
+          body: Container(
+            color: Colors.white,
+            child: SafeArea(
+              child: GestureDetector(
+                behavior: _help.isActive
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.deferToChild,
+                onTap: _help.isActive
+                    ? () => _help.tryTap(
+                        LocationPickerHelpTargetId.mapArea, context)
+                    : null,
+                child: IgnorePointer(
+                  ignoring: _help.isActive,
+                  child: Column(
+                    children: [
+                      // Search bar
+                      Container(
+                        color: Colors.white,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Card(
+                            color: Colors.white,
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8.0),
+                              child: TextField(
+                                controller: _searchController,
+                                focusNode: _searchFocusNode,
+                                decoration: InputDecoration(
+                                  hintText: 'Search for a place',
+                                  border: InputBorder.none,
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                  prefixIcon: Icon(Icons.search,
+                                      color: Theme.of(context).primaryColor),
+                                  suffixIcon: _isSearching
+                                      ? SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : _searchController.text.isNotEmpty
+                                          ? IconButton(
+                                              icon: Icon(Icons.clear),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _searchController.clear();
+                                                  _searchResults = [];
+                                                  _showSearchResults = false;
+                                                });
+                                              },
+                                            )
+                                          : null,
+                                ),
+                                onChanged: _searchPlaces,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // Search results
+                      if (_showSearchResults)
+                        (giveResultsMoreSpace
+                            ? Expanded(flex: 3, child: searchResultsContainer)
+                            : (isIOS
+                                ? Flexible(child: searchResultsContainer)
+                                : searchResultsContainer)),
+
+                      // Map takes the remaining space
+                      (giveResultsMoreSpace
+                          ? Flexible(
+                              flex: 1,
+                              child: Stack(
+                                children: [
+                                  GoogleMapsWidget(
+                                    key: _mapKey, // Use key to preserve state
+                                    initialLocation:
+                                        _initialMapLocation, // Always use the original initial location
+                                    showUserLocation: true,
+                                    allowSelection: true,
+                                    onLocationSelected: _onLocationSelected,
+                                    // Pass a copy of the map - GoogleMap now has stable key so won't reset
+                                    additionalMarkers: Map.of(_mapMarkers),
+                                    onMapControllerCreated: (controller) {
+                                      _mapController = controller;
+                                      if (!_mapInitialized) {
+                                        _mapInitialized =
+                                            true; // Mark as initialized only first time
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            )
+                          : Expanded(
+                              child: Stack(
+                                children: [
+                                  GoogleMapsWidget(
+                                    key: _mapKey, // Use key to preserve state
+                                    initialLocation:
+                                        _initialMapLocation, // Always use the original initial location
+                                    showUserLocation: true,
+                                    allowSelection: true,
+                                    onLocationSelected: _onLocationSelected,
+                                    // Pass a copy of the map - GoogleMap now has stable key so won't reset
+                                    additionalMarkers: Map.of(_mapMarkers),
+                                    onMapControllerCreated: (controller) {
+                                      _mapController = controller;
+                                      if (!_mapInitialized) {
+                                        _mapInitialized =
+                                            true; // Mark as initialized only first time
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            )),
+
+                      // Information about selected location - only when keyboard is not visible
+                      if (_selectedLocation != null && !isKeyboardVisible)
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(16),
+                          color: Colors.white,
+                          child: Stack(
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Selected Location',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.normal,
+                                      fontSize: 14,
+                                      color: Colors.grey[800],
+                                    ),
+                                  ),
+                                  SizedBox(height: 12),
+
+                                  // Place name
+                                  Text(
+                                    _selectedLocation!.getPlaceName(),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  SizedBox(height: 8),
+
+                                  // Full address
+                                  if (_selectedLocation!.address != null &&
+                                      _selectedLocation!
+                                          .address!.isNotEmpty) ...[
+                                    Text(
+                                      _selectedLocation!.address!,
+                                      style: TextStyle(color: Colors.grey[700]),
+                                    ),
+                                    SizedBox(height: 8),
+                                  ],
+                                  // Star Rating
+                                  if (_selectedLocation!.rating != null) ...[
+                                    Row(
+                                      children: [
+                                        ...List.generate(5, (i) {
+                                          final ratingValue =
+                                              _selectedLocation!.rating!;
+                                          return Icon(
+                                            i < ratingValue.floor()
+                                                ? Icons.star
+                                                : (i < ratingValue)
+                                                    ? Icons.star_half
+                                                    : Icons.star_border,
+                                            size:
+                                                18, // Adjusted size for this context
+                                            color: Colors.amber,
+                                          );
+                                        }),
+                                        SizedBox(width: 8),
+                                        if (_selectedLocation!
+                                                    .userRatingCount !=
+                                                null &&
+                                            _selectedLocation!
+                                                    .userRatingCount! >
+                                                0)
+                                          Text(
+                                            '(${_selectedLocation!.userRatingCount})',
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    SizedBox(height: 8),
+                                  ],
+
+                                  // ADDED: Business/open-now status beneath rating
+                                  Builder(builder: (context) {
+                                    String? statusText;
+                                    Color statusColor = Colors.grey;
+                                    if (_selectedLocationBusinessStatus ==
+                                        'CLOSED_PERMANENTLY') {
+                                      statusText = 'Closed Permanently';
+                                      statusColor = Colors.red[700]!;
+                                    } else if (_selectedLocationBusinessStatus ==
+                                        'CLOSED_TEMPORARILY') {
+                                      statusText = 'Closed Temporarily';
+                                      statusColor = Colors.red[700]!;
+                                    } else if (_selectedLocationOpenNow !=
+                                        null) {
+                                      if (_selectedLocationOpenNow == true) {
+                                        statusText = 'Open now';
+                                        statusColor = Colors.green[700]!;
+                                      } else {
+                                        statusText = 'Closed now';
+                                        statusColor = Colors.red[700]!;
+                                      }
+                                    } else if (_selectedLocationBusinessStatus ==
+                                        'OPERATIONAL') {
+                                      statusText = 'Operational';
+                                      statusColor = Colors.grey;
+                                    }
+                                    if (statusText == null)
+                                      return const SizedBox.shrink();
+                                    return Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 4.0),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(Icons.info_outline,
+                                              size: 18.0,
+                                              color: Colors.black54),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              statusText,
+                                              style: TextStyle(
+                                                color: statusColor,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }),
+                                ],
+                              ),
+
+                              // Get Directions button positioned at top-right
+                              Positioned(
+                                top: -8,
+                                right: -8,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      onPressed: () {
+                                        if (_selectedLocation != null) {
+                                          _launchMapLocation(
+                                              _selectedLocation!);
+                                        }
+                                      },
+                                      icon: Icon(Icons.map_outlined,
+                                          color: Colors.green[700], size: 28),
+                                      tooltip: 'Open in map app',
+                                      padding: const EdgeInsets.all(8),
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    IconButton(
+                                      onPressed: _openDirectionsInGoogleMaps,
+                                      icon: Icon(Icons.directions,
+                                          color: Colors.blue, size: 28),
+                                      tooltip: 'Get Directions',
+                                      padding: const EdgeInsets.all(8),
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-          ],
+            ),
           ),
         ),
-      ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 

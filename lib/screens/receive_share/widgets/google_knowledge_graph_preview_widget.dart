@@ -2,15 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:typed_data';
 import 'package:plendy/utils/haptic_feedback.dart';
+import 'package:plendy/models/receive_share_help_target.dart';
 
 class GoogleKnowledgeGraphPreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
+  final bool isHelpMode;
+  final bool Function(ReceiveShareHelpTargetId id, BuildContext ctx)? onHelpTap;
 
   const GoogleKnowledgeGraphPreviewWidget({
     super.key,
     required this.url,
     required this.launchUrlCallback,
+    this.isHelpMode = false,
+    this.onHelpTap,
   });
 
   @override
@@ -37,6 +42,11 @@ class GoogleKnowledgeGraphPreviewWidgetState extends State<GoogleKnowledgeGraphP
   void dispose() {
     _isDisposed = true;
     super.dispose();
+  }
+
+  bool _helpTap(ReceiveShareHelpTargetId id, BuildContext ctx) {
+    if (widget.onHelpTap != null) return widget.onHelpTap!(id, ctx);
+    return false;
   }
 
   /// Take a screenshot of the current WebView content
@@ -232,8 +242,11 @@ class GoogleKnowledgeGraphPreviewWidgetState extends State<GoogleKnowledgeGraphP
               Icon(Icons.public, color: Colors.blue.shade700, size: 16),
               const SizedBox(width: 8),
               Expanded(
-                child: InkWell(
-                  onTap: withHeavyTap(() => widget.launchUrlCallback(widget.url)),
+                child: Builder(builder: (ctx) => InkWell(
+                  onTap: withHeavyTap(() {
+                    if (_helpTap(ReceiveShareHelpTargetId.previewLinkRow, ctx)) return;
+                    widget.launchUrlCallback(widget.url);
+                  }),
                   child: Text(
                     widget.url,
                     style: TextStyle(
@@ -245,7 +258,7 @@ class GoogleKnowledgeGraphPreviewWidgetState extends State<GoogleKnowledgeGraphP
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                ),
+                )),
               ),
             ],
           ),
@@ -409,35 +422,44 @@ class GoogleKnowledgeGraphPreviewWidgetState extends State<GoogleKnowledgeGraphP
           child: Row(
             children: [
               // Refresh button (far left)
-              IconButton(
-                onPressed: () => _refreshPreview(),
+              Builder(builder: (ctx) => IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewRefreshButton, ctx)) return;
+                  _refreshPreview();
+                },
                 icon: Icon(Icons.refresh, size: 20, color: Colors.blue.shade700),
                 tooltip: 'Refresh Preview',
                 padding: EdgeInsets.all(8),
                 constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-              ),
+              )),
               
               const Spacer(),
               
               // Open link button (center)
-              IconButton(
-                onPressed: () => widget.launchUrlCallback(widget.url),
+              Builder(builder: (ctx) => IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewOpenExternalButton, ctx)) return;
+                  widget.launchUrlCallback(widget.url);
+                },
                 icon: Icon(Icons.open_in_new, size: 20, color: Colors.blue.shade700),
                 tooltip: 'Open Link',
                 padding: EdgeInsets.all(8),
                 constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-              ),
+              )),
               
               const Spacer(),
               
               // Expand/Collapse button (far right)
-              IconButton(
-                onPressed: () => _toggleExpand(),
+              Builder(builder: (ctx) => IconButton(
+                onPressed: () {
+                  if (_helpTap(ReceiveShareHelpTargetId.previewExpandButton, ctx)) return;
+                  _toggleExpand();
+                },
                 icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen, size: 20, color: Colors.blue.shade700),
                 tooltip: _isExpanded ? 'Collapse Preview' : 'Expand Preview',
                 padding: EdgeInsets.all(8),
                 constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-              ),
+              )),
             ],
           ),
         ),

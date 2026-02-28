@@ -13,13 +13,16 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/experience_service.dart';
 import 'main_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/share_preview_help_content.dart';
+import '../models/share_preview_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class SharePreviewScreen extends StatelessWidget {
   final String token;
-  
+
   /// Optional pre-loaded experience snapshots for direct shares from chat
   final List<Map<String, dynamic>>? preloadedSnapshots;
-  
+
   /// Optional sender user ID for pre-loaded shares
   final String? preloadedFromUserId;
 
@@ -36,17 +39,17 @@ class SharePreviewScreen extends StatelessWidget {
       (route) => false,
     );
   }
-  
+
   /// Build payload from pre-loaded snapshots (for direct shares from chat)
   _PreviewPayload? _buildPayloadFromPreloaded() {
     if (preloadedSnapshots == null || preloadedSnapshots!.isEmpty) {
       return null;
     }
-    
+
     final List<_PreviewExperienceItem> experiences = [];
     for (int i = 0; i < preloadedSnapshots!.length; i++) {
       final raw = preloadedSnapshots![i];
-      final Map<String, dynamic> snap = 
+      final Map<String, dynamic> snap =
           (raw['snapshot'] as Map<String, dynamic>?) ?? const {};
       final Map<String, dynamic> mappedItem = {
         'shareId': 'preloaded_$i',
@@ -54,7 +57,8 @@ class SharePreviewScreen extends StatelessWidget {
         'snapshot': snap,
       };
       final Experience exp = _experienceFromMapped(mappedItem);
-      final List<SharedMediaItem> mediaItems = _mediaItemsFromSnapshot(snap, exp);
+      final List<SharedMediaItem> mediaItems =
+          _mediaItemsFromSnapshot(snap, exp);
       experiences.add(
         _PreviewExperienceItem(
           experience: exp,
@@ -62,7 +66,7 @@ class SharePreviewScreen extends StatelessWidget {
         ),
       );
     }
-    
+
     return _PreviewPayload.multi(
       experiences: experiences,
       fromUserId: preloadedFromUserId ?? '',
@@ -76,7 +80,7 @@ class SharePreviewScreen extends StatelessWidget {
     // Check if we have pre-loaded data (from direct share in chat)
     final _PreviewPayload? preloadedPayload = _buildPayloadFromPreloaded();
     final bool usePreloaded = preloadedPayload != null;
-    
+
     return PopScope(
       canPop: !kIsWeb,
       onPopInvokedWithResult: (didPop, result) {
@@ -96,75 +100,45 @@ class SharePreviewScreen extends StatelessWidget {
                   return _buildLoadingScaffold(context);
                 }
                 if (snapshot.hasError) {
-                  return _buildErrorScaffold(context, snapshot.error.toString());
+                  return _buildErrorScaffold(
+                      context, snapshot.error.toString());
                 }
                 if (!snapshot.hasData) {
-                  return _buildErrorScaffold(context, 'This share isn\'t available.');
+                  return _buildErrorScaffold(
+                      context, 'This share isn\'t available.');
                 }
                 return _buildScaffoldWithPayload(context, snapshot.data!);
               },
             ),
     );
   }
-  
+
   Widget _buildLoadingScaffold(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        title: const Text('Shared Experience', style: TextStyle(fontSize: 16)),
-      ),
-      body: const Center(child: CircularProgressIndicator()),
+    return const _SharePreviewHelpShell(
+      title: 'Shared Experience',
+      body: Center(child: CircularProgressIndicator()),
     );
   }
-  
+
   Widget _buildErrorScaffold(BuildContext context, String error) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        title: const Text('Shared Experience', style: TextStyle(fontSize: 16)),
-      ),
+    return _SharePreviewHelpShell(
+      title: 'Shared Experience',
       body: Center(child: Text(error)),
     );
   }
-  
-  Widget _buildScaffoldWithPayload(BuildContext context, _PreviewPayload payload) {
+
+  Widget _buildScaffoldWithPayload(
+      BuildContext context, _PreviewPayload payload) {
     final bool isMulti = payload.isMulti;
-    
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        leading: kIsWeb ? IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => _navigateToMain(context),
-        ) : null,
-        title: Text(
-          isMulti ? 'Shared Experiences' : 'Shared Experience',
-          style: const TextStyle(fontSize: 16),
-        ),
-        actions: [
-          if (kIsWeb)
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: Colors.black),
-                icon: const Icon(Icons.open_in_new, color: Colors.black),
-                label: const Text('Open in Plendy',
-                    style: TextStyle(color: Colors.black)),
-                onPressed: () => _handleOpenInApp(context),
-              ),
-            ),
-        ],
-      ),
+
+    return _SharePreviewHelpShell(
+      title: isMulti ? 'Shared Experiences' : 'Shared Experience',
+      onBack: kIsWeb ? () => _navigateToMain(context) : null,
+      onOpenInApp: kIsWeb ? () => _handleOpenInApp(context) : null,
       body: _buildBody(payload),
     );
   }
-  
+
   Widget _buildBody(_PreviewPayload payload) {
     if (payload.isMulti) {
       if (payload.multiExperiences.isEmpty) {
@@ -180,8 +154,8 @@ class SharePreviewScreen extends StatelessWidget {
       );
     }
     final experience = payload.experience!;
-    final placeholderCategory = UserCategory(
-        id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
+    final placeholderCategory =
+        UserCategory(id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
     return ExperiencePageScreen(
       experience: experience,
       category: placeholderCategory,
@@ -198,16 +172,17 @@ class SharePreviewScreen extends StatelessWidget {
   Future<void> _handleOpenInApp(BuildContext context) async {
     // Try to open the app via your universal link first (should trigger App/Universal Links)
     final Uri deepLink = Uri.parse('https://plendy.app/shared/$token');
-    
+
     // On web, handle Universal Links differently to avoid opening both app and browser
     if (kIsWeb) {
       // Try to open the app directly without opening a new browser tab
       final bool launched = await launchUrl(
         deepLink,
         mode: LaunchMode.platformDefault, // Let the platform decide
-        webOnlyWindowName: '_self', // Replace current tab instead of opening new one
+        webOnlyWindowName:
+            '_self', // Replace current tab instead of opening new one
       );
-      
+
       if (!launched) {
         // If app doesn't open, show a message
         if (context.mounted) {
@@ -221,7 +196,7 @@ class SharePreviewScreen extends StatelessWidget {
       }
       return;
     }
-    
+
     // On mobile platforms
     final bool launchedDeepLink = await launchUrl(
       deepLink,
@@ -288,9 +263,9 @@ class SharePreviewScreen extends StatelessWidget {
 
     // Check if token looks like a Firestore document ID (longer than typical 12-char token)
     // Direct shares use document IDs which are ~20 characters with alphanumeric
-    final bool looksLikeDocId = token.length >= 20 && 
-        RegExp(r'^[a-zA-Z0-9]+$').hasMatch(token);
-    
+    final bool looksLikeDocId =
+        token.length >= 20 && RegExp(r'^[a-zA-Z0-9]+$').hasMatch(token);
+
     if (looksLikeDocId) {
       // Try fetching directly by document ID first (for direct shares)
       final docUrl = Uri.parse(
@@ -509,8 +484,9 @@ class SharePreviewScreen extends StatelessWidget {
         .map((dynamic e) => e.toString())
         .where((url) => url.isNotEmpty)
         .toList();
-    final String experienceId =
-        experience.id.isNotEmpty ? experience.id : 'preview_${experience.hashCode}';
+    final String experienceId = experience.id.isNotEmpty
+        ? experience.id
+        : 'preview_${experience.hashCode}';
     return mediaUrls
         .map((u) => SharedMediaItem(
               id: 'preview_${experienceId}_${u.hashCode}',
@@ -562,14 +538,130 @@ class SharePreviewScreen extends StatelessWidget {
     final Experience exp = _experienceFromMapped(mapped);
     final Map<String, dynamic> snap =
         (mapped['snapshot'] as Map<String, dynamic>?) ?? const {};
-    final List<SharedMediaItem> mediaItems =
-        _mediaItemsFromSnapshot(snap, exp);
+    final List<SharedMediaItem> mediaItems = _mediaItemsFromSnapshot(snap, exp);
     return _PreviewPayload.single(
       experience: exp,
       mediaItems: mediaItems,
       fromUserId: (mapped['fromUserId'] as String?) ?? '',
       shareType: (mapped['shareType'] as String?),
       accessMode: (mapped['accessMode'] as String?),
+    );
+  }
+}
+
+class _SharePreviewHelpShell extends StatefulWidget {
+  const _SharePreviewHelpShell({
+    required this.title,
+    required this.body,
+    this.onBack,
+    this.onOpenInApp,
+  });
+
+  final String title;
+  final Widget body;
+  final VoidCallback? onBack;
+  final VoidCallback? onOpenInApp;
+
+  @override
+  State<_SharePreviewHelpShell> createState() => _SharePreviewHelpShellState();
+}
+
+class _SharePreviewHelpShellState extends State<_SharePreviewHelpShell>
+    with TickerProviderStateMixin {
+  late final ScreenHelpController<SharePreviewHelpTargetId> _help;
+
+  @override
+  void initState() {
+    super.initState();
+    _help = ScreenHelpController<SharePreviewHelpTargetId>(
+      vsync: this,
+      content: sharePreviewHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: SharePreviewHelpTargetId.helpButton,
+    );
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            leading: widget.onBack == null
+                ? null
+                : Builder(
+                    builder: (backCtx) => IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () {
+                        if (_help.tryTap(
+                            SharePreviewHelpTargetId.previewView, backCtx)) {
+                          return;
+                        }
+                        widget.onBack?.call();
+                      },
+                    ),
+                  ),
+            title: Text(
+              widget.title,
+              style: const TextStyle(fontSize: 16),
+            ),
+            actions: [
+              if (widget.onOpenInApp != null)
+                Builder(
+                  builder: (openCtx) => Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: TextButton.icon(
+                      style:
+                          TextButton.styleFrom(foregroundColor: Colors.black),
+                      icon: const Icon(Icons.open_in_new, color: Colors.black),
+                      label: const Text('Open in Plendy',
+                          style: TextStyle(color: Colors.black)),
+                      onPressed: () {
+                        if (_help.tryTap(
+                            SharePreviewHelpTargetId.openInAppButton,
+                            openCtx)) {
+                          return;
+                        }
+                        widget.onOpenInApp?.call();
+                      },
+                    ),
+                  ),
+                ),
+              _help.buildIconButton(inactiveColor: Colors.black87),
+            ],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          body: GestureDetector(
+            behavior: _help.isActive
+                ? HitTestBehavior.opaque
+                : HitTestBehavior.deferToChild,
+            onTap: _help.isActive
+                ? () =>
+                    _help.tryTap(SharePreviewHelpTargetId.previewView, context)
+                : null,
+            child: IgnorePointer(
+              ignoring: _help.isActive,
+              child: widget.body,
+            ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 }
@@ -707,8 +799,8 @@ class _MultiExperiencePreviewListState
   }
 
   void _openExperience(BuildContext context, _PreviewExperienceItem item) {
-    final UserCategory placeholderCategory = UserCategory(
-        id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
+    final UserCategory placeholderCategory =
+        UserCategory(id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ExperiencePageScreen(
@@ -728,7 +820,7 @@ class _MultiExperiencePreviewListState
   Widget _buildThumbnail(_PreviewExperienceItem item) {
     final String categoryIcon = item.experience.categoryIconDenorm ?? '📍';
     final Color backgroundColor = _parseColorFromExperience(item.experience);
-    
+
     return Container(
       width: 56,
       height: 56,

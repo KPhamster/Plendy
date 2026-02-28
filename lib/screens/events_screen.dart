@@ -12,6 +12,11 @@ import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
 import '../config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../models/events_help_target.dart';
+import '../config/events_help_content.dart';
+import '../widgets/help_bubble.dart';
+import '../widgets/help_spotlight_painter.dart';
+import '../services/help_mode_service.dart';
 
 /// Google Calendar-style events screen with Material 3 Expressive design
 class EventsScreen extends StatefulWidget {
@@ -22,7 +27,7 @@ class EventsScreen extends StatefulWidget {
 }
 
 class _EventsScreenState extends State<EventsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _authService = AuthService();
   final _experienceService = ExperienceService();
 
@@ -43,17 +48,17 @@ class _EventsScreenState extends State<EventsScreen>
   List<UserCategory> _categories = [];
   // Cache of ownerId+categoryId -> UserCategory for shared events
   final Map<String, UserCategory> _sharedOwnerCategories = {};
-  
+
   // Experiences cache: maps experienceId to Experience
   final Map<String, Experience> _experiencesCache = {};
 
   late TabController _tabController;
   late PageController _weekPageController;
   int _currentTabIndex = 3;
-  
+
   // Real-time event listeners
   final List<StreamSubscription> _eventSubscriptions = [];
-  
+
   // Track events from each stream to properly handle removals
   final Map<String, Event> _plannerEvents = {};
   final Map<String, Event> _collaboratorEvents = {};
@@ -61,9 +66,26 @@ class _EventsScreenState extends State<EventsScreen>
   final ScrollController _scheduleScrollController = ScrollController();
   bool _scheduleDidInitialScroll = false;
 
+  // Help mode state
+  bool _isHelpMode = false;
+  EventsHelpTargetId? _activeHelpTarget;
+  int _activeHelpStep = 0;
+  Rect? _activeTargetRect;
+  bool _isHelpTyping = false;
+  final GlobalKey _helpButtonKey = GlobalKey();
+  final GlobalKey<HelpBubbleState> _helpBubbleKey = GlobalKey();
+  final List<GlobalKey> _tabKeys =
+      List<GlobalKey>.generate(4, (_) => GlobalKey());
+  late final AnimationController _spotlightController;
+
   @override
   void initState() {
     super.initState();
+    _spotlightController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
     _tabController = TabController(length: 4, vsync: this, initialIndex: 3);
     _tabController.addListener(() {
       if (_tabController.index != _currentTabIndex) {
@@ -81,7 +103,8 @@ class _EventsScreenState extends State<EventsScreen>
               break;
             case 3:
               _viewMode = 'schedule';
-              _scheduleDidInitialScroll = false; // Reset to allow scroll on tab switch
+              _scheduleDidInitialScroll =
+                  false; // Reset to allow scroll on tab switch
               break;
           }
         });
@@ -91,6 +114,12 @@ class _EventsScreenState extends State<EventsScreen>
     _weekPageController = PageController(initialPage: 52); // ~1 year range
     _loadCategories();
     _loadEvents();
+    HelpModeService.listenable.addListener(_onGlobalHelpModeChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onGlobalHelpModeChanged();
+      }
+    });
   }
 
   Future<void> _loadCategories() async {
@@ -108,9 +137,11 @@ class _EventsScreenState extends State<EventsScreen>
 
   @override
   void dispose() {
+    HelpModeService.listenable.removeListener(_onGlobalHelpModeChanged);
     _tabController.dispose();
     _weekPageController.dispose();
     _scheduleScrollController.dispose();
+    _spotlightController.dispose();
     // Cancel all real-time event listeners
     for (final subscription in _eventSubscriptions) {
       subscription.cancel();
@@ -124,42 +155,43 @@ class _EventsScreenState extends State<EventsScreen>
     try {
       final userId = _authService.currentUser?.uid;
       debugPrint('EventsScreen: Loading events for user: $userId');
-      
+
       if (userId != null) {
         // Cancel existing subscriptions
         for (final subscription in _eventSubscriptions) {
           subscription.cancel();
         }
         _eventSubscriptions.clear();
-        
+
         // Set up real-time listeners for events where user is planner, collaborator, or invited
         final firestore = FirebaseFirestore.instance;
         final eventsCollection = firestore.collection('events');
-        
+
         // Listen for events where user is the planner
         final plannerSubscription = eventsCollection
             .where('plannerUserId', isEqualTo: userId)
             .snapshots()
             .listen((snapshot) => _handleEventsSnapshot(snapshot, 'planner'));
-        
+
         // Listen for events where user is a collaborator
         final collaboratorSubscription = eventsCollection
             .where('collaboratorIds', arrayContains: userId)
             .snapshots()
-            .listen((snapshot) => _handleEventsSnapshot(snapshot, 'collaborator'));
-        
+            .listen(
+                (snapshot) => _handleEventsSnapshot(snapshot, 'collaborator'));
+
         // Listen for events where user is invited
         final invitedSubscription = eventsCollection
             .where('invitedUserIds', arrayContains: userId)
             .snapshots()
             .listen((snapshot) => _handleEventsSnapshot(snapshot, 'invited'));
-        
+
         _eventSubscriptions.addAll([
           plannerSubscription,
           collaboratorSubscription,
           invitedSubscription,
         ]);
-        
+
         debugPrint('EventsScreen: Real-time listeners set up for user $userId');
         setState(() => _isLoading = false);
       } else {
@@ -172,10 +204,11 @@ class _EventsScreenState extends State<EventsScreen>
       setState(() => _isLoading = false);
     }
   }
-  
-  void _handleEventsSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot, String streamType) {
+
+  void _handleEventsSnapshot(
+      QuerySnapshot<Map<String, dynamic>> snapshot, String streamType) {
     if (!mounted) return;
-    
+
     try {
       // Update the appropriate map based on stream type
       Map<String, Event> targetMap;
@@ -193,10 +226,10 @@ class _EventsScreenState extends State<EventsScreen>
           debugPrint('Unknown stream type: $streamType');
           return;
       }
-      
+
       // Clear and rebuild this stream's events
       targetMap.clear();
-      
+
       // Parse events from this snapshot
       for (final doc in snapshot.docs) {
         try {
@@ -205,22 +238,24 @@ class _EventsScreenState extends State<EventsScreen>
           debugPrint('Error parsing event ${doc.id}: $e');
         }
       }
-      
+
       // Merge all three streams, deduplicating by event ID
       final Map<String, Event> allEventsMap = {};
       allEventsMap.addAll(_plannerEvents);
       allEventsMap.addAll(_collaboratorEvents);
       allEventsMap.addAll(_invitedEvents);
-      
+
       final events = allEventsMap.values.toList();
       events.sort((a, b) => b.startDateTime.compareTo(a.startDateTime));
-      
-      debugPrint('EventsScreen: Real-time update ($streamType) - ${events.length} total events');
-      debugPrint('  Planner: ${_plannerEvents.length}, Collaborator: ${_collaboratorEvents.length}, Invited: ${_invitedEvents.length}');
-      
+
+      debugPrint(
+          'EventsScreen: Real-time update ($streamType) - ${events.length} total events');
+      debugPrint(
+          '  Planner: ${_plannerEvents.length}, Collaborator: ${_collaboratorEvents.length}, Invited: ${_invitedEvents.length}');
+
       // Cache experiences referenced in events
       _cacheExperiencesForEvents(events);
-      
+
       setState(() {
         _allEvents = events;
         _eventsByDate = _groupEventsByDate(events);
@@ -250,7 +285,8 @@ class _EventsScreenState extends State<EventsScreen>
 
     if (idsToFetch.isNotEmpty) {
       try {
-        final experiences = await _experienceService.getExperiencesByIds(idsToFetch);
+        final experiences =
+            await _experienceService.getExperiencesByIds(idsToFetch);
         if (mounted) {
           setState(() {
             for (final exp in experiences) {
@@ -274,13 +310,16 @@ class _EventsScreenState extends State<EventsScreen>
         if (ownerId.isEmpty || categoryId.isEmpty) continue;
         final cacheKey = '${ownerId}_$categoryId';
         if (_sharedOwnerCategories.containsKey(cacheKey)) continue;
-        ownerToCategoryIds.putIfAbsent(ownerId, () => <String>{}).add(categoryId);
+        ownerToCategoryIds
+            .putIfAbsent(ownerId, () => <String>{})
+            .add(categoryId);
       }
     }
 
     for (final entry in ownerToCategoryIds.entries) {
       try {
-        final categories = await _experienceService.getUserCategoriesByOwnerAndIds(
+        final categories =
+            await _experienceService.getUserCategoriesByOwnerAndIds(
           entry.key,
           entry.value.toList(),
         );
@@ -337,7 +376,7 @@ class _EventsScreenState extends State<EventsScreen>
 
     // Show loading indicator
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -353,7 +392,7 @@ class _EventsScreenState extends State<EventsScreen>
       final colorCategories = await experienceService.getUserColorCategories();
 
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
 
@@ -377,10 +416,10 @@ class _EventsScreenState extends State<EventsScreen>
       }
     } catch (e) {
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
@@ -392,7 +431,7 @@ class _EventsScreenState extends State<EventsScreen>
       _focusedDay = DateTime.now();
       _selectedDay = DateTime.now();
     });
-    
+
     // Handle different views
     if (_viewMode == 'schedule') {
       // If on Schedule tab, scroll to today's event
@@ -408,20 +447,20 @@ class _EventsScreenState extends State<EventsScreen>
       );
     }
   }
-  
+
   void _navigateWeekToMonth(DateTime selectedDate) {
     // Calculate the first day of the selected month
     final firstDayOfMonth = DateTime(selectedDate.year, selectedDate.month, 1);
-    
+
     // Calculate the week start (Sunday) for that month
     // If the first day is not a Sunday, get the next Sunday for the first full week
     final dayOfWeek = firstDayOfMonth.weekday;
     final daysUntilSunday = (7 - dayOfWeek) % 7;
-    
+
     final firstFullWeekStart = daysUntilSunday == 0
         ? firstDayOfMonth
         : firstDayOfMonth.add(Duration(days: daysUntilSunday));
-    
+
     // Calculate which page this week corresponds to
     // Page 52 is the current week, so we calculate the offset
     // Use midnight for both dates to ensure accurate day difference calculation
@@ -430,17 +469,18 @@ class _EventsScreenState extends State<EventsScreen>
     final currentWeekStart = todayMidnight.subtract(
       Duration(days: now.weekday % 7),
     );
-    
+
     // Calculate the number of weeks between currentWeekStart and firstFullWeekStart
-    final weekDifference = firstFullWeekStart.difference(currentWeekStart).inDays ~/ 7;
+    final weekDifference =
+        firstFullWeekStart.difference(currentWeekStart).inDays ~/ 7;
     final targetPage = 52 + weekDifference;
-    
+
     debugPrint(
       'Week: Navigating to month ${selectedDate.month}/${selectedDate.year}, '
       'first full week: ${DateFormat('MMM d').format(firstFullWeekStart)}, '
       'page: $targetPage',
     );
-    
+
     _weekPageController.animateToPage(
       targetPage,
       duration: const Duration(milliseconds: 300),
@@ -451,59 +491,308 @@ class _EventsScreenState extends State<EventsScreen>
   void _scrollScheduleToToday() {
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
-    
+
     final events = [..._allEvents]..sort(
-      (a, b) => a.startDateTime.compareTo(b.startDateTime),
-    );
+        (a, b) => a.startDateTime.compareTo(b.startDateTime),
+      );
     if (events.isEmpty) return;
-    
+
     // Find first event on or after today
     int targetIndex = events.indexWhere(
       (event) => !event.startDateTime.isBefore(todayStart),
     );
-    
+
     // If no events on or after today, use the last event
     if (targetIndex == -1) {
       targetIndex = events.length - 1;
     }
-    
+
     debugPrint(
       'Schedule: Scrolling to today (index $targetIndex)',
     );
     _scrollScheduleToIndex(events, targetIndex, reason: 'today');
   }
 
+  // ─────────────── Help mode helpers ───────────────
+  EventsHelpTargetId _helpTargetForTab(int index) {
+    switch (index) {
+      case 0:
+        return EventsHelpTargetId.dayTabSwitch;
+      case 1:
+        return EventsHelpTargetId.weekTabSwitch;
+      case 2:
+        return EventsHelpTargetId.monthTabSwitch;
+      case 3:
+      default:
+        return EventsHelpTargetId.scheduleTabSwitch;
+    }
+  }
+
+  EventsHelpTargetId _helpTargetForCurrentView() {
+    switch (_viewMode) {
+      case 'day':
+        return EventsHelpTargetId.dayView;
+      case 'week':
+        return EventsHelpTargetId.weekView;
+      case 'month':
+        return EventsHelpTargetId.monthView;
+      case 'schedule':
+      default:
+        return EventsHelpTargetId.scheduleView;
+    }
+  }
+
+  void _onGlobalHelpModeChanged() {
+    final bool shouldBeActive = HelpModeService.isActive;
+    if (shouldBeActive == _isHelpMode) {
+      return;
+    }
+    _setHelpMode(
+      shouldBeActive,
+      fromGlobal: true,
+      withHaptic: false,
+      showInitialTarget: false,
+    );
+  }
+
+  void _setHelpMode(
+    bool isActive, {
+    bool fromGlobal = false,
+    bool withHaptic = true,
+    bool showInitialTarget = true,
+  }) {
+    if (_isHelpMode == isActive) {
+      return;
+    }
+
+    if (withHaptic) {
+      triggerHeavyHaptic();
+    }
+
+    if (!isActive) {
+      setState(() {
+        _isHelpMode = false;
+        _activeHelpTarget = null;
+        _activeHelpStep = 0;
+        _activeTargetRect = null;
+        _isHelpTyping = false;
+      });
+    } else {
+      setState(() => _isHelpMode = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (showInitialTarget &&
+            mounted &&
+            _helpButtonKey.currentContext != null) {
+          _showHelpForTarget(
+            EventsHelpTargetId.helpButton,
+            _helpButtonKey.currentContext!,
+          );
+        }
+      });
+    }
+
+    if (!fromGlobal) {
+      HelpModeService.setActive(isActive);
+    }
+  }
+
+  void _toggleHelpMode() {
+    _setHelpMode(!_isHelpMode);
+  }
+
+  void _showHelpForTarget(EventsHelpTargetId id, BuildContext targetCtx) {
+    final RenderBox? box = targetCtx.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    setState(() {
+      _activeHelpTarget = id;
+      _activeHelpStep = 0;
+      _activeTargetRect =
+          Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+      _isHelpTyping = true;
+    });
+  }
+
+  void _advanceHelpStep() {
+    if (_activeHelpTarget == null) return;
+    final spec = eventsHelpContent[_activeHelpTarget!];
+    final steps = spec?.steps ?? [];
+    if (_activeHelpStep < steps.length - 1) {
+      setState(() {
+        _activeHelpStep++;
+        _isHelpTyping = true;
+      });
+    } else {
+      _dismissHelpBubble();
+    }
+  }
+
+  void _dismissHelpBubble() {
+    setState(() {
+      _activeHelpTarget = null;
+      _activeHelpStep = 0;
+      _activeTargetRect = null;
+      _isHelpTyping = false;
+    });
+  }
+
+  void _onHelpBarrierTap() {
+    if (_activeHelpTarget != null) {
+      if (_isHelpTyping) {
+        _helpBubbleKey.currentState?.skipTypewriter();
+      } else {
+        _advanceHelpStep();
+      }
+    }
+  }
+
+  bool _tryHelpTap(EventsHelpTargetId id, BuildContext targetCtx) {
+    if (!_isHelpMode) return false;
+    triggerHeavyHaptic();
+    _showHelpForTarget(id, targetCtx);
+    return true;
+  }
+
+  Widget _buildHelpOverlay() {
+    final spec = _activeHelpTarget != null
+        ? eventsHelpContent[_activeHelpTarget!]
+        : null;
+    final step = (spec != null && _activeHelpStep < spec.steps.length)
+        ? spec.steps[_activeHelpStep]
+        : null;
+    final isLastStep = spec == null || _activeHelpStep >= spec.steps.length - 1;
+
+    return Positioned.fill(
+      child: AnimatedOpacity(
+        opacity: _activeHelpTarget != null ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 200),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _onHelpBarrierTap,
+          child: Stack(
+            children: [
+              if (_activeTargetRect != null)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _spotlightController,
+                    builder: (context, _) => CustomPaint(
+                      painter: HelpSpotlightPainter(
+                        targetRect: _activeTargetRect!,
+                        glowProgress: _spotlightController.value,
+                      ),
+                    ),
+                  ),
+                ),
+              if (_activeHelpTarget != null &&
+                  _activeTargetRect != null &&
+                  step != null)
+                HelpBubble(
+                  key: _helpBubbleKey,
+                  text: step.text,
+                  instruction: step.instruction,
+                  isLastStep: isLastStep,
+                  targetRect: _activeTargetRect!,
+                  onAdvance: _advanceHelpStep,
+                  onDismiss: _dismissHelpBubble,
+                  onTypingStarted: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = true);
+                    });
+                  },
+                  onTypingFinished: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = false);
+                    });
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  // ─────────────── End help mode helpers ───────────────
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      floatingActionButton: FloatingActionButton(
-        onPressed: _createNewEvent,
-        tooltip: 'Add Event',
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.add),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildAppBar(theme, isDark),
-            _buildViewTabs(theme, isDark),
-            Expanded(
-              child: Container(
-                color: AppColors.backgroundColorMid,
-                child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _buildViewContent(theme, isDark),
-              ),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.backgroundColor,
+          floatingActionButton: Builder(
+            builder: (fabCtx) => FloatingActionButton(
+              onPressed: () {
+                if (_tryHelpTap(EventsHelpTargetId.addEventButton, fabCtx)) {
+                  return;
+                }
+                _createNewEvent();
+              },
+              tooltip: 'Add Event',
+              backgroundColor: theme.primaryColor,
+              foregroundColor: Colors.white,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.add),
             ),
-          ],
+          ),
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildAppBar(theme, isDark),
+                if (_isHelpMode)
+                  GestureDetector(
+                    onTap: _toggleHelpMode,
+                    child: AnimatedBuilder(
+                      animation: _spotlightController,
+                      builder: (context, child) {
+                        final opacity = 0.6 + 0.4 * _spotlightController.value;
+                        return Opacity(opacity: opacity, child: child);
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        color: AppColors.teal.withValues(alpha: 0.08),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Text(
+                          'Help mode is ON  •  Tap here to exit',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.teal,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                _buildViewTabs(theme, isDark),
+                Expanded(
+                  child: Builder(
+                    builder: (viewCtx) => GestureDetector(
+                      behavior: _isHelpMode
+                          ? HitTestBehavior.opaque
+                          : HitTestBehavior.deferToChild,
+                      onTap: _isHelpMode
+                          ? () =>
+                              _tryHelpTap(_helpTargetForCurrentView(), viewCtx)
+                          : null,
+                      child: Container(
+                        color: AppColors.backgroundColorMid,
+                        child: _isLoading
+                            ? const Center(child: CircularProgressIndicator())
+                            : _buildViewContent(theme, isDark),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
+        if (_isHelpMode && _activeHelpTarget != null) _buildHelpOverlay(),
+      ],
     );
   }
 
@@ -514,50 +803,95 @@ class _EventsScreenState extends State<EventsScreen>
         children: [
           // Month/Year display
           Expanded(
-            child: GestureDetector(
-              onTap: withHeavyTap(() {
-                _showMonthPicker(context);
-              }),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      DateFormat('MMMM y').format(_focusedDay),
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+            child: Builder(
+              builder: (monthCtx) => GestureDetector(
+                behavior: _isHelpMode
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.deferToChild,
+                onTap: _isHelpMode
+                    ? () =>
+                        _tryHelpTap(EventsHelpTargetId.monthPicker, monthCtx)
+                    : withHeavyTap(() {
+                        _showMonthPicker(context);
+                      }),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Expanded(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          DateFormat('MMMM y').format(_focusedDay),
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(
-                    Icons.arrow_drop_down,
-                    color: isDark ? Colors.white70 : Colors.black87,
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.arrow_drop_down,
+                      color: isDark ? Colors.white70 : Colors.black87,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
           // Today button
-          TextButton.icon(
-            onPressed: () {
-              _goToToday();
-            },
-            icon: const Icon(Icons.today_outlined),
-            label: const Text('Today'),
-            style: TextButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+          Builder(
+            builder: (todayCtx) => TextButton.icon(
+              onPressed: () {
+                if (_tryHelpTap(EventsHelpTargetId.todayButton, todayCtx)) {
+                  return;
+                }
+                _goToToday();
+              },
+              icon: const Icon(Icons.today_outlined),
+              label: const Text('Today'),
+              style: TextButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
               ),
             ),
           ),
           const SizedBox(width: 8),
           // Search icon
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () => _showSearchDialog(context, theme, isDark),
+          Builder(
+            builder: (searchCtx) => IconButton(
+              icon: const Icon(Icons.search),
+              onPressed: () {
+                if (_tryHelpTap(EventsHelpTargetId.searchButton, searchCtx)) {
+                  return;
+                }
+                _showSearchDialog(context, theme, isDark);
+              },
+            ),
+          ),
+          Semantics(
+            label: _isHelpMode ? 'Exit help mode' : 'Enter help mode',
+            child: _isHelpMode
+                ? AnimatedBuilder(
+                    animation: _spotlightController,
+                    builder: (context, child) {
+                      final scale = 1.0 + 0.15 * _spotlightController.value;
+                      return Transform.scale(scale: scale, child: child);
+                    },
+                    child: IconButton(
+                      key: _helpButtonKey,
+                      icon: Icon(Icons.help, color: AppColors.teal),
+                      tooltip: 'Exit Help Mode',
+                      onPressed: _toggleHelpMode,
+                    ),
+                  )
+                : IconButton(
+                    key: _helpButtonKey,
+                    icon: const Icon(Icons.help_outline),
+                    tooltip: 'Help',
+                    onPressed: _toggleHelpMode,
+                  ),
           ),
         ],
       ),
@@ -576,6 +910,13 @@ class _EventsScreenState extends State<EventsScreen>
       ),
       child: TabBar(
         controller: _tabController,
+        onTap: (index) {
+          if (!_isHelpMode) return;
+          final tabCtx = _tabKeys[index].currentContext;
+          if (tabCtx != null) {
+            _tryHelpTap(_helpTargetForTab(index), tabCtx);
+          }
+        },
         overlayColor: const WidgetStatePropertyAll(Colors.transparent),
         splashFactory: NoSplash.splashFactory,
         indicatorColor: theme.colorScheme.primary,
@@ -587,11 +928,11 @@ class _EventsScreenState extends State<EventsScreen>
           fontWeight: FontWeight.w600,
           fontFamily: 'Google Sans',
         ),
-        tabs: const [
-          Tab(text: 'Day'),
-          Tab(text: 'Week'),
-          Tab(text: 'Month'),
-          Tab(text: 'Schedule'),
+        tabs: [
+          Tab(key: _tabKeys[0], text: 'Day'),
+          Tab(key: _tabKeys[1], text: 'Week'),
+          Tab(key: _tabKeys[2], text: 'Month'),
+          Tab(key: _tabKeys[3], text: 'Schedule'),
         ],
       ),
     );
@@ -617,107 +958,122 @@ class _EventsScreenState extends State<EventsScreen>
       child: Column(
         children: [
           // Calendar widget
-          Container(
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF2B2930) : Colors.white,
-              borderRadius: const BorderRadius.vertical(
-                bottom: Radius.circular(28),
-              ),
-            ),
-            child: TableCalendar(
-            firstDay: DateTime.utc(2020, 1, 1),
-            lastDay: DateTime.utc(2030, 12, 31),
-            focusedDay: _focusedDay,
-            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            calendarFormat: _calendarFormat,
-            eventLoader: _getEventsForDay,
-            startingDayOfWeek: StartingDayOfWeek.sunday,
-            calendarStyle: CalendarStyle(
-              // Today decoration
-              todayDecoration: BoxDecoration(
-                color: theme.colorScheme.primary.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              todayTextStyle: TextStyle(
-                color: theme.colorScheme.primary,
-                fontWeight: FontWeight.bold,
-              ),
-              // Selected day decoration
-              selectedDecoration: BoxDecoration(
-                color: theme.colorScheme.primary,
-                shape: BoxShape.circle,
-              ),
-              selectedTextStyle: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-              // Weekend styling
-              weekendTextStyle: TextStyle(
-                color: isDark ? Colors.white70 : Colors.black87,
-              ),
-              // Event markers - custom builder will override default styling
-              markersMaxCount: 3,
-              markerSize: 6,
-              markersAlignment: Alignment.bottomCenter,
-              // Rounded corners feel
-              cellMargin: const EdgeInsets.all(4),
-              cellPadding: const EdgeInsets.all(0),
-            ),
-            calendarBuilders: CalendarBuilders(
-              markerBuilder: (context, date, events) {
-                if (events.isEmpty) return const SizedBox.shrink();
-                
-                // Get events for this day and limit to 3 markers
-                final dayEvents = _getEventsForDay(date);
-                final displayEvents = dayEvents.take(3).toList();
-                
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: displayEvents.map((event) {
-                    final eventColor = _getEventColor(event);
-                    return Container(
-                      width: 6,
-                      height: 6,
-                      margin: const EdgeInsets.symmetric(horizontal: 1),
-                      decoration: BoxDecoration(
-                        color: eventColor,
+          Builder(
+            builder: (calendarCtx) => GestureDetector(
+              behavior: _isHelpMode
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _isHelpMode
+                  ? () =>
+                      _tryHelpTap(EventsHelpTargetId.monthCalendar, calendarCtx)
+                  : null,
+              child: IgnorePointer(
+                ignoring: _isHelpMode,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF2B2930) : Colors.white,
+                    borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(28),
+                    ),
+                  ),
+                  child: TableCalendar(
+                    firstDay: DateTime.utc(2020, 1, 1),
+                    lastDay: DateTime.utc(2030, 12, 31),
+                    focusedDay: _focusedDay,
+                    selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                    calendarFormat: _calendarFormat,
+                    eventLoader: _getEventsForDay,
+                    startingDayOfWeek: StartingDayOfWeek.sunday,
+                    calendarStyle: CalendarStyle(
+                      // Today decoration
+                      todayDecoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(0.3),
                         shape: BoxShape.circle,
                       ),
-                    );
-                  }).toList(),
-                );
-              },
+                      todayTextStyle: TextStyle(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      // Selected day decoration
+                      selectedDecoration: BoxDecoration(
+                        color: theme.colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      selectedTextStyle: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      // Weekend styling
+                      weekendTextStyle: TextStyle(
+                        color: isDark ? Colors.white70 : Colors.black87,
+                      ),
+                      // Event markers - custom builder will override default styling
+                      markersMaxCount: 3,
+                      markerSize: 6,
+                      markersAlignment: Alignment.bottomCenter,
+                      // Rounded corners feel
+                      cellMargin: const EdgeInsets.all(4),
+                      cellPadding: const EdgeInsets.all(0),
+                    ),
+                    calendarBuilders: CalendarBuilders(
+                      markerBuilder: (context, date, events) {
+                        if (events.isEmpty) return const SizedBox.shrink();
+
+                        // Get events for this day and limit to 3 markers
+                        final dayEvents = _getEventsForDay(date);
+                        final displayEvents = dayEvents.take(3).toList();
+
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: displayEvents.map((event) {
+                            final eventColor = _getEventColor(event);
+                            return Container(
+                              width: 6,
+                              height: 6,
+                              margin: const EdgeInsets.symmetric(horizontal: 1),
+                              decoration: BoxDecoration(
+                                color: eventColor,
+                                shape: BoxShape.circle,
+                              ),
+                            );
+                          }).toList(),
+                        );
+                      },
+                    ),
+                    headerStyle: HeaderStyle(
+                      formatButtonVisible: false,
+                      titleCentered: false,
+                      leftChevronVisible: false,
+                      rightChevronVisible: false,
+                      titleTextStyle: const TextStyle(fontSize: 0), // Hidden
+                    ),
+                    onDaySelected: (selectedDay, focusedDay) {
+                      setState(() {
+                        _selectedDay = selectedDay;
+                        _focusedDay = focusedDay;
+                      });
+                    },
+                    onPageChanged: (focusedDay) {
+                      setState(() {
+                        _focusedDay = focusedDay;
+                      });
+                    },
+                  ),
+                ),
+              ),
             ),
-            headerStyle: HeaderStyle(
-              formatButtonVisible: false,
-              titleCentered: false,
-              leftChevronVisible: false,
-              rightChevronVisible: false,
-              titleTextStyle: const TextStyle(fontSize: 0), // Hidden
+          ),
+          // Events list for selected day
+          Expanded(
+            child: _buildEventsList(
+              _getEventsForDay(_selectedDay),
+              theme,
+              isDark,
+              eventCardHelpTarget: EventsHelpTargetId.monthEventCard,
             ),
-            onDaySelected: (selectedDay, focusedDay) {
-              setState(() {
-                _selectedDay = selectedDay;
-                _focusedDay = focusedDay;
-              });
-            },
-            onPageChanged: (focusedDay) {
-              setState(() {
-                _focusedDay = focusedDay;
-              });
-            },
           ),
-        ),
-        // Events list for selected day
-        Expanded(
-          child: _buildEventsList(
-            _getEventsForDay(_selectedDay),
-            theme,
-            isDark,
-          ),
-        ),
-      ],
+        ],
       ),
     );
   }
@@ -728,6 +1084,7 @@ class _EventsScreenState extends State<EventsScreen>
       onRefresh: _loadEvents,
       child: GestureDetector(
         onHorizontalDragEnd: (details) {
+          if (_isHelpMode) return;
           // Swipe left to go to next day
           if (details.primaryVelocity! < 0) {
             setState(() {
@@ -750,14 +1107,21 @@ class _EventsScreenState extends State<EventsScreen>
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.chevron_left),
-                    onPressed: () {
-                      setState(() {
-                        _selectedDay = _selectedDay.subtract(const Duration(days: 1));
-                        _focusedDay = _selectedDay;
-                      });
-                    },
+                  Builder(
+                    builder: (prevDayCtx) => IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      onPressed: () {
+                        if (_tryHelpTap(
+                            EventsHelpTargetId.dayPreviousButton, prevDayCtx)) {
+                          return;
+                        }
+                        setState(() {
+                          _selectedDay =
+                              _selectedDay.subtract(const Duration(days: 1));
+                          _focusedDay = _selectedDay;
+                        });
+                      },
+                    ),
                   ),
                   Expanded(
                     child: Center(
@@ -770,20 +1134,32 @@ class _EventsScreenState extends State<EventsScreen>
                       ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.chevron_right),
-                    onPressed: () {
-                      setState(() {
-                        _selectedDay = _selectedDay.add(const Duration(days: 1));
-                        _focusedDay = _selectedDay;
-                      });
-                    },
+                  Builder(
+                    builder: (nextDayCtx) => IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: () {
+                        if (_tryHelpTap(
+                            EventsHelpTargetId.dayNextButton, nextDayCtx)) {
+                          return;
+                        }
+                        setState(() {
+                          _selectedDay =
+                              _selectedDay.add(const Duration(days: 1));
+                          _focusedDay = _selectedDay;
+                        });
+                      },
+                    ),
                   ),
                 ],
               ),
             ),
             Expanded(
-              child: _buildEventsList(events, theme, isDark),
+              child: _buildEventsList(
+                events,
+                theme,
+                isDark,
+                eventCardHelpTarget: EventsHelpTargetId.dayEventCard,
+              ),
             ),
           ],
         ),
@@ -825,6 +1201,9 @@ class _EventsScreenState extends State<EventsScreen>
         Expanded(
           child: PageView.builder(
             controller: _weekPageController,
+            physics: _isHelpMode
+                ? const NeverScrollableScrollPhysics()
+                : const PageScrollPhysics(),
             onPageChanged: (page) {
               // Calculate the start of week for this page
               // Page 52 is the current week, each page is 7 days apart
@@ -836,7 +1215,7 @@ class _EventsScreenState extends State<EventsScreen>
               final newWeekStart = currentWeekStart.add(
                 Duration(days: weekOffset * 7),
               );
-              
+
               setState(() {
                 _selectedDay = newWeekStart;
                 _focusedDay = newWeekStart;
@@ -962,7 +1341,7 @@ class _EventsScreenState extends State<EventsScreen>
             final day = startOfWeek.add(Duration(days: index));
             final normalizedDay = DateTime(day.year, day.month, day.day);
             final events = weekEvents[normalizedDay] ?? [];
-            
+
             return Expanded(
               child: _buildDayColumn(day, events, theme, isDark),
             );
@@ -1000,7 +1379,8 @@ class _EventsScreenState extends State<EventsScreen>
     );
   }
 
-  Widget _buildDayColumn(DateTime day, List<Event> events, ThemeData theme, bool isDark) {
+  Widget _buildDayColumn(
+      DateTime day, List<Event> events, ThemeData theme, bool isDark) {
     return Container(
       decoration: BoxDecoration(
         border: Border(
@@ -1012,22 +1392,22 @@ class _EventsScreenState extends State<EventsScreen>
       ),
       child: Stack(
         children: [
-        // Hour grid lines
-        Column(
-          children: List.generate(24, (hour) {
-            return Container(
-              height: 30,
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: isDark ? Colors.white12 : Colors.black12,
-                    width: 0.5,
+          // Hour grid lines
+          Column(
+            children: List.generate(24, (hour) {
+              return Container(
+                height: 30,
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: isDark ? Colors.white12 : Colors.black12,
+                      width: 0.5,
+                    ),
                   ),
                 ),
-              ),
-            );
-          }),
-        ),
+              );
+            }),
+          ),
           // Events positioned by time
           ...events.map((event) => _buildWeekEventCard(event, theme, isDark)),
         ],
@@ -1036,7 +1416,8 @@ class _EventsScreenState extends State<EventsScreen>
   }
 
   Widget _buildWeekEventCard(Event event, ThemeData theme, bool isDark) {
-    final startHour = event.startDateTime.hour + (event.startDateTime.minute / 60);
+    final startHour =
+        event.startDateTime.hour + (event.startDateTime.minute / 60);
     final endHour = event.endDateTime.hour + (event.endDateTime.minute / 60);
     final duration = endHour - startHour;
 
@@ -1051,44 +1432,49 @@ class _EventsScreenState extends State<EventsScreen>
       left: 2,
       right: 2,
       height: height,
-      child: GestureDetector(
-        onTap: withHeavyTap(() {
-          _openEventDetails(event);
-        }),
-        child: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: eventColor.withOpacity(0.2),
-            border: Border(
-              left: BorderSide(
-                color: eventColor,
-                width: 3,
+      child: Builder(
+        builder: (weekEventCtx) => GestureDetector(
+          onTap: withHeavyTap(() {
+            if (_tryHelpTap(EventsHelpTargetId.weekEventCard, weekEventCtx)) {
+              return;
+            }
+            _openEventDetails(event);
+          }),
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: eventColor.withOpacity(0.2),
+              border: Border(
+                left: BorderSide(
+                  color: eventColor,
+                  width: 3,
+                ),
               ),
+              borderRadius: BorderRadius.circular(4),
             ),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                event.title.isEmpty ? 'Untitled' : event.title,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white : Colors.black87,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              if (height > 40)
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  DateFormat('h:mm a').format(event.startDateTime),
+                  event.title.isEmpty ? 'Untitled' : event.title,
                   style: TextStyle(
-                    fontSize: 9,
-                    color: isDark ? Colors.white70 : Colors.black54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white : Colors.black87,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-            ],
+                if (height > 40)
+                  Text(
+                    DateFormat('h:mm a').format(event.startDateTime),
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1099,8 +1485,8 @@ class _EventsScreenState extends State<EventsScreen>
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
     final events = [..._allEvents]..sort(
-      (a, b) => a.startDateTime.compareTo(b.startDateTime),
-    );
+        (a, b) => a.startDateTime.compareTo(b.startDateTime),
+      );
     final anchorIndex = events.indexWhere(
       (event) => !event.startDateTime.isBefore(todayStart),
     );
@@ -1108,9 +1494,11 @@ class _EventsScreenState extends State<EventsScreen>
         ? events.length - 1
         : anchorIndex;
 
-    debugPrint('Schedule: Building with ${events.length} events, anchor index: $targetIndex');
+    debugPrint(
+        'Schedule: Building with ${events.length} events, anchor index: $targetIndex');
     if (targetIndex != -1 && targetIndex < events.length) {
-      debugPrint('Schedule: Anchor event: "${events[targetIndex].title}" at ${events[targetIndex].startDateTime}');
+      debugPrint(
+          'Schedule: Anchor event: "${events[targetIndex].title}" at ${events[targetIndex].startDateTime}');
     }
 
     // Scroll to the anchor event by calculating offset
@@ -1181,6 +1569,7 @@ class _EventsScreenState extends State<EventsScreen>
               event,
               theme,
               isDark,
+              helpTarget: EventsHelpTargetId.scheduleEventCard,
             ),
           ],
         ),
@@ -1198,7 +1587,7 @@ class _EventsScreenState extends State<EventsScreen>
     final viewportHeight = screenHeight - toolbarHeight - safeAreaBottom;
     // Add padding equal to viewport height minus a small buffer for one event
     final bottomPadding = (viewportHeight - 150).clamp(200.0, double.infinity);
-    
+
     return RefreshIndicator(
       onRefresh: _loadEvents,
       child: ListView(
@@ -1223,7 +1612,8 @@ class _EventsScreenState extends State<EventsScreen>
       }
 
       if (!_scheduleScrollController.hasClients) {
-        debugPrint('Schedule: No scroll clients yet for $reason (attempt ${attempts + 1}), retrying...');
+        debugPrint(
+            'Schedule: No scroll clients yet for $reason (attempt ${attempts + 1}), retrying...');
         WidgetsBinding.instance.addPostFrameCallback((_) {
           attemptScroll(attempts + 1);
         });
@@ -1280,8 +1670,8 @@ class _EventsScreenState extends State<EventsScreen>
     if (_viewMode != 'schedule') return;
 
     final events = [..._allEvents]..sort(
-      (a, b) => a.startDateTime.compareTo(b.startDateTime),
-    );
+        (a, b) => a.startDateTime.compareTo(b.startDateTime),
+      );
     if (events.isEmpty) return;
 
     final targetIndex = _findEventIndexForMonth(events, selectedDate);
@@ -1313,8 +1703,12 @@ class _EventsScreenState extends State<EventsScreen>
     return events.length - 1;
   }
 
-
-  Widget _buildEventsList(List<Event> events, ThemeData theme, bool isDark) {
+  Widget _buildEventsList(
+    List<Event> events,
+    ThemeData theme,
+    bool isDark, {
+    EventsHelpTargetId? eventCardHelpTarget,
+  }) {
     if (events.isEmpty) {
       return Center(
         child: Column(
@@ -1333,10 +1727,18 @@ class _EventsScreenState extends State<EventsScreen>
               ),
             ),
             const SizedBox(height: 8),
-            TextButton.icon(
-              onPressed: _createNewEvent,
-              icon: const Icon(Icons.add),
-              label: const Text('Create Event'),
+            Builder(
+              builder: (createEventCtx) => TextButton.icon(
+                onPressed: () {
+                  if (_tryHelpTap(
+                      EventsHelpTargetId.addEventButton, createEventCtx)) {
+                    return;
+                  }
+                  _createNewEvent();
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Create Event'),
+              ),
             ),
           ],
         ),
@@ -1350,6 +1752,7 @@ class _EventsScreenState extends State<EventsScreen>
         events[index],
         theme,
         isDark,
+        helpTarget: eventCardHelpTarget,
       ),
     );
   }
@@ -1359,125 +1762,130 @@ class _EventsScreenState extends State<EventsScreen>
     ThemeData theme,
     bool isDark, {
     Key? key,
+    EventsHelpTargetId? helpTarget,
   }) {
-    final cardColor = isDark
-        ? const Color(0xFF2B2930)
-        : Colors.white;
+    final cardColor = isDark ? const Color(0xFF2B2930) : Colors.white;
     final borderColor = _getEventColor(event);
 
-    return GestureDetector(
-      onTap: withHeavyTap(() {
-        _openEventDetails(event);
-      }),
-      child: Container(
-        key: key,
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: borderColor.withOpacity(0.3),
-            width: 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+    return Builder(
+      builder: (eventCardCtx) => GestureDetector(
+        onTap: withHeavyTap(() {
+          if (helpTarget != null && _tryHelpTap(helpTarget, eventCardCtx)) {
+            return;
+          }
+          _openEventDetails(event);
+        }),
+        child: Container(
+          key: key,
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: borderColor.withOpacity(0.3),
+              width: 1,
             ),
-          ],
-        ),
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              // Colored left border
-              Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: borderColor,
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                // Colored left border
+                Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: borderColor,
+                    borderRadius: const BorderRadius.horizontal(
+                      left: Radius.circular(16),
+                    ),
                   ),
                 ),
-              ),
-              // Event content
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Title
-                      Text(
-                        event.title.isEmpty ? 'Untitled Event' : event.title,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontFamily: 'Google Sans',
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      // Time
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.access_time,
-                            size: 16,
-                            color: isDark ? Colors.white60 : Colors.black54,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatEventTime(event),
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: isDark ? Colors.white60 : Colors.black54,
-                            ),
-                          ),
-                        ],
-                      ),
-                      // Description (if available)
-                      if (event.description.isNotEmpty) ...[
-                        const SizedBox(height: 4),
+                // Event content
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Title
                         Text(
-                          event.description,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: isDark ? Colors.white54 : Colors.black45,
+                          event.title.isEmpty ? 'Untitled Event' : event.title,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Google Sans',
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
-                      ],
-                      // Experience count with category icons
-                      if (event.experiences.isNotEmpty) ...[
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 4),
+                        // Time
                         Row(
                           children: [
                             Icon(
-                              Icons.location_on_outlined,
+                              Icons.access_time,
                               size: 16,
-                              color: theme.colorScheme.primary,
+                              color: isDark ? Colors.white60 : Colors.black54,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w500,
+                              _formatEventTime(event),
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: isDark ? Colors.white60 : Colors.black54,
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            // Category icons with overflow handling
-                            Flexible(
-                              child: _buildTruncatedCategoryIcons(event.experiences),
                             ),
                           ],
                         ),
+                        // Description (if available)
+                        if (event.description.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            event.description,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: isDark ? Colors.white54 : Colors.black45,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        // Experience count with category icons
+                        if (event.experiences.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.location_on_outlined,
+                                size: 16,
+                                color: theme.colorScheme.primary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Category icons with overflow handling
+                              Flexible(
+                                child: _buildTruncatedCategoryIcons(
+                                    event.experiences),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1487,7 +1895,7 @@ class _EventsScreenState extends State<EventsScreen>
   void _openEventDetails(Event event) async {
     // Show loading indicator
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1503,12 +1911,13 @@ class _EventsScreenState extends State<EventsScreen>
           .map((entry) => entry.experienceId)
           .where((id) => id.isNotEmpty)
           .toList();
-      
+
       final experienceService = ExperienceService();
-      
+
       List<Experience> experiences = [];
       if (experienceIds.isNotEmpty) {
-        experiences = await experienceService.getExperiencesByIds(experienceIds);
+        experiences =
+            await experienceService.getExperiencesByIds(experienceIds);
       }
 
       // Fetch the category + color metadata from the event owner so shared viewers
@@ -1530,11 +1939,9 @@ class _EventsScreenState extends State<EventsScreen>
           if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
             categoryIds.add(exp.categoryId!);
           }
-          categoryIds.addAll(
-              exp.otherCategories.where((id) => id.isNotEmpty));
+          categoryIds.addAll(exp.otherCategories.where((id) => id.isNotEmpty));
 
-          if (exp.colorCategoryId != null &&
-              exp.colorCategoryId!.isNotEmpty) {
+          if (exp.colorCategoryId != null && exp.colorCategoryId!.isNotEmpty) {
             colorCategoryIds.add(exp.colorCategoryId!);
           }
           colorCategoryIds
@@ -1553,14 +1960,13 @@ class _EventsScreenState extends State<EventsScreen>
               entry.inlineColorCategoryId!.isNotEmpty) {
             colorCategoryIds.add(entry.inlineColorCategoryId!);
           }
-          colorCategoryIds.addAll(entry.inlineOtherColorCategoryIds
-              .where((id) => id.isNotEmpty));
+          colorCategoryIds.addAll(
+              entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
         }
 
         try {
           if (categoryIds.isNotEmpty) {
-            categories =
-                await experienceService.getUserCategoriesByOwnerAndIds(
+            categories = await experienceService.getUserCategoriesByOwnerAndIds(
               event.plannerUserId,
               categoryIds.toList(),
             );
@@ -1591,9 +1997,9 @@ class _EventsScreenState extends State<EventsScreen>
           colorCategories = await experienceService.getUserColorCategories();
         }
       }
-      
+
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
 
@@ -1618,10 +2024,10 @@ class _EventsScreenState extends State<EventsScreen>
       }
     } catch (e) {
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading event details: $e')),
       );
@@ -1666,7 +2072,7 @@ class _EventsScreenState extends State<EventsScreen>
   String _formatEventTime(Event event) {
     final start = DateFormat('h:mm a').format(event.startDateTime);
     final end = DateFormat('h:mm a').format(event.endDateTime);
-    
+
     if (isSameDay(event.startDateTime, event.endDateTime)) {
       return '$start - $end';
     } else {
@@ -1693,7 +2099,7 @@ class _EventsScreenState extends State<EventsScreen>
   void _showMonthPicker(BuildContext context) async {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    
+
     await showModalBottomSheet(
       context: context,
       backgroundColor: isDark ? const Color(0xFF1C1B1F) : Colors.white,
@@ -1813,16 +2219,16 @@ class _EventsScreenState extends State<EventsScreen>
 
   void _scrollToEventFromSearch(Event event) {
     final events = [..._allEvents]..sort(
-      (a, b) => a.startDateTime.compareTo(b.startDateTime),
-    );
-    
+        (a, b) => a.startDateTime.compareTo(b.startDateTime),
+      );
+
     final targetIndex = events.indexWhere((e) => e.id == event.id);
     if (targetIndex != -1) {
       // Switch to schedule view if not already there
       if (_viewMode != 'schedule') {
         _tabController.animateTo(3);
       }
-      
+
       // Schedule the scroll for the next frame to ensure we're on the schedule view
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollScheduleToIndex(events, targetIndex, reason: 'search');
@@ -1870,14 +2276,14 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
 
   void _performSearch() {
     final query = _searchController.text.toLowerCase();
-    
+
     if (query.isEmpty) {
       setState(() => _searchResults = []);
       return;
     }
 
     final results = <_SearchResult>[];
-    
+
     for (final event in widget.events) {
       // Search in event title
       if (event.title.toLowerCase().contains(query)) {
@@ -1887,9 +2293,9 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
           matchText: event.title,
         ));
       }
-      
+
       // Search in event description
-      if (event.description.isNotEmpty && 
+      if (event.description.isNotEmpty &&
           event.description.toLowerCase().contains(query)) {
         results.add(_SearchResult(
           event: event,
@@ -1897,7 +2303,7 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
           matchText: event.description,
         ));
       }
-      
+
       // Search in experiences
       for (final entry in event.experiences) {
         if (entry.experienceId.isEmpty) {
@@ -1976,9 +2382,8 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
                             ? 'Start typing to search events and experiences.'
                             : 'No results found',
                         style: TextStyle(
-                          color: widget.isDark
-                              ? Colors.white54
-                              : Colors.black54,
+                          color:
+                              widget.isDark ? Colors.white54 : Colors.black54,
                         ),
                       ),
                     )
@@ -1999,7 +2404,7 @@ class _EventSearchDialogState extends State<_EventSearchDialog> {
   Widget _buildSearchResultTile(_SearchResult result) {
     final dateStr = DateFormat('MMM d, y').format(result.event.startDateTime);
     final timeStr = DateFormat('h:mm a').format(result.event.startDateTime);
-    
+
     String subtitle;
     if (result.matchType == 'event') {
       subtitle = 'Event title • $dateStr at $timeStr';
@@ -2060,7 +2465,7 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
   late int _selectedMonth;
   bool _isSelectingYear = false;
   late PageController _pageController;
-  
+
   // Year range: current year ± 10 years
   final int _yearRange = 10;
 
@@ -2069,7 +2474,7 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
     super.initState();
     _selectedYear = widget.initialDate.year;
     _selectedMonth = widget.initialDate.month;
-    
+
     // Initialize page controller at current year (middle of range)
     _pageController = PageController(initialPage: _yearRange);
   }
@@ -2109,9 +2514,7 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
                     });
                   },
                   child: Text(
-                    _isSelectingYear 
-                        ? 'Done'
-                        : '$_selectedYear',
+                    _isSelectingYear ? 'Done' : '$_selectedYear',
                     style: TextStyle(
                       color: theme.colorScheme.primary,
                       fontWeight: FontWeight.w600,
@@ -2136,9 +2539,18 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
 
   Widget _buildMonthSelector(ThemeData theme, bool isDark) {
     final months = [
-      'January', 'February', 'March', 'April',
-      'May', 'June', 'July', 'August',
-      'September', 'October', 'November', 'December'
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December'
     ];
 
     final currentYear = DateTime.now().year;
@@ -2185,7 +2597,7 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
             },
             itemBuilder: (context, page) {
               final yearForPage = currentYear - _yearRange + page;
-              
+
               return GridView.builder(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -2197,10 +2609,10 @@ class _MonthYearPickerSheetState extends State<_MonthYearPickerSheet> {
                 itemCount: 12,
                 itemBuilder: (context, index) {
                   final month = index + 1;
-                  final isSelected = month == _selectedMonth && 
-                                    yearForPage == _selectedYear;
-                  final isCurrentMonth = month == DateTime.now().month && 
-                                         yearForPage == DateTime.now().year;
+                  final isSelected =
+                      month == _selectedMonth && yearForPage == _selectedYear;
+                  final isCurrentMonth = month == DateTime.now().month &&
+                      yearForPage == DateTime.now().year;
 
                   return InkWell(
                     onTap: withHeavyTap(() {

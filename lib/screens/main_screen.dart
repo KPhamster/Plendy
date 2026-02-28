@@ -8,6 +8,7 @@ import '../services/sharing_service.dart';
 import '../services/experience_service.dart';
 import '../services/notification_state_service.dart';
 import '../services/auth_service.dart';
+import '../services/help_mode_service.dart';
 import '../services/my_people_preload_service.dart';
 import '../widgets/notification_dot.dart';
 import 'collections_screen.dart';
@@ -17,6 +18,9 @@ import 'map_screen.dart';
 import 'profile_screen.dart';
 import 'package:provider/provider.dart';
 import '../providers/discovery_share_coordinator.dart';
+import '../config/main_help_content.dart';
+import '../models/main_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class MainScreen extends StatefulWidget {
   final int initialIndex;
@@ -27,9 +31,11 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
+class _MainScreenState extends State<MainScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late int _selectedIndex;
   late final PageController _pageController;
+  late final ScreenHelpController<MainHelpTargetId> _help;
   final SharingService _sharingService = SharingService();
   final ExperienceService _experienceService = ExperienceService();
   final GlobalKey<DiscoveryScreenState> _discoveryKey =
@@ -39,6 +45,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final GlobalKey<MapScreenState> _mapKey = GlobalKey<MapScreenState>();
   DiscoveryShareCoordinator? _shareCoordinator;
   bool _isCollectionsLoading = true;
+  final List<GlobalKey> _tabItemKeys =
+      List<GlobalKey>.generate(5, (_) => GlobalKey());
 
   // Define the screens list
   late final List<Widget> _screens;
@@ -46,6 +54,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _help = ScreenHelpController<MainHelpTargetId>(
+      vsync: this,
+      content: mainHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: MainHelpTargetId.helpButton,
+      textResolver: _resolveHelpText,
+    );
+    HelpModeService.listenable.addListener(_onGlobalHelpModeChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onGlobalHelpModeChanged();
+      }
+    });
     _selectedIndex = widget.initialIndex;
     _pageController = PageController(initialPage: _selectedIndex);
     _screens = [
@@ -169,9 +191,73 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _shareCoordinator?.removeListener(_handleDiscoveryShareToken);
+    HelpModeService.listenable.removeListener(_onGlobalHelpModeChanged);
     _pageController.dispose();
+    _help.dispose();
     // Clean up the sharing service listener
     super.dispose();
+  }
+
+  void _onGlobalHelpModeChanged() {
+    final bool shouldBeActive = HelpModeService.isActive;
+    if (shouldBeActive == _help.isActive) {
+      return;
+    }
+    _help.toggleHelpMode(
+      withHaptic: false,
+      notify: false,
+      showInitialTarget: false,
+    );
+  }
+
+  MainHelpTargetId _helpTargetForTab(int index) {
+    switch (index) {
+      case 0:
+        return MainHelpTargetId.discoveryTabSwitch;
+      case 1:
+        return MainHelpTargetId.collectionsTabSwitch;
+      case 2:
+        return MainHelpTargetId.mapTabSwitch;
+      case 3:
+        return MainHelpTargetId.plansTabSwitch;
+      case 4:
+      default:
+        return MainHelpTargetId.meTabSwitch;
+    }
+  }
+
+  /// Provides tab-aware body text for the [MainHelpTargetId.currentView] target.
+  /// For the Collections tab it drills into the current sub-tab so the user
+  /// gets a description of exactly what they're looking at.
+  String _resolveHelpText(
+      MainHelpTargetId targetId, int stepIndex, String staticText) {
+    if (targetId != MainHelpTargetId.currentView || stepIndex != 0) {
+      return staticText;
+    }
+    switch (_selectedIndex) {
+      case 0:
+        return 'You\'re in Discovery! Scroll through to find amazing experiences shared by the community.';
+      case 1:
+        final subTab = _collectionsKey.currentState?.currentTabIndex ?? 0;
+        switch (subTab) {
+          case 0:
+            return 'This is your Categories tab! Organize and browse your text categories and color categories here.';
+          case 1:
+            return 'This is your Experiences tab! All your individual saved places and things live here.';
+          case 2:
+            return 'This is your Saves tab! Your saved links, posts, and other content pieces are stored here.';
+          default:
+            return 'You\'re in your Collection! This is where all your saved experiences, categories, and content live.';
+        }
+      case 2:
+        return 'You\'re on the Map! All your saved experiences are pinned here so you can see them geographically.';
+      case 3:
+        return 'You\'re in Plans! Your upcoming events and organized outings are all here.';
+      case 4:
+        return 'You\'re on your profile page! Your account info, social connections, and settings are all here.';
+      default:
+        return staticText;
+    }
   }
 
   void _onItemTapped(int index) {
@@ -199,6 +285,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
     );
+  }
+
+  void _onBottomNavTapped(int index) {
+    if (_help.isActive) {
+      final tabCtx = _tabItemKeys[index].currentContext;
+      if (tabCtx != null) {
+        _help.showTarget(_helpTargetForTab(index), tabCtx, withHaptic: true);
+      }
+      _onItemTapped(index);
+      return;
+    }
+    triggerHeavyHaptic();
+    _onItemTapped(index);
   }
 
   // Handle shared files
@@ -258,7 +357,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
-
   void _handleDiscoveryShareToken() {
     final token = _shareCoordinator?.pendingToken;
     if (token == null || token.isEmpty) {
@@ -303,61 +401,91 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: PageView(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(),
-        allowImplicitScrolling: true,
-        onPageChanged: (index) {
-          if (index == _selectedIndex) {
-            return;
-          }
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        children: _screens
-            .map((screen) => _KeepAlivePage(child: screen))
-            .toList(),
-      ),
-      bottomNavigationBar: Consumer<NotificationStateService>(
-        builder: (context, notificationService, child) {
-          return BottomNavigationBar(
-            items: <BottomNavigationBarItem>[
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.explore_outlined),
-                label: 'Discovery',
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.white,
+          body: Builder(
+            builder: (viewCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () => _help.tryTap(MainHelpTargetId.currentView, viewCtx)
+                  : null,
+              child: PageView(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
+                allowImplicitScrolling: true,
+                onPageChanged: (index) {
+                  if (index == _selectedIndex) {
+                    return;
+                  }
+                  setState(() {
+                    _selectedIndex = index;
+                  });
+                },
+                children: _screens
+                    .map((screen) => _KeepAlivePage(child: screen))
+                    .toList(),
               ),
-              BottomNavigationBarItem(
-                icon: _buildCollectionIcon(context),
-                label: 'Collection',
-              ),
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.map_outlined),
-                label: 'Map',
-              ),
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.event_outlined),
-                label: 'Plans',
-              ),
-              BottomNavigationBarItem(
-                icon: IconNotificationDot(
-                  icon: const Icon(Icons.person),
-                  showDot: notificationService.hasAnyUnseen,
-                ),
-                label: 'Me',
-              ),
-            ],
-            currentIndex: _selectedIndex,
-            selectedItemColor: Theme.of(context).primaryColor,
-            unselectedItemColor: Colors.grey,
-            backgroundColor: AppColors.backgroundColor,
-            onTap: withHeavyTap(_onItemTapped),
-            type: BottomNavigationBarType.fixed,
-          );
-        },
-      ),
+            ),
+          ),
+          bottomNavigationBar: Consumer<NotificationStateService>(
+            builder: (context, notificationService, child) {
+              return BottomNavigationBar(
+                items: <BottomNavigationBarItem>[
+                  BottomNavigationBarItem(
+                    icon: Icon(
+                      Icons.explore_outlined,
+                      key: _tabItemKeys[0],
+                    ),
+                    label: 'Discovery',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: SizedBox(
+                      key: _tabItemKeys[1],
+                      child: _buildCollectionIcon(context),
+                    ),
+                    label: 'Collection',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(
+                      Icons.map_outlined,
+                      key: _tabItemKeys[2],
+                    ),
+                    label: 'Map',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(
+                      Icons.event_outlined,
+                      key: _tabItemKeys[3],
+                    ),
+                    label: 'Plans',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: SizedBox(
+                      key: _tabItemKeys[4],
+                      child: IconNotificationDot(
+                        icon: const Icon(Icons.person),
+                        showDot: notificationService.hasAnyUnseen,
+                      ),
+                    ),
+                    label: 'Me',
+                  ),
+                ],
+                currentIndex: _selectedIndex,
+                selectedItemColor: Theme.of(context).primaryColor,
+                unselectedItemColor: Colors.grey,
+                backgroundColor: AppColors.backgroundColor,
+                onTap: _onBottomNavTapped,
+                type: BottomNavigationBarType.fixed,
+              );
+            },
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 }

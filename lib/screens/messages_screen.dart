@@ -9,6 +9,9 @@ import '../widgets/cached_profile_avatar.dart';
 import 'chat_screen.dart';
 import 'new_message_thread_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../config/messages_help_content.dart';
+import '../models/messages_help_target.dart';
+import '../widgets/screen_help_controller.dart';
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({super.key});
@@ -17,13 +20,30 @@ class MessagesScreen extends StatefulWidget {
   State<MessagesScreen> createState() => _MessagesScreenState();
 }
 
-class _MessagesScreenState extends State<MessagesScreen> {
+class _MessagesScreenState extends State<MessagesScreen>
+    with TickerProviderStateMixin {
   late final MessageService _messageService;
+  late final ScreenHelpController<MessagesHelpTargetId> _help;
+  Stream<List<MessageThread>>? _threadsStream;
+  String? _threadsStreamUserId;
 
   @override
   void initState() {
     super.initState();
     _messageService = MessageService();
+    _help = ScreenHelpController<MessagesHelpTargetId>(
+      vsync: this,
+      content: messagesHelpContent,
+      setState: setState,
+      isMounted: () => mounted,
+      defaultFirstTarget: MessagesHelpTargetId.helpButton,
+    );
+  }
+
+  @override
+  void dispose() {
+    _help.dispose();
+    super.dispose();
   }
 
   Future<void> _openNewChat(BuildContext context, String currentUserId) async {
@@ -55,6 +75,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
+  Stream<List<MessageThread>> _watchThreads(String userId) {
+    if (_threadsStream == null || _threadsStreamUserId != userId) {
+      _threadsStreamUserId = userId;
+      _threadsStream = _messageService.watchThreadsForUser(userId);
+    }
+    return _threadsStream!;
+  }
+
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
@@ -68,59 +96,90 @@ class _MessagesScreenState extends State<MessagesScreen> {
       );
     }
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: AppColors.backgroundColor,
-        foregroundColor: Colors.black,
-        title: const Text('Messages'),
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
-        onPressed: () => _openNewChat(context, currentUser.uid),
-        child: const Icon(Icons.message),
-      ),
-      body: StreamBuilder<List<MessageThread>>(
-        stream: _messageService.watchThreadsForUser(currentUser.uid),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('Something went wrong: ${snapshot.error}'),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {}); // Trigger a rebuild to retry
-                    },
-                    child: const Text('Retry'),
-                  ),
-                ],
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.backgroundColor,
+          appBar: AppBar(
+            backgroundColor: AppColors.backgroundColor,
+            foregroundColor: Colors.black,
+            title: const Text('Messages'),
+            actions: [_help.buildIconButton(inactiveColor: Colors.black87)],
+            bottom: _help.isActive
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(24),
+                    child: _help.buildExitBanner(),
+                  )
+                : null,
+          ),
+          floatingActionButton: Builder(
+            builder: (fabCtx) => FloatingActionButton(
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+              onPressed: _help.isActive
+                  ? () => _help.tryTap(
+                      MessagesHelpTargetId.newMessageButton, fabCtx)
+                  : () => _openNewChat(context, currentUser.uid),
+              child: const Icon(Icons.message),
+            ),
+          ),
+          body: Builder(
+            builder: (listCtx) => GestureDetector(
+              behavior: _help.isActive
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.deferToChild,
+              onTap: _help.isActive
+                  ? () =>
+                      _help.tryTap(MessagesHelpTargetId.messagesList, listCtx)
+                  : null,
+              child: IgnorePointer(
+                ignoring: _help.isActive,
+                child: StreamBuilder<List<MessageThread>>(
+                  stream: _watchThreads(currentUser.uid),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('Something went wrong: ${snapshot.error}'),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {}); // Trigger a rebuild to retry
+                              },
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final threads = snapshot.data ?? [];
+                    if (threads.isEmpty) {
+                      return _buildEmptyState(context);
+                    }
+
+                    return ListView.separated(
+                      itemCount: threads.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final thread = threads[index];
+                        return _buildThreadTile(thread, currentUser.uid);
+                      },
+                    );
+                  },
+                ),
               ),
-            );
-          }
-
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final threads = snapshot.data ?? [];
-          if (threads.isEmpty) {
-            return _buildEmptyState(context);
-          }
-
-          return ListView.separated(
-            itemCount: threads.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final thread = threads[index];
-              return _buildThreadTile(thread, currentUser.uid);
-            },
-          );
-        },
-      ),
+            ),
+          ),
+        ),
+        if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
+      ],
     );
   }
 

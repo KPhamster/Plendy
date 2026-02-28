@@ -43,6 +43,8 @@ import '../services/auth_service.dart';
 import '../services/ticketmaster_service.dart';
 // ADDED: Import the new edit modal (we will create this file next)
 import '../widgets/edit_experience_modal.dart';
+import '../widgets/add_color_category_modal.dart';
+import '../widgets/edit_color_categories_modal.dart';
 import '../widgets/cached_profile_avatar.dart';
 // ADDED: Import for SystemUiOverlayStyle
 import 'package:flutter/services.dart';
@@ -76,6 +78,11 @@ import 'package:intl/intl.dart';
 import '../widgets/event_editor_modal.dart';
 import '../config/colors.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../models/experience_help_target.dart';
+import '../config/experience_help_content.dart';
+import '../models/help_target.dart';
+import '../widgets/help_bubble.dart';
+import '../widgets/help_spotlight_painter.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -91,7 +98,8 @@ class ExperiencePageScreen extends StatefulWidget {
   final String? sharePreviewType; // 'my_copy' | 'separate_copy'
   final String? shareAccessMode; // 'view' | 'edit'
   final bool focusMapOnPop; // When read-only from map, return focus payload
-  final String? publicExperienceId; // Public experience reference when read-only
+  final String?
+      publicExperienceId; // Public experience reference when read-only
 
   const ExperiencePageScreen({
     super.key,
@@ -114,7 +122,10 @@ class ExperiencePageScreen extends StatefulWidget {
 
 // ADDED: SingleTickerProviderStateMixin for TabController
 class _ExperiencePageScreenState extends State<ExperiencePageScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
+  static const String _legacySharedContentDescription =
+      'Created from shared content';
+
   // ADDED: Local state for the experience data
   late Experience _currentExperience;
   bool _isLoadingExperience = false; // Loading state for refresh
@@ -170,6 +181,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   final _experienceService = ExperienceService(); // ADDED
   final ExperienceShareService _experienceShareService =
       ExperienceShareService();
+
+  bool _isLegacySharedContentDescription(String? description) {
+    if (description == null) return false;
+    return description.trim().toLowerCase() ==
+        _legacySharedContentDescription.toLowerCase();
+  }
+
   final TicketmasterService _ticketmasterService = TicketmasterService();
   // ADDED: AuthService instance
   final _authService = AuthService();
@@ -181,7 +199,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   String? _currentUserId;
   bool _isLoadingAuth = true;
   List<UserCategory> _userCategories = [];
+  List<ColorCategory> _availableColorCategories = [];
   bool _isLoadingCategories = false; // Separate loading for categories
+  bool _isUpdatingColorCategory = false;
 
   // --- ADDED: Scroll controller and status bar state ---
   late ScrollController _scrollController;
@@ -193,8 +213,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _isMediaPreviewHeightExpanded = false;
   static const double _contentPreviewDefaultHeight = 640.0;
   static const double _contentPreviewMaxExpandedHeight = 830.0;
+
   /// Local override for display mode. null = use settings, true = web view, false = default
   bool? _localModeOverride;
+
   /// Cached settings value (loaded once on init)
   bool _settingsWebViewMode = false;
   // --- END ADDED ---
@@ -208,7 +230,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- END ADDED ---
   // --- ADDED: Webview controllers for refresh ---
   final Map<String, WebViewController> _webViewControllers = {};
-  final Map<String, inapp.InAppWebViewController> _inAppWebViewControllers = {}; // For Instagram (flutter_inappwebview)
+  final Map<String, inapp.InAppWebViewController> _inAppWebViewControllers =
+      {}; // For Instagram (flutter_inappwebview)
   final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokControllerKeys =
       {};
   final Map<String, GlobalKey<instagram_widget.InstagramWebViewState>>
@@ -233,8 +256,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- ADDED: State for thumbs up/down rating --- START ---
   bool? _userVote; // null = no vote, true = thumbs up, false = thumbs down
   bool _isUpdatingRating = false; // Prevent double taps while saving
-  PublicExperience? _publicExperience; // Store public experience data for rating counts
+  PublicExperience?
+      _publicExperience; // Store public experience data for rating counts
   // --- ADDED: State for thumbs up/down rating --- END ---
+
+  // --- Help mode state ---
+  bool _isHelpMode = false;
+  ExperienceHelpTargetId? _activeHelpTarget;
+  int _activeHelpStep = 0;
+  Rect? _activeTargetRect;
+  bool _isHelpTyping = false;
+  final GlobalKey _helpButtonKey = GlobalKey();
+  final GlobalKey<HelpBubbleState> _helpBubbleKey = GlobalKey();
+  final List<GlobalKey> _tabKeys =
+      List<GlobalKey>.generate(2, (_) => GlobalKey());
+  late final AnimationController _spotlightController;
 
   static const Duration _photoRefreshInterval = Duration(days: 30);
 
@@ -320,6 +356,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     super.initState();
     // Initialize local state with initial experience data
     _currentExperience = widget.experience;
+    _availableColorCategories = List<ColorCategory>.from(
+      widget.userColorCategories,
+    );
     // Don't initialize _userVote here - we need to verify if the current user
     // is an editor first. This will be set in _loadCurrentUserAndCategories
     // to avoid showing another user's rating as if it were our own.
@@ -334,6 +373,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     _scrollController = ScrollController();
     _scrollController.addListener(_scrollListener);
     // --- END ADDED ---
+
+    _spotlightController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
 
     _fetchPlaceDetails();
     _fetchReviews(); // Fetch reviews on init
@@ -490,9 +534,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     try {
       final String? publicExperienceId = widget.publicExperienceId;
       if (publicExperienceId != null && publicExperienceId.isNotEmpty) {
-        publicExperience =
-            await _experienceService.findPublicExperienceById(
-                publicExperienceId);
+        publicExperience = await _experienceService
+            .findPublicExperienceById(publicExperienceId);
       }
       if (publicExperience == null) {
         final String? placeId = location.placeId;
@@ -558,9 +601,188 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // --- ADDED: Remove listener and dispose controller ---
     _scrollController.removeListener(_scrollListener);
     _scrollController.dispose();
+    _spotlightController.dispose();
     // --- END ADDED ---
     super.dispose();
   }
+
+  // ─────────────── Help mode helpers ───────────────
+
+  ExperienceHelpTargetId _helpTargetForTab(int index) {
+    switch (index) {
+      case 0:
+        return ExperienceHelpTargetId.tabContent;
+      case 1:
+      default:
+        return ExperienceHelpTargetId.tabReviews;
+    }
+  }
+
+  void _toggleHelpMode() {
+    triggerHeavyHaptic();
+    if (_isHelpMode) {
+      setState(() {
+        _isHelpMode = false;
+        _activeHelpTarget = null;
+        _activeHelpStep = 0;
+        _activeTargetRect = null;
+        _isHelpTyping = false;
+      });
+    } else {
+      setState(() {
+        _isHelpMode = true;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _helpButtonKey.currentContext != null) {
+          _showHelpForTarget(
+            ExperienceHelpTargetId.helpButton,
+            _helpButtonKey.currentContext!,
+          );
+        }
+      });
+    }
+  }
+
+  void _showHelpForTarget(ExperienceHelpTargetId id, BuildContext targetCtx) {
+    final RenderBox? box = targetCtx.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    setState(() {
+      _activeHelpTarget = id;
+      _activeHelpStep = 0;
+      _activeTargetRect =
+          Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+      _isHelpTyping = true;
+    });
+  }
+
+  void _advanceHelpStep() {
+    if (_activeHelpTarget == null) return;
+    final spec = experienceHelpContent[_activeHelpTarget!];
+    final steps = spec?.steps ?? [];
+    if (_activeHelpStep < steps.length - 1) {
+      setState(() {
+        _activeHelpStep++;
+        _isHelpTyping = true;
+      });
+    } else {
+      _dismissHelpBubble();
+    }
+  }
+
+  void _dismissHelpBubble() {
+    setState(() {
+      _activeHelpTarget = null;
+      _activeHelpStep = 0;
+      _activeTargetRect = null;
+      _isHelpTyping = false;
+    });
+  }
+
+  void _onHelpBarrierTap() {
+    if (_activeHelpTarget != null) {
+      if (_isHelpTyping) {
+        _helpBubbleKey.currentState?.skipTypewriter();
+      } else {
+        _advanceHelpStep();
+      }
+    }
+  }
+
+  bool _tryHelpTap(ExperienceHelpTargetId id, BuildContext targetCtx) {
+    if (!_isHelpMode) return false;
+    triggerHeavyHaptic();
+    _showHelpForTarget(id, targetCtx);
+    return true;
+  }
+
+  String _resolveHelpText(String staticText) {
+    final target = _activeHelpTarget;
+    if (target == null) return staticText;
+
+    switch (target) {
+      case ExperienceHelpTargetId.detailsStatusRow:
+        final hours = _currentExperience.openingHours;
+        final currentHours = hours?['currentOpeningHours'] ?? hours;
+        if (currentHours is Map && currentHours['openNow'] is bool) {
+          final label = (currentHours['openNow'] as bool) ? 'open' : 'closed';
+          return 'Looks like this place is $label right now! I check the latest hours to keep you in the know.';
+        }
+      case ExperienceHelpTargetId.tabBar:
+        final mediaCount = _currentExperience.sharedMediaItemIds.length;
+        if (mediaCount > 0) {
+          return 'Switch between Content ($mediaCount saved item${mediaCount == 1 ? '' : 's'}) and Reviews here!';
+        }
+      default:
+        break;
+    }
+    return staticText;
+  }
+
+  HelpStep? get _currentHelpStep {
+    if (_activeHelpTarget == null) return null;
+    final spec = experienceHelpContent[_activeHelpTarget!];
+    if (spec == null || _activeHelpStep >= spec.steps.length) return null;
+    return spec.steps[_activeHelpStep];
+  }
+
+  bool get _isLastHelpStep {
+    if (_activeHelpTarget == null) return true;
+    final spec = experienceHelpContent[_activeHelpTarget!];
+    return spec == null || _activeHelpStep >= spec.steps.length - 1;
+  }
+
+  Widget _buildHelpOverlay() {
+    return Positioned.fill(
+      child: AnimatedOpacity(
+        opacity: _activeHelpTarget != null ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 200),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _onHelpBarrierTap,
+          child: Stack(
+            children: [
+              if (_activeTargetRect != null)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _spotlightController,
+                    builder: (context, _) => CustomPaint(
+                      painter: HelpSpotlightPainter(
+                        targetRect: _activeTargetRect!,
+                        glowProgress: _spotlightController.value,
+                      ),
+                    ),
+                  ),
+                ),
+              if (_activeHelpTarget != null && _activeTargetRect != null)
+                HelpBubble(
+                  key: _helpBubbleKey,
+                  text: _resolveHelpText(_currentHelpStep?.text ?? ''),
+                  instruction: _currentHelpStep?.instruction,
+                  isLastStep: _isLastHelpStep,
+                  targetRect: _activeTargetRect!,
+                  onAdvance: _advanceHelpStep,
+                  onDismiss: _dismissHelpBubble,
+                  onTypingStarted: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = true);
+                    });
+                  },
+                  onTypingFinished: () {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _isHelpTyping = false);
+                    });
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────── End help mode helpers ───────────────
 
   // REMOVED: Function to load Instagram credentials
   // void _loadInstagramCredentials() { ... }
@@ -709,35 +931,95 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final String? placeId = _currentExperience.location.placeId;
     if (placeId == null || placeId.isEmpty) return;
 
+    final bool experienceHasLegacyPlaceholder =
+        _isLegacySharedContentDescription(_currentExperience.description);
+
     // Check if experience description needs backfilling
-    final bool experienceNeedsBackfill = _currentExperience.description.isEmpty;
-    
+    final bool experienceNeedsBackfill =
+        _currentExperience.description.trim().isEmpty ||
+            experienceHasLegacyPlaceholder;
+
+    final bool publicHasLegacyPlaceholder = _publicExperience != null &&
+        _isLegacySharedContentDescription(_publicExperience!.description);
+
     // Check if public experience description needs backfilling (will be checked after loading)
-    final bool publicExperienceNeedsBackfill = 
-        _publicExperience != null && 
-        (_publicExperience!.description == null || _publicExperience!.description!.isEmpty);
+    final bool publicExperienceNeedsBackfill = _publicExperience != null &&
+        (_publicExperience!.description == null ||
+            _publicExperience!.description!.trim().isEmpty ||
+            publicHasLegacyPlaceholder);
 
     // If neither needs backfilling, skip
     if (!experienceNeedsBackfill && !publicExperienceNeedsBackfill) {
-      print('ExperiencePageScreen: Description backfill not needed - already has content.');
+      print(
+          'ExperiencePageScreen: Description backfill not needed - already has content.');
       return;
     }
 
-    print('ExperiencePageScreen: Description is empty, attempting to backfill from Places API...');
+    print(
+        'ExperiencePageScreen: Description is empty, attempting to backfill from Places API...');
 
     try {
       // Fetch summary from Places API
-      final String? fetchedSummary = await _googleMapsService.fetchPlaceSummary(placeId);
-      
+      final String? fetchedSummary =
+          await _googleMapsService.fetchPlaceSummary(placeId);
+
       if (fetchedSummary == null || fetchedSummary.isEmpty) {
-        print('ExperiencePageScreen: No summary available from Places API for backfill.');
+        print(
+            'ExperiencePageScreen: No summary available from Places API for backfill.');
+
+        // Migrate legacy placeholder text to the modern empty default.
+        if (experienceHasLegacyPlaceholder &&
+            !widget.readOnlyPreview &&
+            _canEditExperience()) {
+          final Experience updatedExperience = _currentExperience.copyWith(
+            description: '',
+            updatedAt: DateTime.now(),
+          );
+          try {
+            await _experienceService.updateExperience(updatedExperience);
+            if (mounted) {
+              setState(() {
+                _currentExperience = updatedExperience;
+                _didDataChange = true;
+              });
+            }
+            print(
+                'ExperiencePageScreen: Cleared legacy placeholder description on Experience document.');
+          } catch (e) {
+            print(
+                'ExperiencePageScreen: Error clearing legacy placeholder description on Experience: $e');
+          }
+        }
+
+        if (publicHasLegacyPlaceholder && _publicExperience != null) {
+          try {
+            await _experienceService.updatePublicExperienceDescription(
+              _publicExperience!.id,
+              '',
+            );
+            if (mounted) {
+              setState(() {
+                _publicExperience =
+                    _publicExperience!.copyWith(description: '');
+              });
+            }
+            print(
+                'ExperiencePageScreen: Cleared legacy placeholder description on PublicExperience document.');
+          } catch (e) {
+            print(
+                'ExperiencePageScreen: Error clearing legacy placeholder description on PublicExperience: $e');
+          }
+        }
         return;
       }
 
-      print('ExperiencePageScreen: Fetched summary for backfill: ${fetchedSummary.substring(0, fetchedSummary.length > 50 ? 50 : fetchedSummary.length)}...');
+      print(
+          'ExperiencePageScreen: Fetched summary for backfill: ${fetchedSummary.substring(0, fetchedSummary.length > 50 ? 50 : fetchedSummary.length)}...');
 
       // Update Experience document if it needs backfilling and user can edit
-      if (experienceNeedsBackfill && !widget.readOnlyPreview && _canEditExperience()) {
+      if (experienceNeedsBackfill &&
+          !widget.readOnlyPreview &&
+          _canEditExperience()) {
         final Experience updatedExperience = _currentExperience.copyWith(
           description: fetchedSummary,
           updatedAt: DateTime.now(),
@@ -751,9 +1033,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               _didDataChange = true;
             });
           }
-          print('ExperiencePageScreen: Successfully backfilled description to Experience document.');
+          print(
+              'ExperiencePageScreen: Successfully backfilled description to Experience document.');
         } catch (e) {
-          print('ExperiencePageScreen: Error saving backfilled description to Experience: $e');
+          print(
+              'ExperiencePageScreen: Error saving backfilled description to Experience: $e');
         }
       }
 
@@ -766,12 +1050,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           );
           if (mounted) {
             setState(() {
-              _publicExperience = _publicExperience!.copyWith(description: fetchedSummary);
+              _publicExperience =
+                  _publicExperience!.copyWith(description: fetchedSummary);
             });
           }
-          print('ExperiencePageScreen: Successfully backfilled description to PublicExperience document.');
+          print(
+              'ExperiencePageScreen: Successfully backfilled description to PublicExperience document.');
         } catch (e) {
-          print('ExperiencePageScreen: Error saving backfilled description to PublicExperience: $e');
+          print(
+              'ExperiencePageScreen: Error saving backfilled description to PublicExperience: $e');
         }
       }
     } catch (e) {
@@ -787,7 +1074,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     try {
-      final publicExperience = await _experienceService.findPublicExperienceByPlaceId(placeId);
+      final publicExperience =
+          await _experienceService.findPublicExperienceByPlaceId(placeId);
       if (mounted) {
         setState(() {
           _publicExperience = publicExperience;
@@ -809,11 +1097,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       // Try to get reviews by placeId first (for public experience reviews)
       final placeId = _currentExperience.location.placeId;
       List<Review> reviews = [];
-      
+
       if (placeId != null && placeId.isNotEmpty) {
         reviews = await _experienceService.getReviewsForPlace(placeId);
         // Also fetch user's own review
-        final userReview = await _experienceService.getUserReviewForPlace(placeId);
+        final userReview =
+            await _experienceService.getUserReviewForPlace(placeId);
         if (mounted) {
           setState(() {
             _userReview = userReview;
@@ -821,9 +1110,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         }
       } else {
         // Fall back to experienceId-based reviews
-        reviews = await _experienceService.getReviewsForExperience(_currentExperience.id);
+        reviews = await _experienceService
+            .getReviewsForExperience(_currentExperience.id);
       }
-      
+
       if (mounted) {
         setState(() {
           _reviews = reviews;
@@ -840,7 +1130,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
   }
-
 
   // REMOVED: Helper to fetch Instagram Thumbnail
   // Future<String?> _fetchInstagramThumbnailUrl(String reelUrl) async { ... }
@@ -860,11 +1149,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           _currentUserId = userId;
           _isLoadingAuth = false;
         });
-        
+
         // Set _userVote based on whether current user is an editor of this experience
         // Only show the experience's userThumbRating if the current user is an editor
         // This prevents showing another user's rating as if it were our own
-        if (userId != null && _currentExperience.editorUserIds.contains(userId)) {
+        if (userId != null &&
+            _currentExperience.editorUserIds.contains(userId)) {
           setState(() {
             _userVote = _currentExperience.userThumbRating;
           });
@@ -884,6 +1174,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     List<UserCategory> fetchedCategories = [];
+    List<ColorCategory> fetchedColorCategories = _availableColorCategories;
     if (_currentUserId != null) {
       try {
         fetchedCategories = await _experienceService.getUserCategories(
@@ -892,25 +1183,36 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       } catch (e) {
         print("Error loading user categories: $e");
       }
+      try {
+        fetchedColorCategories =
+            await _experienceService.getUserColorCategories(
+          includeSharedEditable: true,
+        );
+      } catch (e) {
+        print("Error loading color categories: $e");
+      }
     }
     if (mounted) {
       setState(() {
-        _userCategories =
-            _mergeAdditionalUserCategories(fetchedCategories);
+        _userCategories = _mergeAdditionalUserCategories(fetchedCategories);
+        if (fetchedColorCategories.isNotEmpty) {
+          _availableColorCategories = fetchedColorCategories;
+        }
         _isLoadingCategories = false;
       });
     }
   }
-  
+
   /// Loads the current user's thumb rating for this place
   /// Checks both the user's own experience and the public experience for their rating
   Future<void> _loadUserRatingForPlace() async {
     final String? placeId = _currentExperience.location.placeId;
     if (placeId == null || placeId.isEmpty || _currentUserId == null) return;
-    
+
     try {
       // First, try to find the user's own experience for this placeId
-      final userExperience = await _experienceService.findUserExperienceByPlaceId(
+      final userExperience =
+          await _experienceService.findUserExperienceByPlaceId(
         _currentUserId!,
         placeId,
       );
@@ -920,9 +1222,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         });
         return;
       }
-      
+
       // If no own experience, check if they have a rating on the public experience
-      final publicRating = await _experienceService.getUserRatingForPlace(placeId);
+      final publicRating =
+          await _experienceService.getUserRatingForPlace(placeId);
       if (publicRating != null && mounted) {
         setState(() {
           _userVote = publicRating;
@@ -987,7 +1290,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         return EditExperienceModal(
           experience: _currentExperience,
           userCategories: _userCategories,
-          userColorCategories: widget.userColorCategories, // ADD THIS LINE
+          userColorCategories: _availableColorCategories,
           scaffoldMessenger: messenger,
         );
       },
@@ -1035,6 +1338,188 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     } else {
       print("Edit modal was cancelled or returned null.");
+    }
+  }
+
+  Future<List<ColorCategory>> _loadColorCategoriesForSelection() async {
+    try {
+      final fetchedCategories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      if (fetchedCategories.isNotEmpty && mounted) {
+        setState(() {
+          _availableColorCategories = fetchedCategories;
+        });
+      }
+      if (fetchedCategories.isNotEmpty) {
+        return fetchedCategories;
+      }
+    } catch (e) {
+      print("Error loading color categories for picker: $e");
+    }
+
+    if (_availableColorCategories.isNotEmpty) {
+      return _availableColorCategories;
+    }
+    return widget.userColorCategories;
+  }
+
+  Future<String?> _showAddColorCategoryModal() async {
+    FocusScope.of(context).unfocus();
+    final ColorCategory? newCategory =
+        await showModalBottomSheet<ColorCategory>(
+      context: context,
+      backgroundColor: AppColors.backgroundColor,
+      builder: (context) => const AddColorCategoryModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (newCategory == null || !mounted) {
+      return null;
+    }
+
+    final int existingIndex =
+        _availableColorCategories.indexWhere((cat) => cat.id == newCategory.id);
+    setState(() {
+      if (existingIndex >= 0) {
+        final updated = List<ColorCategory>.from(_availableColorCategories);
+        updated[existingIndex] = newCategory;
+        _availableColorCategories = updated;
+      } else {
+        _availableColorCategories = [..._availableColorCategories, newCategory];
+      }
+    });
+
+    return newCategory.id;
+  }
+
+  Future<void> _showEditColorCategoriesModal() async {
+    FocusScope.of(context).unfocus();
+    final bool? categoriesChanged = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppColors.backgroundColor,
+      builder: (context) => const EditColorCategoriesModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (categoriesChanged != true || !mounted) {
+      return;
+    }
+
+    final refreshedCategories = await _loadColorCategoriesForSelection();
+    if (!mounted) return;
+
+    final bool currentSelectionExists = refreshedCategories
+        .any((cat) => cat.id == _currentExperience.colorCategoryId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          currentSelectionExists
+              ? 'Color category list updated.'
+              : 'Color category list updated. Please select a new color category.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveSelectedColorCategory(
+      String selectedColorCategoryId) async {
+    if (selectedColorCategoryId == _currentExperience.colorCategoryId) {
+      return;
+    }
+
+    final Experience previousExperience = _currentExperience;
+    final Experience updatedExperience = _currentExperience.copyWith(
+      colorCategoryId: selectedColorCategoryId,
+      updatedAt: DateTime.now(),
+    );
+
+    setState(() {
+      _currentExperience = updatedExperience;
+      _isUpdatingColorCategory = true;
+    });
+
+    try {
+      await _experienceService.updateExperience(updatedExperience);
+      if (!mounted) return;
+      setState(() {
+        _didDataChange = true;
+        _isUpdatingColorCategory = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Color category updated.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _currentExperience = previousExperience;
+        _isUpdatingColorCategory = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update color category: $e')),
+      );
+    }
+  }
+
+  Future<void> _showColorCategoryDialogAndSave() async {
+    if (!_canEditExperience() || _isUpdatingColorCategory) {
+      return;
+    }
+
+    List<ColorCategory> categoriesToShow =
+        await _loadColorCategoriesForSelection();
+    if (categoriesToShow.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No color categories available.')),
+        );
+      }
+      return;
+    }
+    while (mounted) {
+      final String? selectedValue = await showColorCategorySelectionDialog(
+        context: context,
+        categories: categoriesToShow,
+        selectedColorCategoryId: _currentExperience.colorCategoryId,
+        includeManagementActions: true,
+      );
+
+      if (!mounted || selectedValue == null) {
+        return;
+      }
+
+      if (selectedValue == addColorCategoryDialogValue) {
+        final String? newCategoryId = await _showAddColorCategoryModal();
+        if (!mounted) return;
+        if (newCategoryId != null) {
+          await _saveSelectedColorCategory(newCategoryId);
+          return;
+        }
+        categoriesToShow = await _loadColorCategoriesForSelection();
+        continue;
+      }
+
+      if (selectedValue == editColorCategoriesDialogValue) {
+        await _showEditColorCategoriesModal();
+        if (!mounted) return;
+        categoriesToShow = await _loadColorCategoriesForSelection();
+        if (categoriesToShow.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No color categories available.')),
+          );
+          return;
+        }
+        continue;
+      }
+
+      await _saveSelectedColorCategory(selectedValue);
+      return;
     }
   }
 
@@ -1125,76 +1610,145 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // Always show back button on mobile (non-web) platforms
           if (!kIsWeb)
             Positioned(
-              // Position accounting for status bar height + padding
               top: MediaQuery.of(context).padding.top + 8.0,
               left: 8.0,
-              child: Container(
-                // Copied from SliverAppBar leading
-                margin:
-                    const EdgeInsets.all(0), // No margin needed when positioned
-                decoration: BoxDecoration(
-                  color: Colors.black
-                      .withOpacity(0.4), // Slightly darker for visibility
-                  shape: BoxShape.circle,
-                ),
-                child: BackButton(
-                  color: Colors.white,
-                  onPressed: () {
-                    _handleBackNavigation();
-                  },
+              child: Builder(
+                builder: (backBtnCtx) => Container(
+                  width: 48.0,
+                  height: 48.0,
+                  margin: const EdgeInsets.all(0),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  child: BackButton(
+                    color: Colors.white,
+                    onPressed: () {
+                      if (_tryHelpTap(
+                          ExperienceHelpTargetId.backButton, backBtnCtx))
+                        return;
+                      _handleBackNavigation();
+                    },
+                  ),
                 ),
               ),
             ),
           // --- END: Positioned Back Button ---
 
-          // --- ADDED: Positioned Overflow Menu (3-dot) ---
+          // --- Help Button (left of overflow) ---
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8.0,
+            right: 64.0,
+            child: Semantics(
+              label: _isHelpMode ? 'Exit help mode' : 'Enter help mode',
+              child: _isHelpMode
+                  ? AnimatedBuilder(
+                      animation: _spotlightController,
+                      builder: (context, child) {
+                        final scale = 1.0 + 0.15 * _spotlightController.value;
+                        return Transform.scale(scale: scale, child: child);
+                      },
+                      child: Container(
+                        key: _helpButtonKey,
+                        width: 48.0,
+                        height: 48.0,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.4),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.help, color: Colors.white),
+                          tooltip: 'Exit Help Mode',
+                          onPressed: _toggleHelpMode,
+                        ),
+                      ),
+                    )
+                  : Container(
+                      key: _helpButtonKey,
+                      width: 48.0,
+                      height: 48.0,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon:
+                            const Icon(Icons.help_outline, color: Colors.white),
+                        tooltip: 'Help',
+                        onPressed: _toggleHelpMode,
+                      ),
+                    ),
+            ),
+          ),
+
+          // --- Positioned Overflow Menu (3-dot) ---
           Positioned(
             top: MediaQuery.of(context).padding.top + 8.0,
             right: 8.0,
-            child: Theme(
-              data: Theme.of(context).copyWith(
-                popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
-                canvasColor: Colors.white,
-              ),
-                child: PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'report') {
-                      _showReportDialog();
-                    }
-                    if (value == 'remove') {
-                      _promptRemoveExperience();
-                    }
-                  },
-                itemBuilder: (context) {
-                  final bool canEdit = _canEditExperience();
-                  final menuItems = <PopupMenuEntry<String>>[
-                    const PopupMenuItem<String>(
-                      value: 'report',
-                      child: Text('Report'),
-                    ),
-                  ];
-                  if (canEdit) {
-                    menuItems.add(
-                      const PopupMenuItem<String>(
-                        value: 'remove',
-                        child: Text('Remove Experience'),
+            child: Builder(
+              builder: (overflowCtx) {
+                if (_isHelpMode) {
+                  return GestureDetector(
+                    onTap: () => _tryHelpTap(
+                        ExperienceHelpTargetId.overflowMenu, overflowCtx),
+                    child: Container(
+                      width: 48.0,
+                      height: 48.0,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        shape: BoxShape.circle,
                       ),
-                    );
-                  }
-                  return menuItems;
-                },
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    shape: BoxShape.circle,
+                      child: const Icon(Icons.more_vert, color: Colors.white),
+                    ),
+                  );
+                }
+                return Theme(
+                  data: Theme.of(context).copyWith(
+                    popupMenuTheme:
+                        const PopupMenuThemeData(color: Colors.white),
+                    canvasColor: Colors.white,
                   ),
-                  padding: const EdgeInsets.all(8.0),
-                  child: const Icon(
-                    Icons.more_vert,
-                    color: Colors.white,
+                  child: PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'report') {
+                        _showReportDialog();
+                      }
+                      if (value == 'remove') {
+                        _promptRemoveExperience();
+                      }
+                    },
+                    itemBuilder: (context) {
+                      final bool canEdit = _canEditExperience();
+                      final menuItems = <PopupMenuEntry<String>>[
+                        const PopupMenuItem<String>(
+                          value: 'report',
+                          child: Text('Report'),
+                        ),
+                      ];
+                      if (canEdit) {
+                        menuItems.add(
+                          const PopupMenuItem<String>(
+                            value: 'remove',
+                            child: Text('Remove Experience'),
+                          ),
+                        );
+                      }
+                      return menuItems;
+                    },
+                    child: Container(
+                      width: 48.0,
+                      height: 48.0,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.more_vert, color: Colors.white),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
           // --- END: Positioned Overflow Menu (3-dot) ---
@@ -1205,99 +1759,112 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             Positioned(
               bottom: 16.0,
               right: 16.0,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Thumbs Up Column (Button + Count)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(true)),
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _userVote == true
-                                ? Icons.thumb_up
-                                : Icons.thumb_up_outlined,
-                            color: _userVote == true
-                                ? Colors.green
-                                : Colors.white.withOpacity(0.9),
-                            size: 18.0,
-                          ),
-                        ),
-                      ),
-                      Transform.translate(
-                        offset: const Offset(0, -4),
-                        child: Text(
-                          (_publicExperience?.thumbsUpCount ?? 0).toString(),
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.w500,
-                            shadows: [
-                              Shadow(
-                                offset: const Offset(1.0, 1.0),
-                                blurRadius: 2.0,
-                                color: Colors.black.withOpacity(0.5),
-                              ),
-                            ],
+              child: Builder(
+                builder: (heroRatingCtx) => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Thumbs Up Column (Button + Count)
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: withHeavyTap(() {
+                            if (_tryHelpTap(
+                                ExperienceHelpTargetId.heroRatingButtons,
+                                heroRatingCtx)) return;
+                            if (!_isUpdatingRating) _handleThumbRating(true);
+                          }),
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              _userVote == true
+                                  ? Icons.thumb_up
+                                  : Icons.thumb_up_outlined,
+                              color: _userVote == true
+                                  ? Colors.green
+                                  : Colors.white.withOpacity(0.9),
+                              size: 18.0,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 24),
-                  // Thumbs Down Column (Button + Count)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(false)),
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _userVote == false
-                                ? Icons.thumb_down
-                                : Icons.thumb_down_outlined,
-                            color: _userVote == false
-                                ? Colors.red
-                                : Colors.white.withOpacity(0.9),
-                            size: 18.0,
+                        Transform.translate(
+                          offset: const Offset(0, -4),
+                          child: Text(
+                            (_publicExperience?.thumbsUpCount ?? 0).toString(),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.0,
+                              fontWeight: FontWeight.w500,
+                              shadows: [
+                                Shadow(
+                                  offset: const Offset(1.0, 1.0),
+                                  blurRadius: 2.0,
+                                  color: Colors.black.withOpacity(0.5),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      Transform.translate(
-                        offset: const Offset(0, -4),
-                        child: Text(
-                          (_publicExperience?.thumbsDownCount ?? 0).toString(),
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.w500,
-                            shadows: [
-                              Shadow(
-                                offset: const Offset(1.0, 1.0),
-                                blurRadius: 2.0,
-                                color: Colors.black.withOpacity(0.5),
-                              ),
-                            ],
+                      ],
+                    ),
+                    const SizedBox(width: 24),
+                    // Thumbs Down Column (Button + Count)
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: withHeavyTap(() {
+                            if (_tryHelpTap(
+                                ExperienceHelpTargetId.heroRatingButtons,
+                                heroRatingCtx)) return;
+                            if (!_isUpdatingRating) _handleThumbRating(false);
+                          }),
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              _userVote == false
+                                  ? Icons.thumb_down
+                                  : Icons.thumb_down_outlined,
+                              color: _userVote == false
+                                  ? Colors.red
+                                  : Colors.white.withOpacity(0.9),
+                              size: 18.0,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                        Transform.translate(
+                          offset: const Offset(0, -4),
+                          child: Text(
+                            (_publicExperience?.thumbsDownCount ?? 0)
+                                .toString(),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.0,
+                              fontWeight: FontWeight.w500,
+                              shadows: [
+                                Shadow(
+                                  offset: const Offset(1.0, 1.0),
+                                  blurRadius: 2.0,
+                                  color: Colors.black.withOpacity(0.5),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           // --- END: Thumbs Up/Down Rating Buttons ---
@@ -1339,47 +1906,53 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                 // Name
                                 Text(
                                   experience.name,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineMedium
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                      shadows: [
-                                        Shadow(
-                                          offset: Offset(1.0, 1.0),
-                                          blurRadius: 2.0,
-                                          color: Colors.black.withOpacity(0.5),
-                                        ),
-                                      ],
-                                    ),
-                              ),
-                            ],
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium
+                                      ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                    shadows: [
+                                      Shadow(
+                                        offset: Offset(1.0, 1.0),
+                                        blurRadius: 2.0,
+                                        color: Colors.black.withOpacity(0.5),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ]),
+                      ]),
                   if (widget.readOnlyPreview) ...[
                     const SizedBox(height: 16), // Spacing below the top row
 
                     // Save button only shown in read-only experience view
-                    Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.center, // Center the buttons
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: () => _handleSaveExperiencePressed(),
-                          icon: const Icon(Icons.bookmark_outline),
-                          label: const Text('Save Experience'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFD40000),
-                            foregroundColor: Colors.white,
-                            // Optional: Add styling if needed (e.g., minimumSize)
-                            minimumSize: Size(
-                                140, 36), // Give buttons some minimum width
+                    Builder(
+                      builder: (saveBtnCtx) => Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              if (_tryHelpTap(
+                                  ExperienceHelpTargetId.saveExperienceButton,
+                                  saveBtnCtx)) return;
+                              _handleSaveExperiencePressed();
+                            },
+                            icon: const Icon(Icons.bookmark_outline),
+                            label: const Text('Save Experience'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFD40000),
+                              foregroundColor: Colors.white,
+                              // Optional: Add styling if needed (e.g., minimumSize)
+                              minimumSize: Size(
+                                  140, 36), // Give buttons some minimum width
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ],
@@ -1414,15 +1987,24 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Prepare the tab bar once so we can use its preferred height
     final TabBar tabBar = TabBar(
       controller: _tabController,
+      onTap: (index) {
+        if (!_isHelpMode) return;
+        final tabCtx = _tabKeys[index].currentContext;
+        if (tabCtx != null) {
+          _tryHelpTap(_helpTargetForTab(index), tabCtx);
+        }
+      },
       labelColor: Theme.of(context).primaryColor,
       unselectedLabelColor: Colors.grey[600],
       indicatorColor: Theme.of(context).primaryColor,
       tabs: [
         Tab(
+          key: _tabKeys[0],
           icon: Icon(Icons.photo_library_outlined),
           text: 'Content ($mediaCount)',
         ),
         Tab(
+          key: _tabKeys[1],
           icon: Icon(Icons.star_border_outlined),
           text: 'Reviews ($reviewCount)',
         ),
@@ -1430,92 +2012,127 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
 
     // Wrap main Scaffold with WillPopScope
-    return WillPopScope(
-      onWillPop: _handleBackNavigation,
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        // No AppBar needed here anymore
-        // appBar: AppBar(...),
+    return Stack(
+      children: [
+        WillPopScope(
+          onWillPop: _handleBackNavigation,
+          child: Scaffold(
+            backgroundColor: Colors.white,
+            // No AppBar needed here anymore
+            // appBar: AppBar(...),
 
-        // The body is the NestedScrollView, wrapped with AnnotatedRegion
-        body: AnnotatedRegion<SystemUiOverlayStyle>(
-          // Only control icon brightness based on scroll position
-          value: _isStatusBarLight
-              ? SystemUiOverlayStyle.light.copyWith(
-                  // Use default transparent background
-                  statusBarIconBrightness: Brightness.light,
-                  statusBarBrightness: Brightness.dark, // For iOS
-                )
-              : SystemUiOverlayStyle.dark.copyWith(
-                  // Use default transparent background
-                  statusBarIconBrightness: Brightness.dark,
-                  statusBarBrightness: Brightness.light, // For iOS
-                ),
-          child: NestedScrollView(
-            // --- ADDED: Attach ScrollController ---
-            controller: _scrollController,
-            // --- END ADDED ---
-            headerSliverBuilder:
-                (BuildContext context, bool innerBoxIsScrolled) {
-              // These are the slivers that show up in the "app bar" area.
-              return <Widget>[
-                // --- Header Section (remains the same) ---
-                SliverToBoxAdapter(
-                  child: _buildHeader(context, _currentExperience),
-                ),
-                // --- Event Banner ---
-                if (!_isLoadingEventBanner && _matchingEvent != null)
-                  SliverToBoxAdapter(
-                    child: Container(
-                      color: Colors.white,
-                      padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 8.0),
-                      child: _buildEventBanner(context),
+            // The body is the NestedScrollView, wrapped with AnnotatedRegion
+            body: AnnotatedRegion<SystemUiOverlayStyle>(
+              // Only control icon brightness based on scroll position
+              value: _isStatusBarLight
+                  ? SystemUiOverlayStyle.light.copyWith(
+                      // Use default transparent background
+                      statusBarIconBrightness: Brightness.light,
+                      statusBarBrightness: Brightness.dark, // For iOS
+                    )
+                  : SystemUiOverlayStyle.dark.copyWith(
+                      // Use default transparent background
+                      statusBarIconBrightness: Brightness.dark,
+                      statusBarBrightness: Brightness.light, // For iOS
                     ),
-                  ),
-                // --- Details Section ---
-                SliverToBoxAdapter(
-                  child: Container(
-                    color: AppColors.backgroundColor,
-                    child: Column(
-                      children: [
-                        _buildDynamicDetailsSection(context),
-                        const Divider(),
-                        _buildQuickActionsSection(context, _placeDetailsData,
-                            _currentExperience.location),
-                        const Divider(),
-                      ],
+              child: NestedScrollView(
+                // --- ADDED: Attach ScrollController ---
+                controller: _scrollController,
+                // --- END ADDED ---
+                headerSliverBuilder:
+                    (BuildContext context, bool innerBoxIsScrolled) {
+                  // These are the slivers that show up in the "app bar" area.
+                  return <Widget>[
+                    // --- Header Section (remains the same) ---
+                    SliverToBoxAdapter(
+                      child: _buildHeader(context, _currentExperience),
                     ),
+                    // --- Help mode banner ---
+                    if (_isHelpMode)
+                      SliverToBoxAdapter(
+                        child: GestureDetector(
+                          onTap: _toggleHelpMode,
+                          child: AnimatedBuilder(
+                            animation: _spotlightController,
+                            builder: (context, child) {
+                              final opacity =
+                                  0.6 + 0.4 * _spotlightController.value;
+                              return Opacity(opacity: opacity, child: child);
+                            },
+                            child: Container(
+                              width: double.infinity,
+                              color: AppColors.backgroundColor,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Text(
+                                'Help mode is ON  \u2022  Tap here to exit',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppColors.teal,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    // --- Event Banner ---
+                    if (!_isLoadingEventBanner && _matchingEvent != null)
+                      SliverToBoxAdapter(
+                        child: Container(
+                          color: Colors.white,
+                          padding:
+                              const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 8.0),
+                          child: _buildEventBanner(context),
+                        ),
+                      ),
+                    // --- Details Section ---
+                    SliverToBoxAdapter(
+                      child: Container(
+                        color: AppColors.backgroundColor,
+                        child: Column(
+                          children: [
+                            _buildDynamicDetailsSection(context),
+                            const Divider(),
+                            _buildQuickActionsSection(context,
+                                _placeDetailsData, _currentExperience.location),
+                            const Divider(),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // --- Sticky TabBar ---
+                    SliverPersistentHeader(
+                      delegate: _SliverAppBarDelegate(
+                        Container(
+                          color: AppColors.backgroundColor,
+                          child: tabBar,
+                        ),
+                        minHeight: tabBar.preferredSize.height,
+                        maxHeight: tabBar.preferredSize.height,
+                      ),
+                      pinned: true, // Make the TabBar stick
+                    ),
+                  ];
+                },
+                // --- Body (TabBarView) ---
+                body: Container(
+                  color: AppColors.backgroundColor,
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      // Pass fetched media items to _buildMediaTab
+                      _buildMediaTab(context, activeMediaItems),
+                      _buildReviewsTab(context),
+                    ],
                   ),
                 ),
-                // --- Sticky TabBar ---
-                SliverPersistentHeader(
-                  delegate: _SliverAppBarDelegate(
-                    Container(
-                      color: AppColors.backgroundColor,
-                      child: tabBar,
-                    ),
-                    minHeight: tabBar.preferredSize.height,
-                    maxHeight: tabBar.preferredSize.height,
-                  ),
-                  pinned: true, // Make the TabBar stick
-                ),
-              ];
-            },
-            // --- Body (TabBarView) ---
-            body: Container(
-              color: AppColors.backgroundColor,
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  // Pass fetched media items to _buildMediaTab
-                  _buildMediaTab(context, activeMediaItems),
-                  _buildReviewsTab(context),
-                ],
               ),
             ),
           ),
         ),
-      ),
+        if (_isHelpMode && _activeHelpTarget != null) _buildHelpOverlay(),
+      ],
     );
   }
 
@@ -1587,24 +2204,49 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       child: Container(
         color: AppColors.backgroundColor,
         padding: const EdgeInsets.symmetric(vertical: 6.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.description_outlined,
-                size: 20.0, color: Colors.black54),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    description.trim(),
-                    style: textTheme,
+        child: Builder(
+          builder: (descriptionRowCtx) => Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Builder(
+                builder: (descriptionIconCtx) => GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _isHelpMode
+                      ? () => _tryHelpTap(
+                            ExperienceHelpTargetId.detailsDescriptionIcon,
+                            descriptionIconCtx,
+                          )
+                      : null,
+                  child: const Icon(
+                    Icons.description_outlined,
+                    size: 20.0,
+                    color: Colors.black54,
                   ),
-                ],
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _isHelpMode
+                      ? () => _tryHelpTap(
+                            ExperienceHelpTargetId.detailsDescriptionText,
+                            descriptionRowCtx,
+                          )
+                      : null,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        description.trim(),
+                        style: textTheme,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1737,9 +2379,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     // Get formatted values to log them
     // Use saved description from experience if available, otherwise fallback to Places API editorialSummary
-    final String? formattedDescription = (experience.description.isNotEmpty)
-        ? experience.description
-        : getDetail('editorialSummary') as String?;
+    final String? formattedDescription =
+        (experience.description.trim().isNotEmpty &&
+                !_isLegacySharedContentDescription(experience.description))
+            ? experience.description
+            : getDetail('editorialSummary') as String?;
     // Keep hours/status formatting via dedicated UI rows; avoid unused locals
     final formattedReservable = formatReservable(getDetail('reservable'));
     final formattedParking = formatParking(getDetail('parkingOptions'));
@@ -1769,231 +2413,290 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               children: [
                 // Category Icon and Name (wrapped in Expanded)
                 Expanded(
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 20.0,
-                        child: Center(
-                          child: Text(
-                            _getCurrentCategory().icon,
-                            style: const TextStyle(fontSize: 20),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          _computeSharePreviewCategoryLabel() ??
-                              _getCurrentCategory().name,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(
-                                color: Colors.black87,
+                  child: Builder(
+                    builder: (categoryRowCtx) => GestureDetector(
+                      behavior: _isHelpMode
+                          ? HitTestBehavior.opaque
+                          : HitTestBehavior.translucent,
+                      onTap: _isHelpMode
+                          ? () => _tryHelpTap(
+                                ExperienceHelpTargetId.detailsCategoryRow,
+                                categoryRowCtx,
+                              )
+                          : null,
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 20.0,
+                            child: Center(
+                              child: Text(
+                                _getCurrentCategory().icon,
+                                style: const TextStyle(fontSize: 20),
                               ),
-                          softWrap: true,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _computeSharePreviewCategoryLabel() ??
+                                  _getCurrentCategory().name,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(
+                                    color: Colors.black87,
+                                  ),
+                              softWrap: true,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
 
                 // Buttons on the right
                 // 1. Map Screen Button (View Location on App Map)
-                ActionChip(
-                  avatar: Icon(
-                    Icons.map_outlined,
-                    color: Theme.of(context).primaryColor,
-                    size: 18,
+                Builder(
+                  builder: (mapChipCtx) => ActionChip(
+                    avatar: Icon(
+                      Icons.map_outlined,
+                      color: Theme.of(context).primaryColor,
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: () {
+                      if (_tryHelpTap(
+                          ExperienceHelpTargetId.detailsActionMapScreen,
+                          mapChipCtx)) return;
+                      _handleMapButtonPressed();
+                    },
+                    tooltip: 'View Location on App Map',
+                    backgroundColor: Colors.white,
+                    shape: const StadiumBorder(
+                      side: BorderSide(color: Colors.white),
+                    ),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () async {
-                    await _handleMapButtonPressed();
-                  },
-                  tooltip: 'View Location on App Map', // Updated tooltip
-                  backgroundColor: Colors.white,
-                  shape: const StadiumBorder(
-                    side: BorderSide(color: Colors.white),
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
                 ),
-                const SizedBox(width: 4), // Spacing
+                const SizedBox(width: 4),
 
                 // 2. Share Button
-                ActionChip(
-                  avatar: Icon(
-                    Icons.share_outlined,
-                    color: Colors.blue, // Or another appropriate color
-                    size: 18,
+                Builder(
+                  builder: (shareChipCtx) => ActionChip(
+                    avatar: Icon(
+                      Icons.share_outlined,
+                      color: Colors.blue,
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: () {
+                      if (_tryHelpTap(
+                          ExperienceHelpTargetId.detailsActionShareExperience,
+                          shareChipCtx)) return;
+                      _showShareBottomSheet();
+                    },
+                    tooltip: 'Share Experience',
+                    backgroundColor: Colors.white,
+                    shape: const StadiumBorder(
+                      side: BorderSide(color: Colors.white),
+                    ),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: _showShareBottomSheet,
-                  tooltip: 'Share Experience',
-                  backgroundColor: Colors.white,
-                  shape: const StadiumBorder(
-                    side: BorderSide(color: Colors.white),
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
                 ),
                 if (!widget.readOnlyPreview) ...[
-                  const SizedBox(width: 4), // Spacing
+                  const SizedBox(width: 4),
 
                   // 3. Event Button (Create Event with this Experience)
-                  ActionChip(
-                    avatar: Icon(
-                      Icons.event_outlined,
-                      color: Colors.deepPurple,
-                      size: 18,
+                  Builder(
+                    builder: (eventChipCtx) => ActionChip(
+                      avatar: Icon(
+                        Icons.event_outlined,
+                        color: Colors.deepPurple,
+                        size: 18,
+                      ),
+                      label: const SizedBox.shrink(),
+                      labelPadding: EdgeInsets.zero,
+                      onPressed: () {
+                        if (_tryHelpTap(
+                            ExperienceHelpTargetId.detailsActionCreateEvent,
+                            eventChipCtx)) return;
+                        _openEventEditorWithExperience();
+                      },
+                      tooltip: 'Create Event',
+                      backgroundColor: Colors.white,
+                      shape: const StadiumBorder(
+                        side: BorderSide(color: Colors.white),
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.all(4),
                     ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    onPressed: _openEventEditorWithExperience,
-                    tooltip: 'Create Event',
-                    backgroundColor: Colors.white,
-                    shape: const StadiumBorder(
-                      side: BorderSide(color: Colors.white),
-                    ),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.all(4),
                   ),
-                  const SizedBox(width: 4), // Spacing
+                  const SizedBox(width: 4),
 
                   // 4. Edit Button
-                  ActionChip(
-                    avatar: Icon(
-                      Icons.edit_outlined,
-                      color: canEdit
-                          ? Colors.orange[700]
-                          : Colors.grey, // Dynamic color
-                      size: 18,
+                  Builder(
+                    builder: (editChipCtx) => ActionChip(
+                      avatar: Icon(
+                        Icons.edit_outlined,
+                        color: canEdit ? Colors.orange[700] : Colors.grey,
+                        size: 18,
+                      ),
+                      label: const SizedBox.shrink(),
+                      labelPadding: EdgeInsets.zero,
+                      onPressed: () {
+                        if (_tryHelpTap(
+                            ExperienceHelpTargetId.detailsActionEditExperience,
+                            editChipCtx)) return;
+                        if (canEdit) _showEditExperienceModal();
+                      },
+                      tooltip: canEdit
+                          ? 'Edit Experience'
+                          : 'Cannot Edit (View Only)',
+                      backgroundColor: Colors.white,
+                      shape: const StadiumBorder(
+                        side: BorderSide(color: Colors.white),
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.all(4),
                     ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    // Call _showEditExperienceModal only if canEdit is true
-                    onPressed: canEdit ? _showEditExperienceModal : null,
-                    tooltip:
-                        canEdit ? 'Edit Experience' : 'Cannot Edit (View Only)',
-                    backgroundColor: Colors.white,
-                    shape: const StadiumBorder(
-                      side: BorderSide(color: Colors.white),
-                    ),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.all(4),
                   ),
                 ],
               ],
             ),
           ),
-          // --- ADDED: Color Category Row (Directly) --- START ---
-          Builder(
-            builder: (context) {
-              if (_currentExperience.colorCategoryId == null) {
-                return const SizedBox.shrink(); // No color category ID
-              }
-              final colorCategory = widget.userColorCategories.firstWhereOrNull(
-                (cat) => cat.id == _currentExperience.colorCategoryId,
-              );
-              if (colorCategory == null) {
-                print(
-                    "Warning: ColorCategory object not found for ID: ${_currentExperience.colorCategoryId}");
-                return const SizedBox.shrink(); // Category object not found
-              }
-              // Build the row directly here
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                    vertical: 6.0), // Reduced vertical padding further
-                child: Row(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start, // Match _buildDetailRow
-                  children: [
-                    // --- MODIFIED: Use SizedBox + Center to mimic Icon space --- START ---
-                    SizedBox(
-                      width: 20.0, // Match Icon size used in _buildDetailRow
-                      height: 20.0,
-                      child: Center(
-                        child: Container(
-                          width: 14, // Smaller circle size
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: colorCategory.color,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Theme.of(context).dividerColor,
-                              width: 1,
-                            ),
-                          ),
-                          child: Tooltip(
-                              message:
-                                  colorCategory.name), // Tooltip on the circle
-                        ),
-                      ),
-                    ),
-                    // --- MODIFIED: Use SizedBox + Center to mimic Icon space --- END ---
-                    const SizedBox(width: 12), // Standard spacing
-                    Expanded(
-                      child: Text(
-                        colorCategory.name,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
+          _buildColorCategoryRow(
+            context,
+            _currentExperience,
+            canEdit: canEdit,
           ),
-          // --- ADDED: Color Category Row (Directly) --- END ---
           _buildDescriptionSection(
             context,
             description: formattedDescription,
           ),
           // Make the address row tappable
           if (!hideLocationDetails) ...[
-            GestureDetector(
-              onTap: withHeavyTap(() => _launchMapLocation(_currentExperience.location)),
-              child: _buildDetailRow(
-                context,
-                Icons.location_on_outlined,
-                'Location',
-                _currentExperience.location.address,
-                showLabel: false, // HIDE label
+            Builder(
+              builder: (locRowCtx) => GestureDetector(
+                onTap: withHeavyTap(() {
+                  if (_tryHelpTap(
+                      ExperienceHelpTargetId.detailsLocationRow, locRowCtx))
+                    return;
+                  _launchMapLocation(_currentExperience.location);
+                }),
+                child: _buildDetailRow(
+                  context,
+                  Icons.location_on_outlined,
+                  'Location',
+                  _currentExperience.location.address,
+                  showLabel: false,
+                ),
               ),
             ),
-            if ((_currentExperience.additionalNotes?.trim().isNotEmpty ?? false))
-              _buildNotesRow(context, _currentExperience.additionalNotes!.trim()),
-            _buildStatusRow(
-              context,
-              getDetail('businessStatus'),
-              getDetail('currentOpeningHours'),
+            if ((_currentExperience.additionalNotes?.trim().isNotEmpty ??
+                false))
+              _buildNotesRow(
+                  context, _currentExperience.additionalNotes!.trim()),
+            Builder(
+              builder: (statusRowCtx) => GestureDetector(
+                behavior: _isHelpMode
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.translucent,
+                onTap: _isHelpMode
+                    ? () => _tryHelpTap(
+                          ExperienceHelpTargetId.detailsStatusRow,
+                          statusRowCtx,
+                        )
+                    : null,
+                child: _buildStatusRow(
+                  context,
+                  getDetail('businessStatus'),
+                  getDetail('currentOpeningHours'),
+                ),
+              ),
             ),
-            _buildExpandableHoursRow(
-              context,
-              getDetail('regularOpeningHours'), // Weekly descriptions
-              getDetail('businessStatus'), // For temporary/permanent closures
-              getDetail('currentOpeningHours'), // For live open/closed
+            Builder(
+              builder: (hoursRowCtx) => GestureDetector(
+                behavior: _isHelpMode
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.translucent,
+                onTap: _isHelpMode
+                    ? () => _tryHelpTap(
+                          ExperienceHelpTargetId.detailsHoursRow,
+                          hoursRowCtx,
+                        )
+                    : null,
+                child: _buildExpandableHoursRow(
+                  context,
+                  getDetail('regularOpeningHours'), // Weekly descriptions
+                  getDetail(
+                      'businessStatus'), // For temporary/permanent closures
+                  getDetail('currentOpeningHours'), // For live open/closed
+                ),
+              ),
             ),
-            _buildDetailRow(
-              context,
-              Icons.event_available_outlined,
-              'Reservable',
-              formattedReservable, // Use pre-formatted value
-              showLabel: false, // HIDE label
+            Builder(
+              builder: (reservationsRowCtx) => GestureDetector(
+                behavior: _isHelpMode
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.translucent,
+                onTap: _isHelpMode
+                    ? () => _tryHelpTap(
+                          ExperienceHelpTargetId.detailsReservationsRow,
+                          reservationsRowCtx,
+                        )
+                    : null,
+                child: _buildDetailRow(
+                  context,
+                  Icons.event_available_outlined,
+                  'Reservable',
+                  formattedReservable, // Use pre-formatted value
+                  showLabel: false, // HIDE label
+                ),
+              ),
             ),
-            _buildDetailRow(
-              context,
-              Icons.local_parking_outlined,
-              'Parking',
-              formattedParking, // Use pre-formatted value
-              showLabel: false, // HIDE label
+            Builder(
+              builder: (parkingRowCtx) => GestureDetector(
+                behavior: _isHelpMode
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.translucent,
+                onTap: _isHelpMode
+                    ? () => _tryHelpTap(
+                          ExperienceHelpTargetId.detailsParkingRow,
+                          parkingRowCtx,
+                        )
+                    : null,
+                child: _buildDetailRow(
+                  context,
+                  Icons.local_parking_outlined,
+                  'Parking',
+                  formattedParking, // Use pre-formatted value
+                  showLabel: false, // HIDE label
+                ),
+              ),
             ),
           ],
           // --- ADDED: Other Categories Row ---
-          _buildOtherCategoriesRow(context, _currentExperience),
+          Builder(
+            builder: (otherCategoriesRowCtx) => GestureDetector(
+              behavior: _isHelpMode
+                  ? HitTestBehavior.opaque
+                  : HitTestBehavior.translucent,
+              onTap: _isHelpMode
+                  ? () => _tryHelpTap(
+                        ExperienceHelpTargetId.detailsOtherCategoriesRow,
+                        otherCategoriesRowCtx,
+                      )
+                  : null,
+              child: _buildOtherCategoriesRow(context, _currentExperience),
+            ),
+          ),
           // --- END ADDED ---
         ],
       ),
@@ -2001,51 +2704,115 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   // --- ADDED: Helper Widget for Color Category Row --- START ---
-  Widget _buildColorCategoryRow(BuildContext context, Experience experience) {
-    if (experience.colorCategoryId == null) {
-      return const SizedBox.shrink(); // Don't show row if no color category
-    }
+  Widget _buildColorCategoryRow(
+    BuildContext context,
+    Experience experience, {
+    required bool canEdit,
+  }) {
+    final String? selectedColorCategoryId = experience.colorCategoryId;
+    final ColorCategory? colorCategory = _availableColorCategories
+            .firstWhereOrNull((cat) => cat.id == selectedColorCategoryId) ??
+        widget.userColorCategories
+            .firstWhereOrNull((cat) => cat.id == selectedColorCategoryId);
 
-    // Find the color category object from the passed list
-    final colorCategory = widget.userColorCategories.firstWhereOrNull(
-      (cat) => cat.id == experience.colorCategoryId,
-    );
-
-    // Don't show if the category object wasn't found in the list
-    if (colorCategory == null) {
-      print(
-          "Warning: ColorCategory object not found for ID: ${experience.colorCategoryId}");
+    // Keep existing behavior for read-only users: hide the row if no category is set.
+    if (!canEdit && colorCategory == null) {
       return const SizedBox.shrink();
     }
 
-    return Padding(
+    final Widget rowContent = Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.center, // Center items vertically
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Color Circle
-          Container(
-            width: 14, // Smaller size
-            height: 14,
-            decoration: BoxDecoration(
-              color: colorCategory.color,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Theme.of(context).dividerColor,
-                width: 1,
-              ),
+          SizedBox(
+            width: 20.0,
+            height: 20.0,
+            child: Center(
+              child: colorCategory != null
+                  ? Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: colorCategory.color,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Theme.of(context).dividerColor,
+                          width: 1,
+                        ),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.palette_outlined,
+                      size: 18,
+                      color: Colors.black54,
+                    ),
             ),
           ),
           const SizedBox(width: 12),
-          // Category Name
           Expanded(
-            child: Text(
-              colorCategory.name,
-              style: Theme.of(context).textTheme.bodyMedium,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    colorCategory?.name ?? 'Select Color Category',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color:
+                              colorCategory == null ? Colors.grey[600] : null,
+                        ),
+                  ),
+                ),
+                if (canEdit)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2.0),
+                    child: _isUpdatingColorCategory
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.expand_more, color: Colors.black54),
+                  ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+
+    if (!canEdit) {
+      return Builder(
+        builder: (colorCategoryRowCtx) => GestureDetector(
+          behavior: _isHelpMode
+              ? HitTestBehavior.opaque
+              : HitTestBehavior.translucent,
+          onTap: _isHelpMode
+              ? () => _tryHelpTap(
+                    ExperienceHelpTargetId.detailsColorCategoryRow,
+                    colorCategoryRowCtx,
+                  )
+              : null,
+          child: rowContent,
+        ),
+      );
+    }
+
+    return Builder(
+      builder: (colorCategoryRowCtx) => Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8.0),
+          onTap: _isUpdatingColorCategory
+              ? null
+              : withHeavyTap(() {
+                  if (_tryHelpTap(
+                      ExperienceHelpTargetId.detailsColorCategoryRow,
+                      colorCategoryRowCtx)) return;
+                  _showColorCategoryDialogAndSave();
+                }),
+          child: rowContent,
+        ),
       ),
     );
   }
@@ -2536,55 +3303,73 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    TextButton.icon(
-                      icon: const Icon(Icons.filter_list,
-                          size: 20.0, color: Colors.black),
-                      label: const Text('Filter',
-                          style: TextStyle(color: Colors.black)),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        textStyle: const TextStyle(fontSize: 13),
-                      ),
-                      onPressed: () {
-                        // TODO: Implement Filter functionality
-                      },
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.sort,
-                          size: 20.0, color: Colors.black),
-                      label: const Text('Sort',
-                          style: TextStyle(color: Colors.black)),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        textStyle: const TextStyle(fontSize: 13),
-                      ),
-                      onPressed: () {
-                        // TODO: Implement Sort functionality
-                      },
-                    ),
-                    if (_canShowPublicContentToggle)
-                      TextButton.icon(
-                        icon: Icon(
-                          isPublicView ? Icons.bookmark_outline : Icons.public,
-                          size: 20.0,
-                          color: Colors.black,
-                        ),
-                        label: Text(
-                          isPublicView
-                              ? 'Show Your Saves'
-                              : 'Show Public Saves',
-                          style: const TextStyle(color: Colors.black),
-                        ),
+                    Builder(
+                      builder: (filterBtnCtx) => TextButton.icon(
+                        icon: const Icon(Icons.filter_list,
+                            size: 20.0, color: Colors.black),
+                        label: const Text('Filter',
+                            style: TextStyle(color: Colors.black)),
                         style: TextButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
                           textStyle: const TextStyle(fontSize: 13),
                         ),
-                        onPressed: (_isLoadingPublicMedia && !isPublicView)
-                            ? null
-                            : _toggleContentSource,
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              ExperienceHelpTargetId.mediaToolbarFilter,
+                              filterBtnCtx)) return;
+                        },
+                      ),
+                    ),
+                    Builder(
+                      builder: (sortBtnCtx) => TextButton.icon(
+                        icon: const Icon(Icons.sort,
+                            size: 20.0, color: Colors.black),
+                        label: const Text('Sort',
+                            style: TextStyle(color: Colors.black)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          textStyle: const TextStyle(fontSize: 13),
+                        ),
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              ExperienceHelpTargetId.mediaToolbarSort,
+                              sortBtnCtx)) return;
+                        },
+                      ),
+                    ),
+                    if (_canShowPublicContentToggle)
+                      Builder(
+                        builder: (toggleSourceBtnCtx) => TextButton.icon(
+                          icon: Icon(
+                            isPublicView
+                                ? Icons.bookmark_outline
+                                : Icons.public,
+                            size: 20.0,
+                            color: Colors.black,
+                          ),
+                          label: Text(
+                            isPublicView
+                                ? 'Show Your Saves'
+                                : 'Show Public Saves',
+                            style: const TextStyle(color: Colors.black),
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            textStyle: const TextStyle(fontSize: 13),
+                          ),
+                          onPressed: _isHelpMode
+                              ? () => _tryHelpTap(
+                                    ExperienceHelpTargetId
+                                        .mediaToolbarContentSourceToggle,
+                                    toggleSourceBtnCtx,
+                                  )
+                              : ((_isLoadingPublicMedia && !isPublicView)
+                                  ? null
+                                  : _toggleContentSource),
+                        ),
                       ),
                   ],
                 ),
@@ -2596,43 +3381,51 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             sliver: SliverToBoxAdapter(
               child: Align(
                 alignment: Alignment.centerRight,
-                child: GestureDetector(
-                  onTap: _toggleDisplayMode,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _isWebViewMode
-                          ? AppColors.teal.withOpacity(0.15)
-                          : AppColors.sage.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
+                child: Builder(
+                  builder: (displayModeCtx) => GestureDetector(
+                    onTap: () {
+                      if (_tryHelpTap(
+                          ExperienceHelpTargetId.mediaDisplayModeToggle,
+                          displayModeCtx)) return;
+                      _toggleDisplayMode();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
                         color: _isWebViewMode
-                            ? AppColors.teal.withOpacity(0.5)
-                            : AppColors.sage.withOpacity(0.5),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _isWebViewMode ? Icons.language : Icons.code,
-                          size: 14,
-                          color:
-                              _isWebViewMode ? AppColors.teal : AppColors.sage,
+                            ? AppColors.teal.withOpacity(0.15)
+                            : AppColors.sage.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _isWebViewMode
+                              ? AppColors.teal.withOpacity(0.5)
+                              : AppColors.sage.withOpacity(0.5),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _isWebViewMode ? 'Web view' : 'Default view',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isWebViewMode ? Icons.language : Icons.code,
+                            size: 14,
                             color: _isWebViewMode
                                 ? AppColors.teal
                                 : AppColors.sage,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Text(
+                            _isWebViewMode ? 'Web view' : 'Default view',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: _isWebViewMode
+                                  ? AppColors.teal
+                                  : AppColors.sage,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -2644,632 +3437,743 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // Media list rendered as a sliver so it can flex with available height
           SliverPadding(
             padding: const EdgeInsets.only(
-                left: 16.0,
-                right: 16.0,
-                top: 8.0,
-                bottom: 16.0),
+                left: 16.0, right: 16.0, top: 8.0, bottom: 16.0),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                // MODIFIED: Get SharedMediaItem and its path
-                final item = mediaItems[index];
-                final url = item.path;
+                  // MODIFIED: Get SharedMediaItem and its path
+                  final item = mediaItems[index];
+                  final url = item.path;
 
-                Widget? mediaWidget;
-                final isTikTokUrl = url.toLowerCase().contains('tiktok.com') ||
-                    url.toLowerCase().contains('vm.tiktok.com');
-                final isInstagramUrl =
-                    url.toLowerCase().contains('instagram.com');
-                final isFacebookUrl =
-                    url.toLowerCase().contains('facebook.com') ||
-                        url.toLowerCase().contains('fb.com') ||
-                        url.toLowerCase().contains('fb.watch');
-                final isYouTubeUrl =
-                    url.toLowerCase().contains('youtube.com') ||
-                        url.toLowerCase().contains('youtu.be') ||
-                        url.toLowerCase().contains('youtube.com/shorts');
-                final isYelpUrl = url.toLowerCase().contains('yelp.com/biz') ||
-                    url.toLowerCase().contains('yelp.to/');
-                final bool isMapsUrl =
-                    url.toLowerCase().contains('google.com/maps') ||
-                        url.toLowerCase().contains('maps.app.goo.gl') ||
-                        url.toLowerCase().contains('goo.gl/maps') ||
-                        url.toLowerCase().contains('g.co/kgs/') ||
-                        url.toLowerCase().contains('share.google/');
-                final bool isTicketmasterUrl = _isTicketmasterUrl(url);
-                final bool isNetworkUrl =
-                    url.startsWith('http') || url.startsWith('https');
-                final bool isGenericUrl = !isTikTokUrl &&
-                    !isInstagramUrl &&
-                    !isFacebookUrl &&
-                    !isYouTubeUrl &&
-                    !isYelpUrl &&
-                    !isMapsUrl;
-                final bool isExpanded = _expandedMediaPath == url;
-                final bool isPreviewHeightExpanded =
-                    isExpanded && _isMediaPreviewHeightExpanded;
-                final double? previewHeightOverride =
-                    _getMediaPreviewHeightOverride(context, url);
-                final bool canEditMediaPrivacy =
-                    !widget.readOnlyPreview &&
-                        !_showingPublicMedia &&
-                        item.id.isNotEmpty;
+                  Widget? mediaWidget;
+                  final isTikTokUrl =
+                      url.toLowerCase().contains('tiktok.com') ||
+                          url.toLowerCase().contains('vm.tiktok.com');
+                  final isInstagramUrl =
+                      url.toLowerCase().contains('instagram.com');
+                  final isFacebookUrl =
+                      url.toLowerCase().contains('facebook.com') ||
+                          url.toLowerCase().contains('fb.com') ||
+                          url.toLowerCase().contains('fb.watch');
+                  final isYouTubeUrl =
+                      url.toLowerCase().contains('youtube.com') ||
+                          url.toLowerCase().contains('youtu.be') ||
+                          url.toLowerCase().contains('youtube.com/shorts');
+                  final isYelpUrl =
+                      url.toLowerCase().contains('yelp.com/biz') ||
+                          url.toLowerCase().contains('yelp.to/');
+                  final bool isMapsUrl =
+                      url.toLowerCase().contains('google.com/maps') ||
+                          url.toLowerCase().contains('maps.app.goo.gl') ||
+                          url.toLowerCase().contains('goo.gl/maps') ||
+                          url.toLowerCase().contains('g.co/kgs/') ||
+                          url.toLowerCase().contains('share.google/');
+                  final bool isTicketmasterUrl = _isTicketmasterUrl(url);
+                  final bool isNetworkUrl =
+                      url.startsWith('http') || url.startsWith('https');
+                  final bool isGenericUrl = !isTikTokUrl &&
+                      !isInstagramUrl &&
+                      !isFacebookUrl &&
+                      !isYouTubeUrl &&
+                      !isYelpUrl &&
+                      !isMapsUrl;
+                  final bool isExpanded = _expandedMediaPath == url;
+                  final bool isPreviewHeightExpanded =
+                      isExpanded && _isMediaPreviewHeightExpanded;
+                  final double? previewHeightOverride =
+                      _getMediaPreviewHeightOverride(context, url);
+                  final bool canEditMediaPrivacy = !widget.readOnlyPreview &&
+                      !_showingPublicMedia &&
+                      item.id.isNotEmpty;
 
-                if (isExpanded) {
-                  if (isTikTokUrl) {
-                    final key = _tiktokControllerKeys.putIfAbsent(
-                      url,
-                      () => GlobalKey<TikTokPreviewWidgetState>(),
-                    );
-                    mediaWidget = kIsWeb
-                        ? WebMediaPreviewCard(
-                            url: url,
-                            experienceName: _currentExperience.name,
-                            onOpenPressed: () => _launchUrl(url),
-                          )
-                        : TikTokPreviewWidget(
-                            key: key,
-                            url: url,
-                            launchUrlCallback: _launchUrl,
-                            showControls: false,
-                            onWebViewCreated: (controller) {
-                              _inAppWebViewControllers[url] = controller;
-                            },
-                          );
-                  } else if (isInstagramUrl) {
-                    final key = _instagramControllerKeys.putIfAbsent(
-                      url,
-                      () => GlobalKey<instagram_widget.InstagramWebViewState>(),
-                    );
-                    final double instagramHeight =
-                        previewHeightOverride ?? 640.0;
-                    mediaWidget = kIsWeb
-                        ? WebMediaPreviewCard(
-                            url: url,
-                            experienceName: _currentExperience.name,
-                            onOpenPressed: () => _launchUrl(url),
-                          )
-                        : instagram_widget.InstagramWebView(
-                            key: key,
-                            url: url,
-                            height: instagramHeight,
-                            launchUrlCallback: _launchUrl,
-                            onWebViewCreated: (controller) {
-                              _inAppWebViewControllers[url] = controller;
-                            },
-                            onPageFinished: (_) {},
-                            overrideWebViewMode: _localModeOverride,
-                          );
-                  } else if (isFacebookUrl) {
-                    // Use taller height for Facebook Reels
-                    final isReel = url.contains('/reel/') || url.contains('/reels/');
-                    final double facebookHeight = previewHeightOverride ?? (isReel ? 700.0 : 500.0);
-
-                    mediaWidget = kIsWeb
-                        ? WebMediaPreviewCard(
-                            url: url,
-                            experienceName: _currentExperience.name,
-                            onOpenPressed: () => _launchUrl(url),
-                          )
-                        : FacebookPreviewWidget(
-                            url: url,
-                            height: facebookHeight,
-                            launchUrlCallback: _launchUrl,
-                            onWebViewCreated: (controller) {
-                              _inAppWebViewControllers[url] = controller;
-                            },
-                            onPageFinished: (_) {},
-                            showControls: false,
-                          );
-                  } else if (isYouTubeUrl) {
-                    final key = _youtubeControllerKeys.putIfAbsent(
-                      url,
-                      () => GlobalKey<YouTubePreviewWidgetState>(),
-                    );
-                    mediaWidget = kIsWeb
-                        ? WebMediaPreviewCard(
-                            url: url,
-                            experienceName: _currentExperience.name,
-                            onOpenPressed: () => _launchUrl(url),
-                          )
-                        : YouTubePreviewWidget(
-                            key: key,
-                            url: url,
-                            launchUrlCallback: _launchUrl,
-                            showControls: false,
-                            height: previewHeightOverride,
-                            onWebViewCreated: (controller) {
-                              _inAppWebViewControllers[url] = controller;
-                            },
-                          );
-                  } else if (isTicketmasterUrl) {
-                    // First check if we have cached data in the SharedMediaItem
-                    final hasCachedData = item.ticketmasterEventName != null || 
-                                          item.ticketmasterImageUrl != null;
-                    
-                    // Only load from API if we don't have cached data
-                    if (!hasCachedData) {
-                      _queueTicketmasterDetailsLoad(url);
-                    }
-                    
-                    final details = _ticketmasterEventDetails[url];
-                    final isLoading = !hasCachedData && _ticketmasterUrlsLoading.contains(url);
-                    
-                    // Prefer cached data from SharedMediaItem, fall back to API data
-                    mediaWidget = TicketmasterPreviewWidget(
-                      ticketmasterUrl: url,
-                      launchUrlCallback: _launchUrl,
-                      isLoading: isLoading,
-                      eventName: item.ticketmasterEventName ?? details?.name,
-                      venueName: item.ticketmasterVenueName ?? details?.venue?.name,
-                      eventDate: item.ticketmasterEventDate ?? details?.startDateTime,
-                      imageUrl: item.ticketmasterImageUrl ?? details?.imageUrl,
-                    );
-                  } else if (isNetworkUrl) {
-                    final lowerUrl = url.toLowerCase();
-                    if (lowerUrl.endsWith('.jpg') ||
-                        lowerUrl.endsWith('.jpeg') ||
-                        lowerUrl.endsWith('.png') ||
-                        lowerUrl.endsWith('.gif') ||
-                        lowerUrl.endsWith('.webp')) {
-                      mediaWidget = Image.network(
+                  if (isExpanded) {
+                    if (isTikTokUrl) {
+                      final key = _tiktokControllerKeys.putIfAbsent(
                         url,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return const Center(
-                              child: CircularProgressIndicator());
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.grey[200],
-                            height: 200,
-                            child: Center(
-                                child: Icon(Icons.broken_image_outlined,
-                                    color: Colors.grey[600], size: 40)),
-                          );
-                        },
+                        () => GlobalKey<TikTokPreviewWidgetState>(),
                       );
-                    } else if (isYelpUrl) {
-                      mediaWidget = YelpPreviewWidget(
-                        yelpUrl: url,
-                        launchUrlCallback: _launchUrl,
+                      mediaWidget = kIsWeb
+                          ? WebMediaPreviewCard(
+                              url: url,
+                              experienceName: _currentExperience.name,
+                              onOpenPressed: () => _launchUrl(url),
+                            )
+                          : TikTokPreviewWidget(
+                              key: key,
+                              url: url,
+                              launchUrlCallback: _launchUrl,
+                              showControls: false,
+                              onWebViewCreated: (controller) {
+                                _inAppWebViewControllers[url] = controller;
+                              },
+                            );
+                    } else if (isInstagramUrl) {
+                      final key = _instagramControllerKeys.putIfAbsent(
+                        url,
+                        () =>
+                            GlobalKey<instagram_widget.InstagramWebViewState>(),
                       );
-                    } else if (isMapsUrl) {
-                      if (!_mapsPreviewFutures.containsKey(url)) {
-                        _mapsPreviewFutures[url] = Future.value({
-                          'location': _currentExperience.location,
-                          'placeName': _currentExperience.name,
-                          'mapsUrl': url,
-                          'website': _currentExperience.location.website,
-                        });
+                      final double instagramHeight =
+                          previewHeightOverride ?? 640.0;
+                      mediaWidget = kIsWeb
+                          ? WebMediaPreviewCard(
+                              url: url,
+                              experienceName: _currentExperience.name,
+                              onOpenPressed: () => _launchUrl(url),
+                            )
+                          : instagram_widget.InstagramWebView(
+                              key: key,
+                              url: url,
+                              height: instagramHeight,
+                              launchUrlCallback: _launchUrl,
+                              onWebViewCreated: (controller) {
+                                _inAppWebViewControllers[url] = controller;
+                              },
+                              onPageFinished: (_) {},
+                              overrideWebViewMode: _localModeOverride,
+                            );
+                    } else if (isFacebookUrl) {
+                      // Use taller height for Facebook Reels
+                      final isReel =
+                          url.contains('/reel/') || url.contains('/reels/');
+                      final double facebookHeight =
+                          previewHeightOverride ?? (isReel ? 700.0 : 500.0);
+
+                      mediaWidget = kIsWeb
+                          ? WebMediaPreviewCard(
+                              url: url,
+                              experienceName: _currentExperience.name,
+                              onOpenPressed: () => _launchUrl(url),
+                            )
+                          : FacebookPreviewWidget(
+                              url: url,
+                              height: facebookHeight,
+                              launchUrlCallback: _launchUrl,
+                              onWebViewCreated: (controller) {
+                                _inAppWebViewControllers[url] = controller;
+                              },
+                              onPageFinished: (_) {},
+                              showControls: false,
+                            );
+                    } else if (isYouTubeUrl) {
+                      final key = _youtubeControllerKeys.putIfAbsent(
+                        url,
+                        () => GlobalKey<YouTubePreviewWidgetState>(),
+                      );
+                      mediaWidget = kIsWeb
+                          ? WebMediaPreviewCard(
+                              url: url,
+                              experienceName: _currentExperience.name,
+                              onOpenPressed: () => _launchUrl(url),
+                            )
+                          : YouTubePreviewWidget(
+                              key: key,
+                              url: url,
+                              launchUrlCallback: _launchUrl,
+                              showControls: false,
+                              height: previewHeightOverride,
+                              onWebViewCreated: (controller) {
+                                _inAppWebViewControllers[url] = controller;
+                              },
+                            );
+                    } else if (isTicketmasterUrl) {
+                      // First check if we have cached data in the SharedMediaItem
+                      final hasCachedData =
+                          item.ticketmasterEventName != null ||
+                              item.ticketmasterImageUrl != null;
+
+                      // Only load from API if we don't have cached data
+                      if (!hasCachedData) {
+                        _queueTicketmasterDetailsLoad(url);
                       }
-                      mediaWidget = MapsPreviewWidget(
-                        mapsUrl: url,
-                        mapsPreviewFutures: _mapsPreviewFutures,
-                        getLocationFromMapsUrl: (u) async => null,
+
+                      final details = _ticketmasterEventDetails[url];
+                      final isLoading = !hasCachedData &&
+                          _ticketmasterUrlsLoading.contains(url);
+
+                      // Prefer cached data from SharedMediaItem, fall back to API data
+                      mediaWidget = TicketmasterPreviewWidget(
+                        ticketmasterUrl: url,
                         launchUrlCallback: _launchUrl,
-                        mapsService: _googleMapsService,
+                        isLoading: isLoading,
+                        eventName: item.ticketmasterEventName ?? details?.name,
+                        venueName:
+                            item.ticketmasterVenueName ?? details?.venue?.name,
+                        eventDate: item.ticketmasterEventDate ??
+                            details?.startDateTime,
+                        imageUrl:
+                            item.ticketmasterImageUrl ?? details?.imageUrl,
                       );
+                    } else if (isNetworkUrl) {
+                      final lowerUrl = url.toLowerCase();
+                      if (lowerUrl.endsWith('.jpg') ||
+                          lowerUrl.endsWith('.jpeg') ||
+                          lowerUrl.endsWith('.png') ||
+                          lowerUrl.endsWith('.gif') ||
+                          lowerUrl.endsWith('.webp')) {
+                        mediaWidget = Image.network(
+                          url,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: Colors.grey[200],
+                              height: 200,
+                              child: Center(
+                                  child: Icon(Icons.broken_image_outlined,
+                                      color: Colors.grey[600], size: 40)),
+                            );
+                          },
+                        );
+                      } else if (isYelpUrl) {
+                        mediaWidget = YelpPreviewWidget(
+                          yelpUrl: url,
+                          launchUrlCallback: _launchUrl,
+                        );
+                      } else if (isMapsUrl) {
+                        if (!_mapsPreviewFutures.containsKey(url)) {
+                          _mapsPreviewFutures[url] = Future.value({
+                            'location': _currentExperience.location,
+                            'placeName': _currentExperience.name,
+                            'mapsUrl': url,
+                            'website': _currentExperience.location.website,
+                          });
+                        }
+                        mediaWidget = MapsPreviewWidget(
+                          mapsUrl: url,
+                          mapsPreviewFutures: _mapsPreviewFutures,
+                          getLocationFromMapsUrl: (u) async => null,
+                          launchUrlCallback: _launchUrl,
+                          mapsService: _googleMapsService,
+                        );
+                      } else {
+                        mediaWidget = GenericUrlPreviewWidget(
+                          url: url,
+                          launchUrlCallback: _launchUrl,
+                        );
+                      }
                     } else {
-                      mediaWidget = GenericUrlPreviewWidget(
-                        url: url,
-                        launchUrlCallback: _launchUrl,
+                      mediaWidget = Container(
+                        height: 150,
+                        color: Colors.grey[200],
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.description,
+                                  color: Colors.grey[600], size: 40),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Content Preview',
+                                style: TextStyle(color: Colors.grey[600]),
+                              ),
+                            ],
+                          ),
+                        ),
                       );
                     }
                   } else {
-                    mediaWidget = Container(
-                      height: 150,
-                      color: Colors.grey[200],
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.description,
-                                color: Colors.grey[600], size: 40),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Content Preview',
-                              style: TextStyle(color: Colors.grey[600]),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
+                    mediaWidget = null;
                   }
-                } else {
-                  mediaWidget = null;
-                }
 
-                // Keep the Column for layout *within* the list item
-                final circleAvatar = CircleAvatar(
-                  radius: 14,
-                  backgroundColor:
-                      Theme.of(context).primaryColor.withOpacity(0.8),
-                  child: Text(
-                    '${index + 1}',
-                    style: const TextStyle(
-                      fontSize: 14.0,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                  // Keep the Column for layout *within* the list item
+                  final circleAvatar = CircleAvatar(
+                    radius: 14,
+                    backgroundColor:
+                        Theme.of(context).primaryColor.withOpacity(0.8),
+                    child: Text(
+                      '${index + 1}',
+                      style: const TextStyle(
+                        fontSize: 14.0,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
-                );
+                  );
 
-                final Widget indexHeader = SizedBox(
-                  height: 32,
-                  width: double.infinity,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      circleAvatar,
-                      if (canEditMediaPrivacy)
-                        Positioned(
-                          right: 0,
-                          child: PrivacyToggleButton(
-                            isPrivate: item.isPrivate,
-                            showLabel: false,
-                            onPressed: () => _toggleMediaItemPrivacy(item),
+                  final Widget indexHeader = SizedBox(
+                    height: 32,
+                    width: double.infinity,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        circleAvatar,
+                        if (canEditMediaPrivacy)
+                          Positioned(
+                            right: 0,
+                            child: Builder(
+                              builder: (privacyCtx) => GestureDetector(
+                                behavior: _isHelpMode
+                                    ? HitTestBehavior.opaque
+                                    : HitTestBehavior.translucent,
+                                onTap: _isHelpMode
+                                    ? () => _tryHelpTap(
+                                        ExperienceHelpTargetId
+                                            .mediaPrivacyToggle,
+                                        privacyCtx)
+                                    : null,
+                                child: _isHelpMode
+                                    ? IgnorePointer(
+                                        child: PrivacyToggleButton(
+                                          isPrivate: item.isPrivate,
+                                          showLabel: false,
+                                          onPressed: () {},
+                                        ),
+                                      )
+                                    : PrivacyToggleButton(
+                                        isPrivate: item.isPrivate,
+                                        showLabel: false,
+                                        onPressed: () =>
+                                            _toggleMediaItemPrivacy(item),
+                                      ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+
+                  return Padding(
+                    padding: const EdgeInsets.only(
+                        bottom: 12.0), // Reduced from 24.0
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
+                          child: indexHeader,
+                        ),
+                        Container(
+                          margin: EdgeInsets.zero,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16.0),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 4.0,
+                                offset: const Offset(0, -2),
+                              ),
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 4.0,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            children: [
+                              Builder(
+                                builder: (cardHeaderCtx) => GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: withHeavyTap(() {
+                                    if (_tryHelpTap(
+                                        ExperienceHelpTargetId.mediaCardHeader,
+                                        cardHeaderCtx)) return;
+                                    _toggleMediaPreview(url);
+                                  }),
+                                  child: Container(
+                                    color: Theme.of(context).primaryColor,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12.0, vertical: 8.0),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            item.caption ?? url,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        _buildMediaPreviewToggleButton(
+                                          mediaPath: url,
+                                          isExpanded: isExpanded,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (isExpanded && mediaWidget != null)
+                                mediaWidget,
+                            ],
                           ),
                         ),
-                    ],
-                  ),
-                );
+                        // --- ADDED: 'Also linked to' section --- START ---
+                        Builder(
+                          builder: (linkedCtx) {
+                            final otherExperiences =
+                                _otherAssociatedExperiences[url] ?? [];
+                            final bool shouldShowSection =
+                                !_isLoadingOtherExperiences &&
+                                    otherExperiences.isNotEmpty;
 
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12.0), // Reduced from 24.0
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
-                        child: indexHeader,
-                      ),
-                      Container(
-                        margin: EdgeInsets.zero,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16.0),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 4.0,
-                              offset: const Offset(0, -2),
-                            ),
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 4.0,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          children: [
-                            GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: withHeavyTap(() => _toggleMediaPreview(url)),
-                              child: Container(
-                                color: Theme.of(context).primaryColor,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12.0, vertical: 8.0),
-                                child: Row(
+                            if (!shouldShowSection) {
+                              return const SizedBox.shrink();
+                            }
+
+                            return GestureDetector(
+                              behavior: _isHelpMode
+                                  ? HitTestBehavior.opaque
+                                  : HitTestBehavior.translucent,
+                              onTap: _isHelpMode
+                                  ? () => _tryHelpTap(
+                                      ExperienceHelpTargetId
+                                          .mediaLinkedExperience,
+                                      linkedCtx)
+                                  : null,
+                              child: Padding(
+                                padding: const EdgeInsets.only(
+                                    top: 12.0, bottom: 4.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Expanded(
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          bottom: 6.0,
+                                          left: 4.0), // Indent slightly
                                       child: Text(
-                                        item.caption ?? url,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                        otherExperiences.length == 1
+                                            ? 'Also linked to:'
+                                            : 'Also linked to (${otherExperiences.length}):',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelLarge
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.black87,
+                                            ),
                                       ),
                                     ),
-                                    _buildMediaPreviewToggleButton(
-                                      mediaPath: url,
-                                      isExpanded: isExpanded,
-                                    ),
+                                    // List the other experiences
+                                    ...otherExperiences.map((exp) {
+                                      // final categoryName = exp.category; // OLD
+                                      // Use the specific category cache for media tab, now keyed by ID
+                                      final UserCategory? categoryForMediaItem =
+                                          _fetchedCategoriesForMedia[exp
+                                              .categoryId]; // NEW: Lookup by ID
+
+                                      // Prefer denormalized icon from experience, fall back to category lookup
+                                      final categoryIcon =
+                                          exp.categoryIconDenorm ??
+                                              categoryForMediaItem?.icon ??
+                                              '📍';
+                                      final categoryName =
+                                          categoryForMediaItem?.name ??
+                                              'Uncategorized';
+
+                                      final address = exp.location.address;
+                                      final bool hasAddress =
+                                          address != null && address.isNotEmpty;
+
+                                      return Padding(
+                                        padding: const EdgeInsets.only(
+                                            bottom: 4.0,
+                                            left: 4.0), // Indent slightly
+                                        child: InkWell(
+                                          onTap: withHeavyTap(() async {
+                                            if (_tryHelpTap(
+                                                ExperienceHelpTargetId
+                                                    .mediaLinkedExperience,
+                                                linkedCtx)) {
+                                              return;
+                                            }
+                                            print(
+                                                'Tapped on other experience ${exp.name} from exp page tab');
+                                            // Use denormalized icon from experience for navigation fallback
+                                            final UserCategory
+                                                categoryForNavigation =
+                                                _fetchedCategoriesForMedia[exp
+                                                        .categoryId] ?? // NEW: Lookup by ID
+                                                    UserCategory(
+                                                        id: exp.categoryId ??
+                                                            '', // Use the ID if available for fallback
+                                                        name: 'Uncategorized',
+                                                        icon:
+                                                            exp.categoryIconDenorm ??
+                                                                '📍',
+                                                        ownerUserId: '');
+
+                                            final result =
+                                                await Navigator.push<bool>(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (context) =>
+                                                    ExperiencePageScreen(
+                                                  experience: exp,
+                                                  category:
+                                                      categoryForNavigation,
+                                                  userColorCategories: widget
+                                                      .userColorCategories,
+                                                ),
+                                              ),
+                                            );
+                                            // If navigation might cause changes relevant here, refresh
+                                            if (result == true && mounted) {
+                                              // Decide what needs refreshing - maybe just the other experience data?
+                                              _loadOtherExperienceData();
+                                              // Or maybe the whole page?
+                                              // _refreshExperienceData();
+                                            }
+                                          }),
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                    right: 8.0, top: 2.0),
+                                                child: Text(categoryIcon,
+                                                    style: TextStyle(
+                                                        fontSize: 14)),
+                                              ),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      exp.name,
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .titleSmall
+                                                          ?.copyWith(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w500),
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      maxLines: 1,
+                                                    ),
+                                                    if (hasAddress)
+                                                      Text(
+                                                        address,
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall
+                                                            ?.copyWith(
+                                                                color: Colors
+                                                                    .black54),
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        maxLines: 1,
+                                                      ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }),
                                   ],
                                 ),
                               ),
-                            ),
-                            if (isExpanded && mediaWidget != null) mediaWidget,
-                          ],
+                            );
+                          },
                         ),
-                      ),
-                      // --- ADDED: 'Also linked to' section --- START ---
-                      Builder(
-                        builder: (context) {
-                          final otherExperiences =
-                              _otherAssociatedExperiences[url] ?? [];
-                          final bool shouldShowSection =
-                              !_isLoadingOtherExperiences &&
-                                  otherExperiences.isNotEmpty;
+                        // --- ADDED: 'Also linked to' section --- END ---
 
-                          if (!shouldShowSection) {
-                            return const SizedBox
-                                .shrink(); // Don't show if not applicable
-                          }
-
-                          return Padding(
-                            padding:
-                                const EdgeInsets.only(top: 12.0, bottom: 4.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          height: 40,
+                          child: Builder(
+                            builder: (actionRowCtx) => Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                               children: [
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                      bottom: 6.0,
-                                      left: 4.0), // Indent slightly
-                                  child: Text(
-                                    otherExperiences.length == 1
-                                        ? 'Also linked to:'
-                                        : 'Also linked to (${otherExperiences.length}):',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelLarge
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.black87,
-                                        ),
+                                // Refresh Button
+                                if (!isGenericUrl)
+                                  Builder(
+                                    builder: (refreshCtx) => IconButton(
+                                      icon: const Icon(Icons.refresh),
+                                      iconSize: 24,
+                                      color: Colors.blue,
+                                      tooltip: 'Refresh Preview',
+                                      onPressed: () {
+                                        if (_tryHelpTap(
+                                            ExperienceHelpTargetId
+                                                .mediaActionRefresh,
+                                            refreshCtx)) return;
+                                        if (isTikTokUrl) {
+                                          _tiktokControllerKeys[url]
+                                              ?.currentState
+                                              ?.refreshWebView();
+                                        } else if (isInstagramUrl) {
+                                          _instagramControllerKeys[url]
+                                              ?.currentState
+                                              ?.refresh();
+                                        } else if (isYouTubeUrl) {
+                                          _youtubeControllerKeys[url]
+                                              ?.currentState
+                                              ?.refreshWebView();
+                                        } else if (_webViewControllers
+                                            .containsKey(url)) {
+                                          _webViewControllers[url]!.reload();
+                                        } else {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(const SnackBar(
+                                                  content: Text(
+                                                      'Cannot refresh this item.')));
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                // Share Button
+                                Builder(
+                                  builder: (shareMediaCtx) => IconButton(
+                                    icon: const Icon(Icons.share_outlined),
+                                    iconSize: 24,
+                                    color: Colors.blue,
+                                    tooltip: 'Share Media',
+                                    onPressed: () {
+                                      if (_tryHelpTap(
+                                          ExperienceHelpTargetId
+                                              .mediaActionShare,
+                                          shareMediaCtx)) return;
+                                      if (!_isMediaShareInProgress)
+                                        _handleMediaShareButtonPressed(item);
+                                    },
                                   ),
                                 ),
-                                // List the other experiences
-                                ...otherExperiences.map((exp) {
-                                  // final categoryName = exp.category; // OLD
-                                  // Use the specific category cache for media tab, now keyed by ID
-                                  final UserCategory? categoryForMediaItem =
-                                      _fetchedCategoriesForMedia[
-                                          exp.categoryId]; // NEW: Lookup by ID
-
-                                  // Prefer denormalized icon from experience, fall back to category lookup
-                                  final categoryIcon =
-                                      exp.categoryIconDenorm ??
-                                          categoryForMediaItem?.icon ??
-                                          '📍';
-                                  final categoryName =
-                                      categoryForMediaItem?.name ??
-                                          'Uncategorized';
-
-                                  final address = exp.location.address;
-                                  final bool hasAddress =
-                                      address != null && address.isNotEmpty;
-
-                                  return Padding(
-                                    padding: const EdgeInsets.only(
-                                        bottom: 4.0,
-                                        left: 4.0), // Indent slightly
-                                    child: InkWell(
-                                      onTap: withHeavyTap(() async {
-                                        print(
-                                            'Tapped on other experience ${exp.name} from exp page tab');
-                                        // Use denormalized icon from experience for navigation fallback
-                                        final UserCategory
-                                            categoryForNavigation =
-                                            _fetchedCategoriesForMedia[exp
-                                                    .categoryId] ?? // NEW: Lookup by ID
-                                                UserCategory(
-                                                    id: exp.categoryId ??
-                                                        '', // Use the ID if available for fallback
-                                                    name: 'Uncategorized',
-                                                    icon: exp.categoryIconDenorm ?? '📍',
-                                                    ownerUserId: '');
-
-                                        final result =
-                                            await Navigator.push<bool>(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                ExperiencePageScreen(
-                                              experience: exp,
-                                              category: categoryForNavigation,
-                                              userColorCategories:
-                                                  widget.userColorCategories,
-                                            ),
+                                // Open in App button
+                                // Open in App button
+                                Builder(
+                                  builder: (openExtCtx) => isTicketmasterUrl
+                                      ? ActionChip(
+                                          avatar: Image.asset(
+                                            'assets/icon/misc/ticketmaster_logo.png',
+                                            height: 18,
                                           ),
-                                        );
-                                        // If navigation might cause changes relevant here, refresh
-                                        if (result == true && mounted) {
-                                          // Decide what needs refreshing - maybe just the other experience data?
-                                          _loadOtherExperienceData();
-                                          // Or maybe the whole page?
-                                          // _refreshExperienceData();
-                                        }
-                                      }),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                                right: 8.0, top: 2.0),
-                                            child: Text(categoryIcon,
-                                                style: TextStyle(fontSize: 14)),
+                                          label: const SizedBox.shrink(),
+                                          labelPadding: EdgeInsets.zero,
+                                          onPressed: () {
+                                            if (_tryHelpTap(
+                                                ExperienceHelpTargetId
+                                                    .mediaActionOpenExternal,
+                                                openExtCtx)) return;
+                                            _launchUrl(url);
+                                          },
+                                          tooltip: 'Open in Ticketmaster',
+                                          backgroundColor:
+                                              const Color(0xFF026CDF),
+                                          shape: StadiumBorder(
+                                            side: BorderSide(
+                                                color: Colors.grey.shade300),
                                           ),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  exp.name,
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .titleSmall
-                                                      ?.copyWith(
-                                                          fontWeight:
-                                                              FontWeight.w500),
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  maxLines: 1,
-                                                ),
-                                                if (hasAddress)
-                                                  Text(
-                                                    address,
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .bodySmall
-                                                        ?.copyWith(
-                                                            color:
-                                                                Colors.black54),
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    maxLines: 1,
-                                                  ),
-                                              ],
-                                            ),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          padding: const EdgeInsets.all(4),
+                                        )
+                                      : IconButton(
+                                          icon: Icon(
+                                            isInstagramUrl
+                                                ? FontAwesomeIcons.instagram
+                                                : isFacebookUrl
+                                                    ? FontAwesomeIcons.facebook
+                                                    : isTikTokUrl
+                                                        ? FontAwesomeIcons
+                                                            .tiktok
+                                                        : isYouTubeUrl
+                                                            ? FontAwesomeIcons
+                                                                .youtube
+                                                            : isMapsUrl
+                                                                ? FontAwesomeIcons
+                                                                    .google
+                                                                : Icons
+                                                                    .open_in_new,
                                           ),
-                                        ],
-                                      ),
+                                          color: isInstagramUrl
+                                              ? const Color(0xFFE1306C)
+                                              : isFacebookUrl
+                                                  ? const Color(0xFF1877F2)
+                                                  : isTikTokUrl
+                                                      ? Colors.black
+                                                      : isYouTubeUrl
+                                                          ? Colors.red
+                                                          : isMapsUrl
+                                                              ? const Color(
+                                                                  0xFF4285F4)
+                                                              : Theme.of(
+                                                                      context)
+                                                                  .primaryColor,
+                                          iconSize: 32,
+                                          tooltip: isInstagramUrl
+                                              ? 'Open in Instagram'
+                                              : isFacebookUrl
+                                                  ? 'Open in Facebook'
+                                                  : isTikTokUrl
+                                                      ? 'Open in TikTok'
+                                                      : isYouTubeUrl
+                                                          ? 'Open in YouTube'
+                                                          : isMapsUrl
+                                                              ? 'Open in Google Maps'
+                                                              : 'Open URL',
+                                          onPressed: () {
+                                            if (_tryHelpTap(
+                                                ExperienceHelpTargetId
+                                                    .mediaActionOpenExternal,
+                                                openExtCtx)) return;
+                                            _launchUrl(url);
+                                          },
+                                        ),
+                                ),
+                                // Preview height toggle (not shown for Ticketmaster)
+                                if (!isTicketmasterUrl)
+                                  Builder(
+                                    builder: (previewSizeCtx) => IconButton(
+                                      icon: Icon(isPreviewHeightExpanded
+                                          ? Icons.fullscreen_exit
+                                          : Icons.fullscreen),
+                                      iconSize: 24,
+                                      color: Colors.blue,
+                                      tooltip: isPreviewHeightExpanded
+                                          ? 'Collapse preview'
+                                          : 'Expand preview',
+                                      onPressed: () {
+                                        if (_tryHelpTap(
+                                            ExperienceHelpTargetId
+                                                .mediaActionPreviewSize,
+                                            previewSizeCtx)) return;
+                                        _toggleMediaPreviewHeight(url);
+                                      },
                                     ),
-                                  );
-                                }),
+                                  ),
+                                if (!widget.readOnlyPreview && !isPublicView)
+                                  Builder(
+                                    builder: (deleteCtx) => IconButton(
+                                      icon: const Icon(Icons.delete_outline),
+                                      iconSize: 24,
+                                      color: Colors.red[700],
+                                      tooltip: 'Delete Media',
+                                      onPressed: () {
+                                        if (_tryHelpTap(
+                                            ExperienceHelpTargetId
+                                                .mediaActionDelete,
+                                            deleteCtx)) return;
+                                        _deleteMediaPath(url);
+                                      },
+                                    ),
+                                  ),
                               ],
                             ),
-                          );
-                        },
-                      ),
-                      // --- ADDED: 'Also linked to' section --- END ---
-
-                      const SizedBox(height: 4), // Reduced from 8
-                      SizedBox(
-                        height: 40, // Reduced from 48
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            // Refresh Button
-                            if (!isGenericUrl)
-                              IconButton(
-                                icon: const Icon(Icons.refresh),
-                                iconSize: 24,
-                                color: Colors.blue,
-                                tooltip: 'Refresh Preview',
-                                onPressed: () {
-                                  if (isTikTokUrl) {
-                                    _tiktokControllerKeys[url]
-                                        ?.currentState
-                                        ?.refreshWebView();
-                                  } else if (isInstagramUrl) {
-                                    _instagramControllerKeys[url]
-                                        ?.currentState
-                                        ?.refresh();
-                                  } else if (isYouTubeUrl) {
-                                    _youtubeControllerKeys[url]
-                                        ?.currentState
-                                        ?.refreshWebView();
-                                  } else if (_webViewControllers
-                                      .containsKey(url)) {
-                                    _webViewControllers[url]!.reload();
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                            content: Text(
-                                                'Cannot refresh this item.')));
-                                  }
-                                },
-                              ),
-                            // Share Button
-                            IconButton(
-                              icon: const Icon(Icons.share_outlined),
-                              iconSize: 24,
-                              color:
-                                  Colors.blue, // Use blue like expand/collapse
-                              tooltip:
-                                  'Share Media', // Tooltip for the new button
-                              onPressed: _isMediaShareInProgress
-                                  ? null
-                                  : () => _handleMediaShareButtonPressed(item),
-                            ),
-                            // Open in App button
-                            isTicketmasterUrl
-                                ? ActionChip(
-                                    avatar: Image.asset(
-                                      'assets/icon/misc/ticketmaster_logo.png',
-                                      height: 18,
-                                    ),
-                                    label: const SizedBox.shrink(),
-                                    labelPadding: EdgeInsets.zero,
-                                    onPressed: () => _launchUrl(url),
-                                    tooltip: 'Open in Ticketmaster',
-                                    backgroundColor: const Color(0xFF026CDF),
-                                    shape: StadiumBorder(
-                                      side: BorderSide(color: Colors.grey.shade300),
-                                    ),
-                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    padding: const EdgeInsets.all(4),
-                                  )
-                                : IconButton(
-                                    icon: Icon(
-                                      isInstagramUrl
-                                          ? FontAwesomeIcons.instagram
-                                          : isFacebookUrl
-                                              ? FontAwesomeIcons.facebook
-                                              : isTikTokUrl
-                                                  ? FontAwesomeIcons.tiktok
-                                                  : isYouTubeUrl
-                                                      ? FontAwesomeIcons.youtube
-                                                      : isMapsUrl
-                                                          ? FontAwesomeIcons.google
-                                                          : Icons.open_in_new,
-                                    ),
-                                    color: isInstagramUrl
-                                        ? const Color(0xFFE1306C)
-                                        : isFacebookUrl
-                                            ? const Color(0xFF1877F2)
-                                            : isTikTokUrl
-                                                ? Colors.black
-                                                : isYouTubeUrl
-                                                    ? Colors.red
-                                                    : isMapsUrl
-                                                        ? const Color(0xFF4285F4)
-                                                        : Theme.of(context)
-                                                            .primaryColor,
-                                    iconSize: 32,
-                                    tooltip: isInstagramUrl
-                                        ? 'Open in Instagram'
-                                        : isFacebookUrl
-                                            ? 'Open in Facebook'
-                                            : isTikTokUrl
-                                                ? 'Open in TikTok'
-                                                : isYouTubeUrl
-                                                    ? 'Open in YouTube'
-                                                    : isMapsUrl
-                                                ? 'Open in Google Maps'
-                                                : 'Open URL',
-                                    onPressed: () => _launchUrl(url),
-                                  ),
-                            // Preview height toggle (not shown for Ticketmaster)
-                            if (!isTicketmasterUrl)
-                              IconButton(
-                                icon: Icon(isPreviewHeightExpanded
-                                    ? Icons.fullscreen_exit
-                                    : Icons.fullscreen),
-                                iconSize: 24,
-                                color: Colors.blue,
-                                tooltip: isPreviewHeightExpanded
-                                    ? 'Collapse preview'
-                                    : 'Expand preview',
-                                onPressed: () => _toggleMediaPreviewHeight(url),
-                              ),
-                            if (!widget.readOnlyPreview && !isPublicView)
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                iconSize: 24,
-                                color: Colors.red[700],
-                                tooltip: 'Delete Media',
-                                onPressed: () => _deleteMediaPath(url),
-                              ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-              childCount: mediaItems.length,
+                      ],
+                    ),
+                  );
+                },
+                childCount: mediaItems.length,
+              ),
             ),
           ),
-        ),
         ],
       ),
     );
@@ -3279,7 +4183,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Widget _buildReviewsTab(BuildContext context) {
     // Allow authenticated users to rate and review, regardless of edit access
     final bool canInteract = _currentUserId != null;
-    
+
     return Container(
       color: AppColors.backgroundColor,
       child: CustomScrollView(
@@ -3287,121 +4191,147 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // Rating buttons at the top center (available for all authenticated users)
           if (canInteract)
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 24.0, bottom: 16.0, left: 16.0, right: 16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Thumbs Up Column (Button + Count)
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GestureDetector(
-                          onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(true)),
-                        child: Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _userVote == true
-                                ? Icons.thumb_up
-                                : Icons.thumb_up_outlined,
-                            color: _userVote == true
-                                ? Colors.green
-                                : Colors.white.withOpacity(0.9),
-                            size: 27.0,
-                          ),
-                        ),
-                        ),
-                      Transform.translate(
-                        offset: const Offset(0, 4),
-                        child: Text(
-                          (_publicExperience?.thumbsUpCount ?? 0).toString(),
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 18.0,
-                            fontWeight: FontWeight.w500,
-                            shadows: [
-                              Shadow(
-                                offset: const Offset(1.0, 1.0),
-                                blurRadius: 2.0,
-                                color: Colors.grey.withOpacity(0.3),
+              child: Builder(
+                builder: (reviewRatingCtx) => Padding(
+                  padding: const EdgeInsets.only(
+                      top: 24.0, bottom: 16.0, left: 16.0, right: 16.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Thumbs Up Column (Button + Count)
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: withHeavyTap(() {
+                              if (_tryHelpTap(
+                                  ExperienceHelpTargetId.reviewsRatingButtons,
+                                  reviewRatingCtx)) return;
+                              if (!_isUpdatingRating) _handleThumbRating(true);
+                            }),
+                            child: Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.2),
+                                shape: BoxShape.circle,
                               ),
-                            ],
-                          ),
-                        ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 24),
-                    // Thumbs Down Column (Button + Count)
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GestureDetector(
-                          onTap: withHeavyTap(_isUpdatingRating ? null : () => _handleThumbRating(false)),
-                          child: Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.2),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              _userVote == false
-                                  ? Icons.thumb_down
-                                  : Icons.thumb_down_outlined,
-                              color: _userVote == false
-                                  ? Colors.red
-                                  : Colors.white.withOpacity(0.9),
-                              size: 27.0,
+                              child: Icon(
+                                _userVote == true
+                                    ? Icons.thumb_up
+                                    : Icons.thumb_up_outlined,
+                                color: _userVote == true
+                                    ? Colors.green
+                                    : Colors.white.withOpacity(0.9),
+                                size: 27.0,
+                              ),
                             ),
                           ),
-                        ),
-                      Transform.translate(
-                        offset: const Offset(0, 4),
-                        child: Text(
-                          (_publicExperience?.thumbsDownCount ?? 0).toString(),
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 18.0,
-                            fontWeight: FontWeight.w500,
-                            shadows: [
-                              Shadow(
-                                offset: const Offset(1.0, 1.0),
-                                blurRadius: 2.0,
-                                color: Colors.grey.withOpacity(0.3),
+                          Transform.translate(
+                            offset: const Offset(0, 4),
+                            child: Text(
+                              (_publicExperience?.thumbsUpCount ?? 0)
+                                  .toString(),
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 18.0,
+                                fontWeight: FontWeight.w500,
+                                shadows: [
+                                  Shadow(
+                                    offset: const Offset(1.0, 1.0),
+                                    blurRadius: 2.0,
+                                    color: Colors.grey.withOpacity(0.3),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                      const SizedBox(width: 24),
+                      // Thumbs Down Column (Button + Count)
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: withHeavyTap(() {
+                              if (_tryHelpTap(
+                                  ExperienceHelpTargetId.reviewsRatingButtons,
+                                  reviewRatingCtx)) return;
+                              if (!_isUpdatingRating) _handleThumbRating(false);
+                            }),
+                            child: Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.2),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                _userVote == false
+                                    ? Icons.thumb_down
+                                    : Icons.thumb_down_outlined,
+                                color: _userVote == false
+                                    ? Colors.red
+                                    : Colors.white.withOpacity(0.9),
+                                size: 27.0,
+                              ),
+                            ),
+                          ),
+                          Transform.translate(
+                            offset: const Offset(0, 4),
+                            child: Text(
+                              (_publicExperience?.thumbsDownCount ?? 0)
+                                  .toString(),
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 18.0,
+                                fontWeight: FontWeight.w500,
+                                shadows: [
+                                  Shadow(
+                                    offset: const Offset(1.0, 1.0),
+                                    blurRadius: 2.0,
+                                    color: Colors.grey.withOpacity(0.3),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           // Write Review Button (available for all authenticated users)
           if (canInteract)
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 8.0, bottom: 16.0),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _isSubmittingReview ? null : _showWriteReviewModal,
-                    icon: Icon(_userReview != null ? Icons.edit : Icons.rate_review),
-                    label: Text(_userReview != null ? 'Edit Your Review' : 'Write a Review'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+              child: Builder(
+                builder: (writeBtnCtx) => Padding(
+                  padding: const EdgeInsets.only(
+                      left: 16.0, right: 16.0, top: 8.0, bottom: 16.0),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        if (_tryHelpTap(
+                            ExperienceHelpTargetId.reviewsWriteButton,
+                            writeBtnCtx)) return;
+                        if (!_isSubmittingReview) _showWriteReviewModal();
+                      },
+                      icon: Icon(
+                          _userReview != null ? Icons.edit : Icons.rate_review),
+                      label: Text(_userReview != null
+                          ? 'Edit Your Review'
+                          : 'Write a Review'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
                   ),
@@ -3432,7 +4362,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.reviews_outlined, size: 64, color: Colors.grey[400]),
+                      Icon(Icons.reviews_outlined,
+                          size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
                       Text(
                         'No reviews yet',
@@ -3475,7 +4406,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     showDialog(
       context: context,
       builder: (context) => WriteReviewModal(
-        initialRating: _userVote, // Use the experience thumb rating, not review rating
+        initialRating:
+            _userVote, // Use the experience thumb rating, not review rating
         initialContent: _userReview?.content ?? '',
         initialImageUrls: _userReview?.imageUrls ?? [],
         isEditing: _userReview != null,
@@ -3485,9 +4417,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   /// Uploads review images to Firebase Storage and returns the download URLs
-  Future<List<String>> _uploadReviewImages(List<File> images, String reviewId) async {
+  Future<List<String>> _uploadReviewImages(
+      List<File> images, String reviewId) async {
     final List<String> uploadedUrls = [];
-    
+
     for (int i = 0; i < images.length; i++) {
       final file = images[i];
       final fileName = '${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
@@ -3496,20 +4429,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           .child('review_photos')
           .child(reviewId)
           .child(fileName);
-      
+
       await ref.putFile(file);
       final url = await ref.getDownloadURL();
       uploadedUrls.add(url);
     }
-    
+
     return uploadedUrls;
   }
 
   /// Handles review submission (create or update)
-  Future<void> _handleReviewSubmit(bool? isPositive, String content, List<File> newImages, List<String> existingImageUrls) async {
+  Future<void> _handleReviewSubmit(bool? isPositive, String content,
+      List<File> newImages, List<String> existingImageUrls) async {
     final placeId = _currentExperience.location.placeId ?? '';
     final currentUser = FirebaseAuth.instance.currentUser;
-    
+
     if (currentUser == null) {
       throw Exception('You must be logged in to write a review');
     }
@@ -3523,10 +4457,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         if (newImages.isNotEmpty) {
           newImageUrls = await _uploadReviewImages(newImages, _userReview!.id);
         }
-        
+
         // Combine existing and new image URLs
         final allImageUrls = [...existingImageUrls, ...newImageUrls];
-        
+
         // Update existing review
         final updatedReview = _userReview!.copyWith(
           isPositive: isPositive,
@@ -3549,14 +4483,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         );
-        
+
         // Add the review first to get the ID
         final reviewId = await _experienceService.addReview(newReview);
-        
+
         // Upload images if any
         if (newImages.isNotEmpty) {
           final imageUrls = await _uploadReviewImages(newImages, reviewId);
-          
+
           // Update review with image URLs
           final reviewWithImages = newReview.copyWith(imageUrls: imageUrls);
           // Need to create a review with the correct ID for updating
@@ -3600,7 +4534,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       elevation: 1,
-      color: const Color.fromARGB(225, 250, 250, 250), // Very light grey background
+      color: const Color.fromARGB(
+          225, 250, 250, 250), // Very light grey background
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -3614,7 +4549,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 CachedProfileAvatar(
                   photoUrl: review.userPhotoUrl,
                   radius: 20,
-                  fallbackText: (review.userName ?? 'A').substring(0, 1).toUpperCase(),
+                  fallbackText:
+                      (review.userName ?? 'A').substring(0, 1).toUpperCase(),
                 ),
                 const SizedBox(width: 12),
                 // Name and Time
@@ -3634,9 +4570,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           if (isCurrentUserReview) ...[
                             const SizedBox(width: 6),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                color: Theme.of(context)
+                                    .primaryColor
+                                    .withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
@@ -3674,72 +4613,87 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         size: 20,
                       ),
                     // Three-dot menu for all reviews
-                    PopupMenuButton<String>(
-                      color: Colors.white,
-                      icon: const Icon(Icons.more_vert, size: 20),
-                      onSelected: (value) {
-                        if (value == 'edit') {
-                          _showWriteReviewModal();
-                        } else if (value == 'delete') {
-                          _confirmDeleteReview(review);
-                        } else if (value == 'report') {
-                          _showReviewReportDialog(review);
-                        }
-                      },
-                      itemBuilder: (context) {
-                        final List<PopupMenuEntry<String>> menuItems = [];
-
-                        if (isCurrentUserReview) {
-                          // Current user's review - show Edit/Delete
-                          // Users can always edit/delete their own reviews regardless of readOnlyPreview
-                          menuItems.addAll([
-                            const PopupMenuItem(
-                              value: 'edit',
-                              child: Material(
-                                color: Colors.white,
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.edit, size: 18),
-                                    SizedBox(width: 8),
-                                    Text('Edit'),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Material(
-                                color: Colors.white,
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.delete, size: 18, color: Colors.red),
-                                    SizedBox(width: 8),
-                                    Text('Delete', style: TextStyle(color: Colors.red)),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ]);
-                        } else {
-                          // Other user's review - show Report option
-                          menuItems.add(
-                            const PopupMenuItem(
-                              value: 'report',
-                              child: Material(
-                                color: Colors.white,
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.report_outlined, size: 18),
-                                    SizedBox(width: 8),
-                                    Text('Report'),
-                                  ],
-                                ),
-                              ),
-                            ),
+                    Builder(
+                      builder: (reviewMenuCtx) {
+                        if (_isHelpMode) {
+                          return IconButton(
+                            icon: const Icon(Icons.more_vert, size: 20),
+                            onPressed: () => _tryHelpTap(
+                                ExperienceHelpTargetId.reviewCardMenu,
+                                reviewMenuCtx),
                           );
                         }
+                        return PopupMenuButton<String>(
+                          color: Colors.white,
+                          icon: const Icon(Icons.more_vert, size: 20),
+                          onSelected: (value) {
+                            if (value == 'edit') {
+                              _showWriteReviewModal();
+                            } else if (value == 'delete') {
+                              _confirmDeleteReview(review);
+                            } else if (value == 'report') {
+                              _showReviewReportDialog(review);
+                            }
+                          },
+                          itemBuilder: (context) {
+                            final List<PopupMenuEntry<String>> menuItems = [];
 
-                        return menuItems;
+                            if (isCurrentUserReview) {
+                              // Current user's review - show Edit/Delete
+                              // Users can always edit/delete their own reviews regardless of readOnlyPreview
+                              menuItems.addAll([
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: Material(
+                                    color: Colors.white,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.edit, size: 18),
+                                        SizedBox(width: 8),
+                                        Text('Edit'),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Material(
+                                    color: Colors.white,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete,
+                                            size: 18, color: Colors.red),
+                                        SizedBox(width: 8),
+                                        Text('Delete',
+                                            style:
+                                                TextStyle(color: Colors.red)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ]);
+                            } else {
+                              // Other user's review - show Report option
+                              menuItems.add(
+                                const PopupMenuItem(
+                                  value: 'report',
+                                  child: Material(
+                                    color: Colors.white,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.report_outlined, size: 18),
+                                        SizedBox(width: 8),
+                                        Text('Report'),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            return menuItems;
+                          },
+                        );
                       },
                     ),
                   ],
@@ -3769,50 +4723,58 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   /// Builds a photo gallery for review images (like Yelp/Amazon)
   Widget _buildReviewPhotoGallery(List<String> imageUrls) {
     if (imageUrls.isEmpty) return const SizedBox.shrink();
-    
-    return SizedBox(
-      height: 100,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: imageUrls.length,
-        itemBuilder: (context, index) {
-          return GestureDetector(
-            onTap: withHeavyTap(() => _showFullScreenReviewImage(imageUrls, index)),
-            child: Container(
-              width: 100,
-              height: 100,
-              margin: EdgeInsets.only(right: index < imageUrls.length - 1 ? 8 : 0),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: Colors.grey[200],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  imageUrls[index],
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Center(
-                      child: CircularProgressIndicator(
-                        value: loadingProgress.expectedTotalBytes != null
-                            ? loadingProgress.cumulativeBytesLoaded /
-                                loadingProgress.expectedTotalBytes!
-                            : null,
-                        strokeWidth: 2,
-                      ),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Center(
-                      child: Icon(Icons.broken_image, color: Colors.grey),
-                    );
-                  },
+
+    return Builder(
+      builder: (galleryCtx) => SizedBox(
+        height: 100,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          itemCount: imageUrls.length,
+          itemBuilder: (context, index) {
+            return GestureDetector(
+              onTap: withHeavyTap(() {
+                if (_tryHelpTap(
+                    ExperienceHelpTargetId.reviewPhotoGallery, galleryCtx))
+                  return;
+                _showFullScreenReviewImage(imageUrls, index);
+              }),
+              child: Container(
+                width: 100,
+                height: 100,
+                margin: EdgeInsets.only(
+                    right: index < imageUrls.length - 1 ? 8 : 0),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey[200],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    imageUrls[index],
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Center(
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                          strokeWidth: 2,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Center(
+                        child: Icon(Icons.broken_image, color: Colors.grey),
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -3850,7 +4812,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       },
                       errorBuilder: (context, error, stackTrace) {
                         return const Center(
-                          child: Icon(Icons.broken_image, color: Colors.white, size: 48),
+                          child: Icon(Icons.broken_image,
+                              color: Colors.white, size: 48),
                         );
                       },
                     ),
@@ -3878,7 +4841,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 right: 0,
                 child: Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(12),
@@ -3925,7 +4889,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       builder: (context) => AlertDialog(
         backgroundColor: Colors.white,
         title: const Text('Delete Review'),
-        content: const Text('Are you sure you want to delete your review? This action cannot be undone.'),
+        content: const Text(
+            'Are you sure you want to delete your review? This action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -3959,7 +4924,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
   }
-
 
   // --- End Tabbed Content Widgets ---
 
@@ -3995,13 +4959,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 SizedBox(
                   width: 28,
                   height: 28,
-                  child: Icon(Icons.phone_outlined, color: AppColors.plum, size: 28),
+                  child: Icon(Icons.phone_outlined,
+                      color: AppColors.plum, size: 28),
                 ),
                 'Call Venue',
-                // Disable button if no phone number
                 phoneNumber != null && phoneNumber.isNotEmpty
                     ? () => _launchPhoneCall(phoneNumber)
-                    : null, // Pass null if no number
+                    : null,
+                helpTargetId: ExperienceHelpTargetId.quickActionCallVenue,
               ),
             ),
             Expanded(
@@ -4010,13 +4975,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 SizedBox(
                   width: 28,
                   height: 28,
-                  child: Icon(Icons.language_outlined, color: AppColors.teal, size: 28),
+                  child: Icon(Icons.language_outlined,
+                      color: AppColors.teal, size: 28),
                 ),
                 'Website',
-                // Disable button if no website URI
                 websiteUri != null && websiteUri.isNotEmpty
                     ? () => _launchUrl(websiteUri)
-                    : null, // Pass null if no URI
+                    : null,
+                helpTargetId: ExperienceHelpTargetId.quickActionWebsite,
               ),
             ),
             Expanded(
@@ -4026,6 +4992,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     color: const Color(0xFFd32323), size: 28),
                 'Yelp',
                 _launchYelpSearch,
+                helpTargetId: ExperienceHelpTargetId.quickActionYelp,
               ),
             ),
             Expanded(
@@ -4037,6 +5004,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 'Google Maps',
                 () => _launchMapLocation(location),
+                helpTargetId: ExperienceHelpTargetId.quickActionGoogleMaps,
               ),
             ),
             Expanded(
@@ -4045,10 +5013,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 SizedBox(
                   width: 28,
                   height: 28,
-                  child: Icon(Icons.directions, color: AppColors.sage, size: 28),
+                  child:
+                      Icon(Icons.directions, color: AppColors.sage, size: 28),
                 ),
                 'Directions',
                 () => _launchDirections(location),
+                helpTargetId: ExperienceHelpTargetId.quickActionDirections,
               ),
             ),
           ],
@@ -4059,35 +5029,41 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // Builds a single tappable action item (icon + label)
   Widget _buildActionItem(
-      BuildContext context, Widget icon, String label, VoidCallback? onTap) {
-    final bool enabled = onTap != null;
-    final Color iconColor =
-        enabled ? Theme.of(context).primaryColor : Colors.grey;
+      BuildContext context, Widget icon, String label, VoidCallback? onTap,
+      {ExperienceHelpTargetId? helpTargetId}) {
+    final bool enabled = onTap != null || _isHelpMode;
+    final Color iconColor = (onTap != null || _isHelpMode)
+        ? Theme.of(context).primaryColor
+        : Colors.grey;
     final Color labelColor = enabled ? Colors.black87 : Colors.grey;
 
-    // Apply color to Material Icons, but keep FontAwesome icons as-is (they have their own colors)
-    final Widget coloredIcon = icon is Icon
-        ? Icon(icon.icon, color: iconColor, size: 28)
-        : icon;
+    final Widget coloredIcon =
+        icon is Icon ? Icon(icon.icon, color: iconColor, size: 28) : icon;
 
-    return InkWell(
-      onTap: withHeavyTap(onTap), // onTap will be null if disabled
-      borderRadius: BorderRadius.circular(8.0),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            coloredIcon,
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: labelColor,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+    return Builder(
+      builder: (itemCtx) => InkWell(
+        onTap: withHeavyTap(() {
+          if (helpTargetId != null && _tryHelpTap(helpTargetId, itemCtx))
+            return;
+          onTap?.call();
+        }),
+        borderRadius: BorderRadius.circular(8.0),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              coloredIcon,
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: labelColor,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -4115,8 +5091,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     if (experienceName.isNotEmpty) {
       final String searchDesc = Uri.encodeComponent(experienceName);
-      final String timestamp =
-          DateTime.now().millisecondsSinceEpoch.toString();
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
       if (address != null && address.isNotEmpty) {
         final String searchLoc = Uri.encodeComponent(address);
         uri = Uri.parse(
@@ -4136,16 +5111,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         final String? locationQuery = uri.queryParameters['find_loc'];
         if (terms != null && terms.isNotEmpty) {
           final String encodedTerms = Uri.encodeComponent(terms);
-          final String locationParam = locationQuery != null &&
-                  locationQuery.isNotEmpty
-              ? '&location=${Uri.encodeComponent(locationQuery)}'
-              : '';
-          final Uri deepLink = Uri.parse(
-              'yelp:///search?terms=$encodedTerms$locationParam');
+          final String locationParam =
+              locationQuery != null && locationQuery.isNotEmpty
+                  ? '&location=${Uri.encodeComponent(locationQuery)}'
+                  : '';
+          final Uri deepLink =
+              Uri.parse('yelp:///search?terms=$encodedTerms$locationParam');
           try {
             // Try launching without canLaunchUrl check first
-            launched = await launchUrl(deepLink,
-                mode: LaunchMode.externalApplication);
+            launched =
+                await launchUrl(deepLink, mode: LaunchMode.externalApplication);
             if (launched) {
               return;
             }
@@ -4409,7 +5384,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     Experience targetExperience,
   ) {
     final String savedPlaceId = savedExperience.location.placeId?.trim() ?? '';
-    final String targetPlaceId = targetExperience.location.placeId?.trim() ?? '';
+    final String targetPlaceId =
+        targetExperience.location.placeId?.trim() ?? '';
     if (savedPlaceId.isNotEmpty && targetPlaceId.isNotEmpty) {
       return savedPlaceId == targetPlaceId;
     }
@@ -4566,7 +5542,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   bool _isEventColorDark(Color color) {
-    final luminance = (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
+    final luminance =
+        (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
     return luminance < 0.5;
   }
 
@@ -4811,7 +5788,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       final mediaIds = _currentExperience.sharedMediaItemIds;
       if (mediaIds.isNotEmpty) {
         List<SharedMediaItem> items;
-        
+
         // Check if user is authenticated - if not, use REST API
         final bool isAuthenticated = _authService.currentUser != null;
         if (isAuthenticated) {
@@ -4820,7 +5797,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // Fetch via REST API for unauthenticated users
           items = await _fetchMediaItemsViaRest(mediaIds);
         }
-        
+
         // ADDED: Sort fetched items by createdAt descending
         items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -4862,15 +5839,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
   }
-  
+
   /// Fetch media items via REST API for unauthenticated users
-  Future<List<SharedMediaItem>> _fetchMediaItemsViaRest(List<String> mediaIds) async {
+  Future<List<SharedMediaItem>> _fetchMediaItemsViaRest(
+      List<String> mediaIds) async {
     if (mediaIds.isEmpty) return [];
-    
+
     final String projectId = DefaultFirebaseOptions.currentPlatform.projectId;
-    final String? appCheckToken = await FirebaseAppCheck.instance.getToken(true);
+    final String? appCheckToken =
+        await FirebaseAppCheck.instance.getToken(true);
     final String apiKey = DefaultFirebaseOptions.currentPlatform.apiKey;
-    
+
     final headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -4878,17 +5857,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (appCheckToken != null && appCheckToken.isNotEmpty)
         'X-Firebase-AppCheck': appCheckToken,
     };
-    
+
     final List<SharedMediaItem> items = [];
-    
+
     // Fetch each media item individually (Firestore REST doesn't support "in" queries well)
     for (final mediaId in mediaIds) {
       try {
         final url = Uri.parse(
-          'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/sharedMediaItems/$mediaId'
-        );
+            'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/sharedMediaItems/$mediaId');
         final response = await http.get(url, headers: headers);
-        
+
         if (response.statusCode == 200) {
           final doc = json.decode(response.body) as Map<String, dynamic>;
           final item = _parseMediaItemFromRest(doc, mediaId);
@@ -4896,37 +5874,40 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             items.add(item);
           }
         } else {
-          debugPrint('ExperiencePageScreen: Failed to fetch media item $mediaId: ${response.statusCode}');
+          debugPrint(
+              'ExperiencePageScreen: Failed to fetch media item $mediaId: ${response.statusCode}');
         }
       } catch (e) {
-        debugPrint('ExperiencePageScreen: Error fetching media item $mediaId via REST: $e');
+        debugPrint(
+            'ExperiencePageScreen: Error fetching media item $mediaId via REST: $e');
       }
     }
-    
+
     return items;
   }
-  
+
   /// Parse a SharedMediaItem from Firestore REST response
-  SharedMediaItem? _parseMediaItemFromRest(Map<String, dynamic> doc, String mediaId) {
+  SharedMediaItem? _parseMediaItemFromRest(
+      Map<String, dynamic> doc, String mediaId) {
     final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
-    
+
     String? getStringField(String fieldName) {
       final field = fields[fieldName] as Map<String, dynamic>?;
       return field?['stringValue'] as String?;
     }
-    
+
     bool? getBoolField(String fieldName) {
       final field = fields[fieldName] as Map<String, dynamic>?;
       return field?['booleanValue'] as bool?;
     }
-    
+
     DateTime? getTimestampField(String fieldName) {
       final field = fields[fieldName] as Map<String, dynamic>?;
       final timestampValue = field?['timestampValue'] as String?;
       if (timestampValue == null) return null;
       return DateTime.tryParse(timestampValue);
     }
-    
+
     List<String> getStringListField(String fieldName) {
       final field = fields[fieldName] as Map<String, dynamic>?;
       if (field == null) return [];
@@ -4939,10 +5920,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           .whereType<String>()
           .toList();
     }
-    
+
     final path = getStringField('path') ?? '';
     if (path.isEmpty) return null;
-    
+
     return SharedMediaItem(
       id: mediaId,
       path: path,
@@ -5062,8 +6043,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (newIsPrivate) {
         if (otherHasPublic) return;
         for (final placeId in placeIds) {
-          await _experienceService
-              .removeMediaPathFromPublicExperienceByPlaceId(placeId, mediaPath);
+          await _experienceService.removeMediaPathFromPublicExperienceByPlaceId(
+              placeId, mediaPath);
         }
       } else {
         if (otherHasPublic) return;
@@ -5087,7 +6068,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Future<void> _toggleMediaItemPrivacy(SharedMediaItem item) async {
     if (item.id.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This content item cannot be updated yet.')),
+        const SnackBar(
+            content: Text('This content item cannot be updated yet.')),
       );
       return;
     }
@@ -5267,7 +6249,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
 
       // First check if experience has denormalized icon
-      if (exp.categoryIconDenorm != null && exp.categoryIconDenorm!.isNotEmpty) {
+      if (exp.categoryIconDenorm != null &&
+          exp.categoryIconDenorm!.isNotEmpty) {
         // Create a placeholder category with the icon for lookup
         categoryLookupMapById[categoryId] = UserCategory(
           id: categoryId,
@@ -5361,10 +6344,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final otherColorCategoryObjects = experience.otherColorCategoryIds
         .map((colorCategoryId) {
           try {
-            return widget.userColorCategories
+            return _availableColorCategories
                 .firstWhere((cat) => cat.id == colorCategoryId);
           } catch (e) {
-            return null; // Color category not found
+            try {
+              return widget.userColorCategories
+                  .firstWhere((cat) => cat.id == colorCategoryId);
+            } catch (_) {
+              return null; // Color category not found
+            }
           }
         })
         .where((cat) => cat != null)
@@ -5372,8 +6360,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         .toList();
 
     final bool showOtherCategories = otherCategoryObjects.isNotEmpty;
-    final bool showOtherColorCategories =
-        otherColorCategoryObjects.isNotEmpty;
+    final bool showOtherColorCategories = otherColorCategoryObjects.isNotEmpty;
     if (!showOtherCategories && !showOtherColorCategories) {
       return const SizedBox.shrink();
     }
@@ -5678,20 +6665,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
 
       // For read-only discovery views, fetch the actual SharedMediaItem owner from Firestore
-      if ((experienceOffenderId == null || experienceOffenderId.isEmpty) && 
-          isReadOnly && 
+      if ((experienceOffenderId == null || experienceOffenderId.isEmpty) &&
+          isReadOnly &&
           _mediaItems.isNotEmpty) {
         try {
-          final sharedMediaItem = await _experienceService.findSharedMediaItemByPath(
+          final sharedMediaItem =
+              await _experienceService.findSharedMediaItemByPath(
             _mediaItems.first.path,
           );
-          if (sharedMediaItem != null && 
+          if (sharedMediaItem != null &&
               sharedMediaItem.ownerUserId.isNotEmpty &&
               sharedMediaItem.ownerUserId != 'public_experience') {
             experienceOffenderId = sharedMediaItem.ownerUserId;
           }
         } catch (e) {
-          debugPrint('ExperiencePageScreen: Failed to fetch SharedMediaItem for report: $e');
+          debugPrint(
+              'ExperiencePageScreen: Failed to fetch SharedMediaItem for report: $e');
         }
       }
 
@@ -6170,8 +7159,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (mounted) {
         messenger.showSnackBar(
           const SnackBar(
-            content:
-                Text('Unable to generate a share link. Please try again.'),
+            content: Text('Unable to generate a share link. Please try again.'),
           ),
         );
       }
@@ -6257,7 +7245,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   /// Sets thumb rating directly without toggle logic (used when syncing with review)
   Future<void> _setThumbRatingDirectly(bool? isPositive) async {
     if (_isUpdatingRating) return;
-    
+
     // Check if user is authenticated
     if (_currentUserId == null) return;
 
@@ -6275,13 +7263,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     try {
       final String? placeId = _currentExperience.location.placeId;
-      
+
       // Check if current user is an editor of this specific experience document
-      final bool isEditor = _currentExperience.editorUserIds.contains(_currentUserId);
-      
+      final bool isEditor =
+          _currentExperience.editorUserIds.contains(_currentUserId);
+
       if (isEditor) {
         // User owns/edits this experience - update it directly
-        final updatedExperience = await _experienceService.updateUserThumbRating(
+        final updatedExperience =
+            await _experienceService.updateUserThumbRating(
           _currentExperience.id,
           newRating,
           previousRating: previousRating,
@@ -6302,10 +7292,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             placeId,
           );
         } catch (e) {
-          debugPrint('_setThumbRatingDirectly: Error finding user experience: $e');
+          debugPrint(
+              '_setThumbRatingDirectly: Error finding user experience: $e');
           // Continue with public-only update
         }
-        
+
         if (userExperience != null) {
           // User has their own experience for this place - update that
           try {
@@ -6315,7 +7306,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               previousRating: userExperience.userThumbRating,
             );
           } catch (e) {
-            debugPrint('_setThumbRatingDirectly: Error updating user experience, falling back to public: $e');
+            debugPrint(
+                '_setThumbRatingDirectly: Error updating user experience, falling back to public: $e');
             // Fall back to public-only update
             await _experienceService.updatePublicExperienceRatingOnly(
               placeId,
@@ -6347,7 +7339,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           _userVote = previousRating;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save rating. Please try again.')),
+          const SnackBar(
+              content: Text('Failed to save rating. Please try again.')),
         );
       }
     } finally {
@@ -6361,7 +7354,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   Future<void> _handleThumbRating(bool isThumbUp) async {
     if (_isUpdatingRating) return;
-    
+
     // Check if user is authenticated
     if (_currentUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -6388,13 +7381,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     try {
       final String? placeId = _currentExperience.location.placeId;
-      
+
       // Check if current user is an editor of this specific experience document
-      final bool isEditor = _currentExperience.editorUserIds.contains(_currentUserId);
-      
+      final bool isEditor =
+          _currentExperience.editorUserIds.contains(_currentUserId);
+
       if (isEditor) {
         // User owns/edits this experience - update it directly
-        final updatedExperience = await _experienceService.updateUserThumbRating(
+        final updatedExperience =
+            await _experienceService.updateUserThumbRating(
           _currentExperience.id,
           newRating,
           previousRating: previousRating,
@@ -6418,7 +7413,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           debugPrint('_handleThumbRating: Error finding user experience: $e');
           // Continue with public-only update
         }
-        
+
         if (userExperience != null) {
           // User has their own experience for this place - update that
           try {
@@ -6428,7 +7423,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               previousRating: userExperience.userThumbRating,
             );
           } catch (e) {
-            debugPrint('_handleThumbRating: Error updating user experience, falling back to public: $e');
+            debugPrint(
+                '_handleThumbRating: Error updating user experience, falling back to public: $e');
             // Fall back to public-only update
             await _experienceService.updatePublicExperienceRatingOnly(
               placeId,
@@ -6447,7 +7443,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           );
         }
       }
-      
+
       // Refresh public experience to update rating counts
       if (mounted) {
         await _loadPublicExperience();
@@ -6460,7 +7456,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           _userVote = previousRating;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save rating. Please try again.')),
+          const SnackBar(
+              content: Text('Failed to save rating. Please try again.')),
         );
       }
     } finally {
