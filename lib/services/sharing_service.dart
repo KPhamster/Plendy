@@ -605,7 +605,43 @@ class SharingService {
       
       try {
         final receiveShareProvider = ReceiveShareProvider();
-        
+        final isInOnboarding = OnboardingScreen.isActive;
+
+        VoidCallback buildOnCancel(BuildContext buildContext) {
+          if (isInOnboarding) {
+            return () {
+              print("SHARE SERVICE: onCancel during onboarding — popping back.");
+              markShareFlowAsInactive();
+              if (buildContext.mounted) {
+                Navigator.of(buildContext).pop();
+              }
+            };
+          }
+          return () {
+            print("SHARE SERVICE: onCancel called from ReceiveShareScreen. Navigating to MainScreen.");
+            markShareFlowAsInactive();
+            Navigator.pushAndRemoveUntil(
+              buildContext,
+              MaterialPageRoute(builder: (ctx) => const MainScreen()),
+              (Route<dynamic> route) => false,
+            );
+          };
+        }
+
+        VoidCallback? buildOnExperienceSaved() {
+          if (!isInOnboarding) return null;
+          return () {
+            final uid = FirebaseAuth.instance.currentUser?.uid;
+            if (uid != null) {
+              FirebaseFirestore.instance.collection('users').doc(uid).update({
+                'hasCompletedOnboarding': true,
+                'hasFinishedOnboardingFlow': true,
+              });
+              print("SHARE SERVICE: Marked onboarding complete after successful share save.");
+            }
+          };
+        }
+
         if (navState != null && navState.mounted) {
           await navState.push(
             MaterialPageRoute(
@@ -614,15 +650,8 @@ class SharingService {
                 value: receiveShareProvider,
                 child: ReceiveShareScreen(
                   sharedFiles: files,
-                  onCancel: () {
-                    print("SHARE SERVICE: onCancel called from ReceiveShareScreen. Navigating to MainScreen.");
-                    markShareFlowAsInactive();
-                    Navigator.pushAndRemoveUntil(
-                      buildContext, 
-                      MaterialPageRoute(builder: (ctx) => const MainScreen()),
-                      (Route<dynamic> route) => false,
-                    );
-                  },
+                  onCancel: buildOnCancel(buildContext),
+                  onExperienceSaved: buildOnExperienceSaved(),
                 ),
               ),
             ),
@@ -636,15 +665,8 @@ class SharingService {
                 value: receiveShareProvider,
                 child: ReceiveShareScreen(
                   sharedFiles: files,
-                  onCancel: () {
-                    print("SHARE SERVICE: onCancel called from ReceiveShareScreen. Navigating to MainScreen.");
-                    markShareFlowAsInactive();
-                    Navigator.pushAndRemoveUntil(
-                      buildContext, 
-                      MaterialPageRoute(builder: (ctx) => const MainScreen()),
-                      (Route<dynamic> route) => false,
-                    );
-                  },
+                  onCancel: buildOnCancel(buildContext),
+                  onExperienceSaved: buildOnExperienceSaved(),
                 ),
               ),
             ),

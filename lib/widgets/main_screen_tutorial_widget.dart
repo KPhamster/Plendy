@@ -77,6 +77,7 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
   static const int _mapDetailsStepIndex = 8;
   static const int _mapTapDetailsStepIndex = 9;
   static const int _mapFullWorldTransitionStepIndex = 10;
+  static const int _helpButtonSpotlightStepIndex = 13;
   static const Duration _mockModalAnimationDuration =
       Duration(milliseconds: 280);
   static const Duration _mapImageFadeDuration = Duration(milliseconds: 2600);
@@ -96,7 +97,10 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
     'When a marker is selected, details appear at the bottom so you can quickly open maps or directions.',
     'You can tap there to see even more details.',
     'As you collect more experiences, you\'ll find that the world is full of exciting places to explore!',
-    'That\'s enough yapping from me! There\'s a lot more you can do with Plendy but I\'ll let you discover the rest on your own. Get out there and start exploring!',
+    'That\'s enough yapping from me! There\'s a lot more you can do with Plendy but I\'ll let you discover the rest on your own.',
+    'If you ever need a refresher, you can always review this in the *Tutorials* page.',
+    'If you ever get confused or have any questions, try the *Help* button and I\'ll do my best to explain! You can often find this button on the top-right corner.',
+    'Now get out there and start exploring!',
   ];
 
   final GlobalKey<_MainTutorialTypewriterTextState> _typewriterKey =
@@ -106,6 +110,7 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
   final GlobalKey _collectionCardKey = GlobalKey();
   final GlobalKey _mapMarkerKey = GlobalKey();
   final GlobalKey _mapDetailsKey = GlobalKey();
+  final GlobalKey _mapHelpButtonKey = GlobalKey();
 
   int _currentStep = 0;
   bool _typewriterComplete = false;
@@ -182,6 +187,9 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
   bool get _highlightMapDetails =>
       _currentStep == _mapDetailsStepIndex ||
       _currentStep == _mapTapDetailsStepIndex;
+  bool get _showHelpButton => _currentStep >= _helpButtonSpotlightStepIndex;
+  bool get _highlightHelpButton =>
+      _currentStep == _helpButtonSpotlightStepIndex;
   bool get _showMapTabFinger =>
       _currentStep == _switchToMapStepIndex && _typewriterComplete;
   bool get _showPlayButtonFinger =>
@@ -473,6 +481,16 @@ class _MainScreenTutorialWidgetState extends State<MainScreenTutorialWidget>
           onPressed: () {},
           icon: const Icon(Icons.filter_list),
         ),
+        if (_showHelpButton)
+          _buildHighlightWrapper(
+            key: _mapHelpButtonKey,
+            isHighlighted: _highlightHelpButton,
+            borderRadius: 20,
+            child: IconButton(
+              onPressed: () {},
+              icon: const Icon(Icons.help_outline),
+            ),
+          ),
       ],
     );
   }

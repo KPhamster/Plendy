@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -410,8 +411,10 @@ class _EventEditorModalState extends State<EventEditorModal>
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Event saved')),
+        Fluttertoast.showToast(
+          msg: 'Event saved',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
         );
 
         if (widget.isReadOnly) {

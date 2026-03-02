@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/notification_state_service.dart';
@@ -12,7 +15,6 @@ import 'messages_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'tutorials_screen.dart';
 import 'reviews_screen.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../config/colors.dart';
 import 'settings_screen.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
@@ -20,6 +22,52 @@ import '../config/profile_help_content.dart';
 import '../models/profile_help_target.dart';
 import '../services/help_mode_service.dart';
 import '../widgets/screen_help_controller.dart';
+
+class ProfilePhotoCache {
+  static String? _url;
+  static ui.Image? _decoded;
+
+  static ui.Image? imageFor(String url) =>
+      (_url == url && _decoded != null) ? _decoded : null;
+
+  static Future<void> _decodeBytes(Uint8List bytes, String url) async {
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    _decoded = frame.image;
+    _url = url;
+  }
+
+  /// Load from disk cache and decode pixels. Awaited in main().
+  static Future<bool> warmup(String photoUrl) async {
+    if (photoUrl == _url && _decoded != null) return true;
+    try {
+      final cacheInfo =
+          await DefaultCacheManager().getFileFromCache(photoUrl);
+      if (cacheInfo != null) {
+        final bytes = await cacheInfo.file.readAsBytes();
+        await _decodeBytes(bytes, photoUrl);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Full preload: tries disk cache first, then downloads if needed.
+  static Future<void> preload(String photoUrl) async {
+    if (await warmup(photoUrl)) return;
+    try {
+      final file = await DefaultCacheManager().getSingleFile(photoUrl);
+      final bytes = await file.readAsBytes();
+      await _decodeBytes(bytes, photoUrl);
+    } catch (_) {}
+  }
+
+  static void invalidate() {
+    _decoded?.dispose();
+    _decoded = null;
+    _url = null;
+  }
+}
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -83,6 +131,16 @@ class _ProfileScreenState extends State<ProfileScreen>
       _authService = authService;
       _loadUsername();
     }
+    _ensureProfilePhotoCached();
+  }
+
+  void _ensureProfilePhotoCached() {
+    final url = _authService?.currentUser?.photoURL;
+    if (url != null && url.isNotEmpty && ProfilePhotoCache.imageFor(url) == null) {
+      ProfilePhotoCache.preload(url).then((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   Future<void> _loadUsername() async {
@@ -109,6 +167,8 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   void _refreshProfile() {
+    ProfilePhotoCache.invalidate();
+    _ensureProfilePhotoCached();
     if (mounted) {
       setState(() {});
     }
@@ -164,6 +224,34 @@ class _ProfileScreenState extends State<ProfileScreen>
         const SnackBar(content: Text('Could not open email app.')),
       );
     }
+  }
+
+  Widget _buildProfilePhoto(dynamic user) {
+    final url = user?.photoURL as String?;
+    if (url == null) {
+      return const CircleAvatar(
+        radius: 50,
+        child: Icon(Icons.person, size: 50),
+      );
+    }
+    final decoded = ProfilePhotoCache.imageFor(url);
+    if (decoded != null) {
+      return ClipOval(
+        child: SizedBox(
+          width: 100,
+          height: 100,
+          child: FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: RawImage(image: decoded),
+          ),
+        ),
+      );
+    }
+    return const CircleAvatar(
+      radius: 50,
+      child: Icon(Icons.person, size: 50),
+    );
   }
 
   @override
@@ -250,33 +338,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                                       SizedBox(
                                         width: 100,
                                         height: 100,
-                                        child: user?.photoURL != null
-                                            ? ClipOval(
-                                                child: CachedNetworkImage(
-                                                  imageUrl: user!.photoURL!,
-                                                  width: 100,
-                                                  height: 100,
-                                                  fit: BoxFit.cover,
-                                                  placeholder: (context, url) =>
-                                                      const CircleAvatar(
-                                                    radius: 50,
-                                                    child: Icon(Icons.person,
-                                                        size: 50),
-                                                  ),
-                                                  errorWidget:
-                                                      (context, url, error) =>
-                                                          const CircleAvatar(
-                                                    radius: 50,
-                                                    child: Icon(Icons.person,
-                                                        size: 50),
-                                                  ),
-                                                ),
-                                              )
-                                            : const CircleAvatar(
-                                                radius: 50,
-                                                child: Icon(Icons.person,
-                                                    size: 50),
-                                              ),
+                                        child: _buildProfilePhoto(user),
                                       ),
                                       Positioned(
                                         bottom: 0,

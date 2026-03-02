@@ -1379,28 +1379,34 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         final photoUrl = profile.photoURL;
         final hasPhoto = photoUrl?.isNotEmpty ?? false;
         final fallbackLetter = _getProfileInitial(profile);
+        final cachedImage = hasPhoto
+            ? CachedProfileAvatar.getCachedImage(photoUrl!)
+            : null;
         final Widget photoContent = hasPhoto
             ? InteractiveViewer(
-                child: Image.network(
-                  photoUrl!,
-                  fit: BoxFit.contain,
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return const Center(child: CircularProgressIndicator());
-                  },
-                  errorBuilder: (context, _, __) {
-                    return Center(
-                      child: Text(
-                        fallbackLetter,
-                        style: const TextStyle(
-                          fontSize: 100,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
+                child: cachedImage != null
+                    ? RawImage(image: cachedImage, fit: BoxFit.contain)
+                    : Image.network(
+                        photoUrl!,
+                        fit: BoxFit.contain,
+                        loadingBuilder: (context, child, progress) {
+                          if (progress == null) return child;
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        },
+                        errorBuilder: (context, _, __) {
+                          return Center(
+                            child: Text(
+                              fallbackLetter,
+                              style: const TextStyle(
+                                fontSize: 100,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
               )
             : Center(
                 child: Text(

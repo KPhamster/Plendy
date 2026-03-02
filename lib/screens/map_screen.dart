@@ -10,7 +10,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 import 'package:cloud_firestore/cloud_firestore.dart'; // ADDED: For pagination cursors
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import '../widgets/cached_profile_avatar.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../services/sharing_service.dart'; // RESTORED: Fallback path
 import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
@@ -7106,62 +7106,17 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                     _followeePublicExperiences[profile.id]
                                             ?.length ??
                                         0;
-                                final Widget leadingAvatar;
-                                if (profile.photoURL != null &&
-                                    profile.photoURL!.trim().isNotEmpty) {
-                                  leadingAvatar = ClipOval(
-                                    child: CachedNetworkImage(
-                                      imageUrl: profile.photoURL!.trim(),
-                                      width: 40,
-                                      height: 40,
-                                      fit: BoxFit.cover,
-                                      placeholder: (context, url) =>
-                                          CircleAvatar(
-                                        radius: 20,
-                                        backgroundColor: Colors.grey[200],
-                                        child: const SizedBox.shrink(),
-                                      ),
-                                      errorWidget: (context, url, error) {
-                                        final String initial =
-                                            displayName.isNotEmpty
-                                                ? displayName
-                                                    .substring(0, 1)
-                                                    .toUpperCase()
-                                                : profile.id
-                                                    .substring(0, 1)
-                                                    .toUpperCase();
-                                        return CircleAvatar(
-                                          radius: 20,
-                                          backgroundColor: Colors.grey[300],
-                                          child: Text(
-                                            initial,
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  );
-                                } else {
-                                  final String initial = displayName.isNotEmpty
-                                      ? displayName
-                                          .substring(0, 1)
-                                          .toUpperCase()
-                                      : profile.id
-                                          .substring(0, 1)
-                                          .toUpperCase();
-                                  leadingAvatar = CircleAvatar(
-                                    radius: 20,
-                                    backgroundColor: Colors.grey[300],
-                                    child: Text(
-                                      initial,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white),
-                                    ),
-                                  );
-                                }
+                                final String initial = displayName.isNotEmpty
+                                    ? displayName.substring(0, 1).toUpperCase()
+                                    : profile.id.substring(0, 1).toUpperCase();
+                                final Widget leadingAvatar =
+                                    CachedProfileAvatar(
+                                  photoUrl: profile.photoURL,
+                                  radius: 20,
+                                  fallbackText: initial,
+                                  backgroundColor: Colors.grey[300],
+                                  textColor: Colors.white,
+                                );
 
                                 final bool isSelected = tempSelectedFolloweeIds
                                     .contains(profile.id);
@@ -9044,6 +8999,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             backgroundColor: AppColors.backgroundColor,
             foregroundColor: Colors.black,
             elevation: 0,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: Colors.transparent,
             titleSpacing: 0,
             leading: hasCustomLeading
                 ? IconButton(

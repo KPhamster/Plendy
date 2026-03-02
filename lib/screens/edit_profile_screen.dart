@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:async';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
 import 'package:flutter/material.dart';
+import 'profile_screen.dart' show ProfilePhotoCache;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -302,6 +302,30 @@ class _EditProfileScreenState extends State<EditProfileScreen>
     }
 
     return const SizedBox.shrink();
+  }
+
+  Widget _buildCurrentPhoto() {
+    final url = _authService.currentUser?.photoURL;
+    if (url != null && url.isNotEmpty) {
+      final decoded = ProfilePhotoCache.imageFor(url);
+      if (decoded != null) {
+        return ClipOval(
+          child: SizedBox(
+            width: 100,
+            height: 100,
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: RawImage(image: decoded),
+            ),
+          ),
+        );
+      }
+    }
+    return const CircleAvatar(
+      radius: 50,
+      child: Icon(Icons.camera_alt, size: 50),
+    );
   }
 
   Future<void> _pickImage() async {
@@ -714,37 +738,7 @@ class _EditProfileScreenState extends State<EditProfileScreen>
                                       radius: 50,
                                       backgroundImage: FileImage(_imageFile!),
                                     )
-                                  : (_authService.currentUser?.photoURL !=
-                                              null &&
-                                          _authService
-                                              .currentUser!.photoURL!.isNotEmpty
-                                      ? ClipOval(
-                                          child: CachedNetworkImage(
-                                            imageUrl: _authService
-                                                .currentUser!.photoURL!,
-                                            width: 100,
-                                            height: 100,
-                                            fit: BoxFit.cover,
-                                            placeholder: (context, url) =>
-                                                const CircleAvatar(
-                                              radius: 50,
-                                              child: Icon(Icons.camera_alt,
-                                                  size: 50),
-                                            ),
-                                            errorWidget:
-                                                (context, url, error) =>
-                                                    const CircleAvatar(
-                                              radius: 50,
-                                              child: Icon(Icons.camera_alt,
-                                                  size: 50),
-                                            ),
-                                          ),
-                                        )
-                                      : const CircleAvatar(
-                                          radius: 50,
-                                          child:
-                                              Icon(Icons.camera_alt, size: 50),
-                                        )),
+                                  : _buildCurrentPhoto(),
                               Positioned(
                                 bottom: 0,
                                 right: 0,
