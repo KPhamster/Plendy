@@ -1532,6 +1532,21 @@ class _EventsScreenState extends State<EventsScreen>
                         color: isDark ? Colors.white60 : Colors.black54,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    Builder(
+                      builder: (createEventCtx) => TextButton.icon(
+                        onPressed: () {
+                          if (_tryHelpTap(
+                              EventsHelpTargetId.addEventButton,
+                              createEventCtx)) {
+                            return;
+                          }
+                          _createNewEvent();
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Create Event'),
+                      ),
+                    ),
                   ],
                 ),
               ),

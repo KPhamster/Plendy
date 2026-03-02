@@ -1,23 +1,15 @@
+import 'dart:collection';
+import 'dart:ui' as ui;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import '../screens/profile_screen.dart' show ProfilePhotoCache;
 
-/// A cached profile avatar widget that uses CachedNetworkImage for fast loading.
-/// Images are cached locally so they don't need to be re-downloaded.
-class CachedProfileAvatar extends StatelessWidget {
-  /// The URL of the profile photo. Can be null or empty.
+class CachedProfileAvatar extends StatefulWidget {
   final String? photoUrl;
-
-  /// The radius of the avatar. Defaults to 20 (40px diameter).
   final double radius;
-
-  /// Optional fallback text to show when there's no photo (usually initials).
-  /// If null and no photo, shows a person icon.
   final String? fallbackText;
-
-  /// Background color for the fallback avatar.
   final Color? backgroundColor;
-
-  /// Text color for the fallback text.
   final Color? textColor;
 
   const CachedProfileAvatar({
@@ -29,8 +21,6 @@ class CachedProfileAvatar extends StatelessWidget {
     this.textColor,
   });
 
-  /// Creates a CachedProfileAvatar from a UserProfile-like object.
-  /// Extracts the first letter of displayName or username for fallback.
   factory CachedProfileAvatar.fromInitial({
     Key? key,
     String? photoUrl,
@@ -56,21 +46,119 @@ class CachedProfileAvatar extends StatelessWidget {
     );
   }
 
-  bool get _hasValidUrl => photoUrl != null && photoUrl!.trim().isNotEmpty;
+  static ui.Image? getCachedImage(String url) {
+    return _CachedProfileAvatarState._getFromAnyCache(url);
+  }
+
+  @override
+  State<CachedProfileAvatar> createState() => _CachedProfileAvatarState();
+}
+
+class _CachedProfileAvatarState extends State<CachedProfileAvatar> {
+  static const int _maxCacheSize = 100;
+  static final LinkedHashMap<String, ui.Image> _memCache =
+      LinkedHashMap<String, ui.Image>();
+
+  ui.Image? _decoded;
+  String? _resolvedUrl;
+
+  static ui.Image? _getFromAnyCache(String url) {
+    final mem = _memCache[url];
+    if (mem != null) {
+      _memCache.remove(url);
+      _memCache[url] = mem;
+      return mem;
+    }
+    return ProfilePhotoCache.imageFor(url);
+  }
+
+  static void _putInCache(String url, ui.Image image) {
+    if (_memCache.length >= _maxCacheSize) {
+      _memCache.remove(_memCache.keys.first);
+    }
+    _memCache[url] = image;
+  }
+
+  bool get _hasValidUrl =>
+      widget.photoUrl != null && widget.photoUrl!.trim().isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveImage();
+  }
+
+  @override
+  void didUpdateWidget(CachedProfileAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.photoUrl != widget.photoUrl) {
+      _decoded = null;
+      _resolvedUrl = null;
+      _resolveImage();
+    }
+  }
+
+  void _resolveImage() {
+    if (!_hasValidUrl) return;
+    final url = widget.photoUrl!.trim();
+
+    final cached = _getFromAnyCache(url);
+    if (cached != null) {
+      _decoded = cached;
+      _resolvedUrl = url;
+      return;
+    }
+
+    _loadFromDiskCache(url);
+  }
+
+  Future<void> _loadFromDiskCache(String url) async {
+    try {
+      final info = await DefaultCacheManager().getFileFromCache(url);
+      if (info != null) {
+        final bytes = await info.file.readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        _putInCache(url, frame.image);
+        if (mounted && widget.photoUrl?.trim() == url) {
+          setState(() {
+            _decoded = frame.image;
+            _resolvedUrl = url;
+          });
+        }
+      }
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = backgroundColor ?? Colors.grey[300];
-    final fgColor = textColor ?? Colors.black87;
-    final size = radius * 2;
+    final bgColor = widget.backgroundColor ?? Colors.grey[300];
+    final fgColor = widget.textColor ?? Colors.black87;
+    final size = widget.radius * 2;
 
     if (!_hasValidUrl) {
       return _buildFallbackAvatar(bgColor, fgColor);
     }
 
+    final url = widget.photoUrl!.trim();
+
+    if (_decoded != null && _resolvedUrl == url) {
+      return ClipOval(
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: RawImage(image: _decoded),
+          ),
+        ),
+      );
+    }
+
     return ClipOval(
       child: CachedNetworkImage(
-        imageUrl: photoUrl!.trim(),
+        imageUrl: url,
         width: size,
         height: size,
         fit: BoxFit.cover,
@@ -83,7 +171,7 @@ class CachedProfileAvatar extends StatelessWidget {
 
   Widget _buildPlaceholder(Color? bgColor) {
     return CircleAvatar(
-      radius: radius,
+      radius: widget.radius,
       backgroundColor: bgColor,
       child: const SizedBox.shrink(),
     );
@@ -91,34 +179,22 @@ class CachedProfileAvatar extends StatelessWidget {
 
   Widget _buildFallbackAvatar(Color? bgColor, Color fgColor) {
     return CircleAvatar(
-      radius: radius,
+      radius: widget.radius,
       backgroundColor: bgColor,
-      child: fallbackText != null
+      child: widget.fallbackText != null
           ? Text(
-              fallbackText!,
+              widget.fallbackText!,
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: fgColor,
-                fontSize: radius * 0.8,
+                fontSize: widget.radius * 0.8,
               ),
             )
           : Icon(
               Icons.person,
-              size: radius,
+              size: widget.radius,
               color: fgColor,
             ),
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-

@@ -161,6 +161,8 @@ class _MainScreenState extends State<MainScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
 
+    _precacheProfilePhoto();
+
     // Set the context in the sharing service
     _sharingService.setContext(context);
 
@@ -196,6 +198,14 @@ class _MainScreenState extends State<MainScreen>
     _help.dispose();
     // Clean up the sharing service listener
     super.dispose();
+  }
+
+  void _precacheProfilePhoto() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final photoURL = authService.currentUser?.photoURL;
+    if (photoURL != null && photoURL.isNotEmpty) {
+      ProfilePhotoCache.preload(photoURL);
+    }
   }
 
   void _onGlobalHelpModeChanged() {

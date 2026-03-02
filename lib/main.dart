@@ -50,11 +50,16 @@ import 'providers/discovery_share_coordinator.dart';
 import 'screens/discovery_share_preview_screen.dart';
 import 'screens/data_deletion_screen.dart';
 import 'screens/email_verification_screen.dart';
+import 'screens/profile_screen.dart';
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // Debug logging function for cold start issues
 // _writeDebugLog disabled (unused)
+
+// Stores the FCM message that launched the app from a terminated state.
+// Must be captured in main() before any stream listeners are registered.
+RemoteMessage? _initialFcmMessage;
 
 // Initialize FlutterLocalNotificationsPlugin (if you want to show foreground notifications)
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -180,55 +185,79 @@ Future<void> _openChatFromNotification(String threadId) async {
   }
 }
 
-/// Open an event screen from a notification (invite or reminder)
-Future<void> _openEventFromNotification(String eventId) async {
+class _EventNavData {
+  final Event event;
+  final List<Experience> experiences;
+  final List<UserCategory> categories;
+  final List<ColorCategory> colorCategories;
+  _EventNavData({
+    required this.event,
+    required this.experiences,
+    required this.categories,
+    required this.colorCategories,
+  });
+}
+
+Future<_EventNavData?> _loadEventNavData(String eventId) async {
   try {
-    final authService = FirebaseAuth.instance;
-    final currentUserId = authService.currentUser?.uid;
-    
-    if (currentUserId == null) {
-      print('FCM: Cannot open event - user not logged in');
-      return;
-    }
-    
-    // Fetch the event
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) return null;
+
     final eventService = EventService();
     final event = await eventService.getEvent(eventId);
-    
-    if (event == null) {
-      print('FCM: Event not found: $eventId');
-      return;
-    }
-    
-    // Fetch experiences referenced in the event
+    if (event == null) return null;
+
     final experienceService = ExperienceService();
     final experienceIds = event.experiences
         .map((entry) => entry.experienceId)
         .where((id) => id.isNotEmpty)
         .toList();
-    
+
     List<Experience> experiences = [];
     if (experienceIds.isNotEmpty) {
       experiences = await experienceService.getExperiencesByIds(experienceIds);
     }
-    
-    // Fetch categories
+
     final categories = await experienceService.getUserCategories();
     final colorCategories = await experienceService.getUserColorCategories();
 
-    // Navigate to event editor modal
+    return _EventNavData(
+      event: event,
+      experiences: experiences,
+      categories: categories,
+      colorCategories: colorCategories,
+    );
+  } catch (e) {
+    print('FCM: Error loading event nav data: $e');
+    return null;
+  }
+}
+
+/// Open an event screen from a notification (invite or reminder)
+Future<void> _openEventFromNotification(String eventId) async {
+  print('FCM: _openEventFromNotification called for $eventId');
+  try {
+    print('FCM: Loading event nav data...');
+    final data = await _loadEventNavData(eventId);
+    if (data == null) {
+      print('FCM: Could not load event $eventId');
+      return;
+    }
+    print('FCM: Event data loaded: "${data.event.title}", navigatorKey ready: ${navigatorKey.currentState != null}');
+
     navigatorKey.currentState?.push(
       MaterialPageRoute(
         builder: (context) => EventEditorModal(
-          event: event,
-          experiences: experiences,
-          categories: categories,
-          colorCategories: colorCategories,
+          event: data.event,
+          experiences: data.experiences,
+          categories: data.categories,
+          colorCategories: data.colorCategories,
           isReadOnly: true,
         ),
         fullscreenDialog: true,
       ),
     );
+    print('FCM: Push to EventEditorModal completed');
   } catch (e) {
     print('FCM: Error opening event from notification: $e');
   }
@@ -393,7 +422,10 @@ Future<void> _configureLocalNotifications() async {
       final payload = notificationResponse.payload!;
       print("Local notification: Handling payload: $payload");
 
-      // Try to parse as JSON first (for new message notifications)
+      // Try to parse as JSON first (for new message notifications).
+      // IMPORTANT: Do NOT await async work here — the Android notification
+      // response callback can swallow long-running futures. Instead, schedule
+      // navigation on the next frame so it runs in the normal app context.
       try {
         final data = jsonDecode(payload) as Map<String, dynamic>;
         final type = data['type'] as String?;
@@ -401,7 +433,9 @@ Future<void> _configureLocalNotifications() async {
         if (type == 'new_message') {
           final threadId = data['threadId'] as String?;
           if (threadId != null) {
-            await _openChatFromNotification(threadId);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _openChatFromNotification(threadId);
+            });
             return;
           }
         } else if (type == 'event_reminder' || type == 'event_invite' ||
@@ -409,7 +443,9 @@ Future<void> _configureLocalNotifications() async {
           final eventId = data['eventId'] as String?;
           if (eventId != null) {
             print('Event notification tapped ($type) - eventId: $eventId');
-            await _openEventFromNotification(eventId);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _openEventFromNotification(eventId);
+            });
             return;
           }
         }
@@ -503,6 +539,11 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  final cachedUser = FirebaseAuth.instance.currentUser;
+  if (cachedUser?.photoURL != null && cachedUser!.photoURL!.isNotEmpty) {
+    await ProfilePhotoCache.warmup(cachedUser.photoURL!);
+  }
+
   // Initialize Firebase App Check (invisible; no user prompt)
   // Kick off App Check without delaying the first Flutter frame
   unawaited(_initializeAppCheck());
@@ -532,6 +573,11 @@ void main() async {
     }
 
     // --- FCM Setup ---
+    // Capture the notification that opened the app from a terminated state
+    // BEFORE registering stream listeners, so it isn't consumed/lost.
+    _initialFcmMessage = await FirebaseMessaging.instance.getInitialMessage();
+    print('FCM: getInitialMessage returned: ${_initialFcmMessage != null ? _initialFcmMessage!.data : 'null'}');
+
     // Setup local notifications in background to not delay app startup
     await _configureLocalNotifications(); // Make this blocking to ensure it's ready
     
@@ -699,56 +745,47 @@ void main() async {
         _recentlyReceivedMessageIds.remove(uniqueId);
       });
       
+      if (navigatorKey.currentState == null) {
+        print('FCM: navigatorKey not ready, cannot navigate');
+        return;
+      }
+
       final screen = message.data['screen'] as String?;
 
-      if (screen != null && navigatorKey.currentState != null) {
-        print("FCM: Navigating to screen: $screen");
+      if (type == 'event_reminder' || type == 'event_invite' ||
+          type == 'event_role_change') {
+        final eventId = message.data['eventId'] as String?;
+        print("FCM: Event notification ($type) - eventId: $eventId");
+        if (eventId != null) {
+          await _openEventFromNotification(eventId);
+        }
+      } else if (type == 'follow_request' && screen == '/follow_requests') {
+        navigatorKey.currentState!.push(
+          MaterialPageRoute(
+            builder: (context) => const FollowRequestsScreen(),
+          ),
+        );
+      } else if (type == 'new_follower') {
+        print(
+            "FCM: New follower notification - would navigate to user profile");
+      } else if (type == 'new_message') {
+        final threadId = message.data['threadId'] as String?;
+        final senderId = message.data['senderId'] as String?;
 
-        // Handle different notification types
-        if (type == 'follow_request' && screen == '/follow_requests') {
-          // Navigate to Follow Requests screen
+        print(
+            "FCM: New message notification - threadId: $threadId, senderId: $senderId");
+
+        if (threadId != null) {
+          await _openChatFromNotification(threadId);
+        } else {
           navigatorKey.currentState!.push(
             MaterialPageRoute(
-              builder: (context) => const FollowRequestsScreen(),
+              builder: (context) => const MessagesScreen(),
             ),
           );
-        } else if (type == 'new_follower') {
-          // For new follower notifications, you might want to navigate to the user's profile
-          // For now, we'll just print a message
-          print(
-              "FCM: New follower notification - would navigate to user profile");
-          // You could implement navigation to user profile here:
-          // final followerId = message.data['followerId'] as String?;
-          // if (followerId != null) {
-          //   // Navigate to user profile screen with followerId
-          // }
-        } else if (type == 'new_message' && screen == '/messages') {
-          // Navigate to the specific chat thread
-          final threadId = message.data['threadId'] as String?;
-          final senderId = message.data['senderId'] as String?;
-
-          print(
-              "FCM: New message notification - threadId: $threadId, senderId: $senderId");
-
-          if (threadId != null) {
-            // Navigate directly to the chat screen
-            await _openChatFromNotification(threadId);
-          } else {
-            // Fallback: Navigate to Messages screen if no threadId
-            navigatorKey.currentState!.push(
-              MaterialPageRoute(
-                builder: (context) => const MessagesScreen(),
-              ),
-            );
-          }
-        } else if (type == 'event_reminder' || type == 'event_invite' ||
-                   type == 'event_role_change') {
-          final eventId = message.data['eventId'] as String?;
-          print("FCM: Event notification ($type) - eventId: $eventId");
-          if (eventId != null) {
-            await _openEventFromNotification(eventId);
-          }
         }
+      } else if (screen != null) {
+        print("FCM: Unhandled screen route: $screen");
       }
     });
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
@@ -1253,6 +1290,105 @@ class _MyAppState extends State<MyApp> {
 
     // Deep link handling for shared links
     _initDeepLinks();
+
+    // Handle notification tap that launched the app from a terminated state.
+    // onMessageOpenedApp only fires when the app is backgrounded, not terminated.
+    if (!kIsWeb) {
+      _handleInitialFcmMessage();
+    }
+  }
+
+  Future<void> _handleInitialFcmMessage() async {
+    try {
+      final message = _initialFcmMessage;
+      _initialFcmMessage = null;
+
+      if (message == null) {
+        print('FCM: No initial message (app was not opened via notification)');
+        return;
+      }
+
+      print('FCM: App opened from terminated state via notification');
+      print('FCM: Initial message data: ${message.data}');
+
+      final type = message.data['type'] as String? ?? '';
+      print('FCM: Initial message type: "$type"');
+
+      if (type == 'event_reminder' || type == 'event_invite' ||
+          type == 'event_role_change') {
+        final eventId = message.data['eventId'] as String?;
+        print('FCM: Initial event notification ($type) - eventId: $eventId');
+        if (eventId != null && eventId.isNotEmpty) {
+          // Wait for Firebase Auth to restore the session before loading data.
+          await _waitForAuth();
+          if (!mounted) return;
+          print('FCM: Auth ready, navigating to event $eventId');
+          _pushRouteWhenReady(
+            (context) => FutureBuilder<_EventNavData?>(
+              future: _loadEventNavData(eventId),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final data = snapshot.data;
+                if (data == null) {
+                  print('FCM: Event data load returned null, popping');
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    Navigator.of(context).maybePop();
+                  });
+                  return const Scaffold(
+                    body: Center(child: Text('Event not found')),
+                  );
+                }
+                return EventEditorModal(
+                  event: data.event,
+                  experiences: data.experiences,
+                  categories: data.categories,
+                  colorCategories: data.colorCategories,
+                  isReadOnly: true,
+                );
+              },
+            ),
+            settings: const RouteSettings(name: '/event_from_notification'),
+          );
+        }
+      } else if (type == 'new_message') {
+        final threadId = message.data['threadId'] as String?;
+        if (threadId != null) {
+          await _waitForAuth();
+          if (!mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _openChatFromNotification(threadId);
+          });
+        }
+      } else if (type == 'follow_request') {
+        _pushRouteWhenReady(
+          (context) => const FollowRequestsScreen(),
+          settings: const RouteSettings(name: '/follow_requests'),
+        );
+      } else {
+        print('FCM: Unhandled initial message type: "$type", data: ${message.data}');
+      }
+    } catch (e) {
+      print('FCM: Error handling initial message: $e');
+    }
+  }
+
+  /// Waits until Firebase Auth has restored the user session (up to 10s).
+  Future<void> _waitForAuth() async {
+    if (FirebaseAuth.instance.currentUser != null) return;
+    print('FCM: Waiting for Firebase Auth to restore session...');
+    try {
+      await FirebaseAuth.instance
+          .authStateChanges()
+          .firstWhere((user) => user != null)
+          .timeout(const Duration(seconds: 10));
+      print('FCM: Auth session restored, user: ${FirebaseAuth.instance.currentUser?.uid}');
+    } catch (e) {
+      print('FCM: Timed out waiting for auth: $e');
+    }
   }
 
   Future<void> _preloadDiscoveryCoverImages(BuildContext context) async {
@@ -1741,29 +1877,7 @@ class _MyAppState extends State<MyApp> {
       return PublicProfileScreen(userId: _initialProfileUserId!);
     }
 
-    // If we have shared files, show ReceiveShareScreen
-    if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
-      print(
-          "MAIN BUILD DEBUG: Creating ReceiveShareScreen with ${_sharedFiles!.length} files");
-      // iOS shared content handling - no toast needed
-      return ChangeNotifierProvider(
-        create: (_) => ReceiveShareProvider(),
-        child: ReceiveShareScreen(
-            sharedFiles: _sharedFiles!,
-            onCancel: () {
-              print("MyApp: Closing share screen launched initially");
-              if (mounted) {
-                setState(() {
-                  _sharedFiles = null; // Clear shared files
-                  _shouldShowReceiveShare = false; // Reset flag
-                });
-              }
-              // No explicit reset needed with share_handler
-            }),
-      );
-    }
-
-    // Otherwise, proceed with normal auth flow
+    // Proceed with auth flow (share handling is inside, after auth check)
     print("MAIN BUILD DEBUG: Going to auth flow instead of ReceiveShareScreen");
     return StreamBuilder<User?>(
       stream: authService.authStateChanges,
@@ -1791,6 +1905,10 @@ class _MyAppState extends State<MyApp> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             notificationService.initializeForUser(effectiveUser.uid);
           });
+          final photoURL = effectiveUser.photoURL;
+          if (photoURL != null && photoURL.isNotEmpty) {
+            ProfilePhotoCache.preload(photoURL);
+          }
         } else {
           // User is logged out - clean up notification service
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1802,16 +1920,15 @@ class _MyAppState extends State<MyApp> {
         print(
             'Auth state changed: ${effectiveUser != null ? 'Logged in' : 'Logged out'}');
 
-        // --- ADDED: Reset share data on logout ---
-        if (effectiveUser == null && _sharedFiles != null) {
-          // If user logs out while share data is present, clear it
+        // Clear share data when no user is logged in
+        if (effectiveUser == null && (_sharedFiles != null || _shouldShowReceiveShare)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               setState(() {
                 _sharedFiles = null;
+                _shouldShowReceiveShare = false;
               });
-              // No explicit reset needed with share_handler
-              print("MyApp: Cleared share data due to logout.");
+              print("MyApp: Cleared share data — no authenticated user.");
             }
           });
         }
@@ -1893,6 +2010,40 @@ class _MyAppState extends State<MyApp> {
 
             final shouldShowOnboarding = requiresOnboarding || _forceOnboarding;
             print("USER DOC: requiresOnboarding=$requiresOnboarding, forceOnboarding=$_forceOnboarding, shouldShowOnboarding=$shouldShowOnboarding");
+
+            // Handle cold-start share for authenticated users
+            if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
+              print("USER DOC: Showing ReceiveShareScreen (cold start share, requiresOnboarding=$requiresOnboarding)");
+              return ChangeNotifierProvider(
+                create: (_) => ReceiveShareProvider(),
+                child: ReceiveShareScreen(
+                  sharedFiles: _sharedFiles!,
+                  onCancel: () {
+                    print("MyApp: Closing cold-start share screen");
+                    if (mounted) {
+                      setState(() {
+                        _sharedFiles = null;
+                        _shouldShowReceiveShare = false;
+                      });
+                    }
+                  },
+                  onExperienceSaved: shouldShowOnboarding ? () {
+                    FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(user.uid)
+                        .update({
+                      'hasCompletedOnboarding': true,
+                      'hasFinishedOnboardingFlow': true,
+                    });
+                    if (mounted) {
+                      setState(() {
+                        _forceOnboarding = false;
+                      });
+                    }
+                  } : null,
+                ),
+              );
+            }
 
             if (shouldShowOnboarding) {
               print("USER DOC: Showing OnboardingScreen");

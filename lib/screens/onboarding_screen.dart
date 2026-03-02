@@ -25,6 +25,7 @@ const bool devModeStartAtMainScreenTutorial = false;
 class OnboardingScreen extends StatefulWidget {
   static bool suppressShareHandling = false;
   static bool onboardingShareDetected = false;
+  static bool isActive = false;
 
   final VoidCallback? onFinishedFlow;
   final bool tutorialReplayMode;
@@ -258,6 +259,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   void initState() {
     super.initState();
+    if (!widget.tutorialReplayMode) {
+      OnboardingScreen.isActive = true;
+    }
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(
       initialPage: widget.tutorialReplayMode ? 1 : 0,
@@ -560,6 +564,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    OnboardingScreen.isActive = false;
     OnboardingScreen.suppressShareHandling = false;
     OnboardingScreen.onboardingShareDetected = false;
     _pageController.dispose();

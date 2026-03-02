@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -474,11 +475,20 @@ class _ReviewsScreenState extends State<ReviewsScreen>
               height: 80,
               margin:
                   EdgeInsets.only(right: index < imageUrls.length - 1 ? 8 : 0),
-              decoration: BoxDecoration(
+              child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                image: DecorationImage(
-                  image: NetworkImage(imageUrls[index]),
+                child: CachedNetworkImage(
+                  imageUrl: imageUrls[index],
+                  width: 80,
+                  height: 80,
                   fit: BoxFit.cover,
+                  placeholder: (context, url) => Container(
+                    color: Colors.grey[200],
+                  ),
+                  errorWidget: (context, url, error) => Container(
+                    color: Colors.grey[200],
+                    child: const Icon(Icons.broken_image, color: Colors.grey),
+                  ),
                 ),
               ),
             ),
@@ -504,15 +514,16 @@ class _ReviewsScreenState extends State<ReviewsScreen>
               itemBuilder: (context, index) {
                 return InteractiveViewer(
                   child: Center(
-                    child: Image.network(
-                      imageUrls[index],
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrls[index],
                       fit: BoxFit.contain,
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return const Center(
-                          child: CircularProgressIndicator(color: Colors.white),
-                        );
-                      },
+                      placeholder: (context, url) => const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                      errorWidget: (context, url, error) => const Center(
+                        child: Icon(Icons.broken_image,
+                            color: Colors.white, size: 48),
+                      ),
                     ),
                   ),
                 );

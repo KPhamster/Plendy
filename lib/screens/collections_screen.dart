@@ -64,6 +64,7 @@ import '../config/collections_help_content.dart';
 import '../widgets/collections_help_bubble.dart';
 import '../widgets/help_spotlight_painter.dart';
 import '../services/help_mode_service.dart';
+import 'onboarding_screen.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -6431,6 +6432,30 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     ),
                   ),
                   const SizedBox(height: 18),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: withHeavyTap(() {
+                          triggerHeavyHaptic();
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const OnboardingScreen(
+                                  tutorialReplayMode: true),
+                            ),
+                          );
+                        }),
+                        icon: const Icon(Icons.play_circle_outline),
+                        label: const Text('View Tutorial'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: theme.primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(

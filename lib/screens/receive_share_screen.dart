@@ -293,14 +293,16 @@ class _ExperienceCardsSection extends StatelessWidget {
 
 class ReceiveShareScreen extends StatefulWidget {
   final List<SharedMediaFile> sharedFiles;
-  final VoidCallback onCancel; // Callback to handle closing/canceling
-  final bool requireUrlFirst; // When true, disable content until URL submitted
+  final VoidCallback onCancel;
+  final bool requireUrlFirst;
+  final VoidCallback? onExperienceSaved;
 
   const ReceiveShareScreen({
     super.key,
     required this.sharedFiles,
     required this.onCancel,
     this.requireUrlFirst = false,
+    this.onExperienceSaved,
   });
 
   @override
@@ -9899,14 +9901,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
         if (!mounted) return;
 
-        _sharingService.prepareToNavigateAwayFromShare(); // Use new method
+        widget.onExperienceSaved?.call();
+
+        _sharingService.prepareToNavigateAwayFromShare();
 
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const MainScreen()),
           (Route<dynamic> route) => false,
         );
-        // The old Future.delayed for resetSharedItems is removed as markShareFlowAsInactive handles reset.
       }
     } catch (e) {
       if (!mounted) return;
