@@ -2,6 +2,7 @@ package com.plendy.app
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
@@ -17,10 +18,12 @@ import com.google.android.play.core.integrity.StandardIntegrityManager
 import com.google.android.play.core.integrity.StandardIntegrityManager.StandardIntegrityTokenProvider
 import com.google.android.play.core.integrity.StandardIntegrityManager.StandardIntegrityTokenRequest
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.plendy.app/play_integrity"
     private val SCREENSHOT_CHANNEL = "com.plendy.app/screenshot"
+    private val SIGNING_CHANNEL = "com.plendy.app/signing"
     private var integrityTokenProvider: StandardIntegrityTokenProvider? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,6 +84,18 @@ class MainActivity: FlutterActivity() {
             when (call.method) {
                 "captureScreen" -> {
                     captureScreen(result)
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+
+        // Signing cert channel - returns SHA-1 for API key authentication
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SIGNING_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getSigningCertSha1" -> {
+                    getSigningCertSha1(result)
                 }
                 else -> {
                     result.notImplemented()
@@ -201,5 +216,34 @@ class MainActivity: FlutterActivity() {
             .addOnFailureListener { e ->
                 result.error("INTEGRITY_ERROR", e.message, e.toString())
             }
+    }
+
+    private fun getSigningCertSha1(result: MethodChannel.Result) {
+        try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+            }
+
+            val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.signingInfo?.apkContentsSigners
+            } else {
+                @Suppress("DEPRECATION")
+                packageInfo.signatures
+            }
+
+            if (signatures != null && signatures.isNotEmpty()) {
+                val md = MessageDigest.getInstance("SHA-1")
+                val sha1Bytes = md.digest(signatures[0].toByteArray())
+                val hex = sha1Bytes.joinToString("") { "%02X".format(it) }
+                result.success(hex)
+            } else {
+                result.error("NO_CERT", "No signing certificate found", null)
+            }
+        } catch (e: Exception) {
+            result.error("CERT_ERROR", e.message, e.toString())
+        }
     }
 }

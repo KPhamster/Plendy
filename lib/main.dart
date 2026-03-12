@@ -8,7 +8,6 @@ import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:share_handler/share_handler.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_messaging/firebase_messaging.dart'; // FCM Import
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Local Notifications Import
 import 'screens/auth_screen.dart';
@@ -530,11 +529,6 @@ void main() async {
     // Enable path-based URLs on web (no hash in URL)
     usePathUrlStrategy();
   }
-
-  // Load environment variables (if .env file exists) - non-blocking
-  unawaited(dotenv.load(fileName: ".env").catchError((e) {
-    print('No .env file found - using API keys from config files instead: $e');
-  }));
 
   try {
     await Firebase.initializeApp(

@@ -31,10 +31,6 @@ import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/ticketmaster_preview_widget.dart';
-// REMOVED: Dio import (no longer needed for thumbnail fetching)
-// import 'package:dio/dio.dart';
-// REMOVED: Dotenv import (no longer needed for credentials)
-// import 'package:flutter_dotenv/flutter_dotenv.dart';
 // ADDED: Import the new fullscreen screen
 // UPDATED: Import the renamed widget
 // ADDED: Import for FontAwesomeIcons
@@ -140,21 +136,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   String? _headerPhotoUrl; // ADDED: State variable for header photo
   String? _shareBannerDisplayName; // Resolved sharer display name
 
-  // ADDED: Helper to build DecorationImage using photo resource name with caching
   DecorationImage? _buildHeaderDecorationImage(Experience experience) {
-    final String? resourceName = experience.location.photoResourceName;
-    String? url;
-    if (resourceName != null && resourceName.isNotEmpty) {
-      url = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-        resourceName,
-        maxWidthPx: 800,
-        maxHeightPx: 600,
-      );
-    }
-    url ??= experience.location.photoUrl;
+    final String? url =
+        _headerPhotoUrl ?? experience.location.photoUrl;
     if (url == null || url.isEmpty) return null;
     return DecorationImage(
-      image: NetworkImage(url, headers: const {}),
+      image: NetworkImage(url),
       fit: BoxFit.cover,
     );
   }
@@ -828,15 +815,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
             if (photoResourceName != null && photoResourceName.isNotEmpty) {
               newPhotoResourceName = photoResourceName; // store for persistence
-              // Optionally build a transient URL for immediate UI use
               newConstructedPhotoUrl =
-                  GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+                  await _googleMapsService.resolvePhotoMediaUrl(
                       photoResourceName,
                       maxWidthPx: 800,
                       maxHeightPx: 600);
               if (newConstructedPhotoUrl != null) {
                 print(
-                    "ExperiencePageScreen: Constructed transient photo URL: $newConstructedPhotoUrl");
+                    "ExperiencePageScreen: Resolved direct photo URL: $newConstructedPhotoUrl");
+              } else {
+                print(
+                    "ExperiencePageScreen: resolvePhotoMediaUrl returned null, falling back to constructed URL.");
+                newConstructedPhotoUrl =
+                    GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+                        photoResourceName,
+                        maxWidthPx: 800,
+                        maxHeightPx: 600);
               }
             } else {
               print(
@@ -871,12 +865,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           setState(() {
             _placeDetailsData = fetchedDetailsMap; // Store the raw details map
 
-            if (kIsWeb) {
+            if (newConstructedPhotoUrl != null) {
               _headerPhotoUrl = newConstructedPhotoUrl;
-              if (newConstructedPhotoUrl != null) {
-                print(
-                    "ExperiencePageScreen: Updated transient _headerPhotoUrl (Web Specific) to: $newConstructedPhotoUrl");
-              }
             }
             if (updatedExperience != null) {
               _currentExperience = updatedExperience;
@@ -884,16 +874,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             }
             _isLoadingDetails = false;
           });
-
-          if (!kIsWeb) {
-            if (newConstructedPhotoUrl != null) {
-              print(
-                  "ExperiencePageScreen: Photo URL constructed ($newConstructedPhotoUrl) for non-web platform.");
-            } else {
-              print(
-                  "ExperiencePageScreen: No new photo URL constructed for non-web platform.");
-            }
-          }
 
           if (updatedExperience != null && !widget.readOnlyPreview) {
             _experienceService.updateExperience(updatedExperience).then((_) {
@@ -5657,16 +5637,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       final defaultStart = DateTime(now.year, now.month, now.day, now.hour, 0);
       final defaultEnd = defaultStart.add(const Duration(hours: 1));
 
-      // Build cover image URL from experience's location photo (if available)
-      String? coverImageUrl;
-      final resourceName = _currentExperience.location.photoResourceName;
-      if (resourceName != null && resourceName.isNotEmpty) {
-        coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-          resourceName,
-          maxWidthPx: 800,
-          maxHeightPx: 600,
-        );
-      }
+      // Use the resolved header photo URL (direct Google-hosted URL) if available
+      String? coverImageUrl = _headerPhotoUrl;
 
       // Create a new event with this experience in the itinerary
       final newEvent = Event(

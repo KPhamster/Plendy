@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
+import '../config/api_keys.dart';
 import '../config/api_secrets.dart';
 import '../models/experience.dart';
 
@@ -24,10 +28,29 @@ class GoogleMapsService {
   // Cache for Place Details results keyed by Place ID
   final Map<String, Location> _placeDetailsCache = {};
 
+  // Platform channel for retrieving Android signing cert SHA-1 at runtime
+  static const _signingChannel = MethodChannel('com.plendy.app/signing');
+  static String? _cachedAndroidCertSha1;
+
+  static Future<String?> _getAndroidCertSha1() async {
+    if (_cachedAndroidCertSha1 != null) return _cachedAndroidCertSha1;
+    try {
+      final sha1 =
+          await _signingChannel.invokeMethod<String>('getSigningCertSha1');
+      _cachedAndroidCertSha1 = sha1;
+      return sha1;
+    } catch (e) {
+      print('⚠️ Failed to get Android signing cert SHA-1: $e');
+      return null;
+    }
+  }
+
   // Get the API key securely
   static String get apiKey => ApiSecrets.googleMapsApiKey;
 
-  // ADDED: Helper to build Places v1 media URL from a photo resource name
+  // Helper to build Places v1 media URL from a photo resource name.
+  // NOTE: This URL requires platform-specific auth headers on Android/iOS.
+  // Prefer resolvePhotoMediaUrl() which returns a direct URL usable without headers.
   static String? buildPlacePhotoUrlFromResourceName(String? resourceName,
       {int? maxWidthPx, int? maxHeightPx}) {
     if (resourceName == null || resourceName.isEmpty) return null;
@@ -38,6 +61,95 @@ class GoogleMapsService {
     if (maxHeightPx != null) params.add('maxHeightPx=$maxHeightPx');
     final paramStr = params.isNotEmpty ? '&${params.join('&')}' : '';
     return 'https://places.googleapis.com/v1/$resourceName/media?key=$key$paramStr';
+  }
+
+  static final Map<String, String> _resolvedPhotoUrlCache = {};
+  static final Set<String> _failedResourceNames = {};
+
+  /// Returns a previously resolved direct photo URL from cache, or null.
+  /// Use this in synchronous contexts (e.g. build methods) after having
+  /// called [resolvePhotoMediaUrl] to populate the cache.
+  static String? getCachedResolvedPhotoUrl(String? resourceName) {
+    if (resourceName == null || resourceName.isEmpty) return null;
+    return _resolvedPhotoUrlCache[resourceName];
+  }
+
+  /// Whether a resource name has already been tried and failed (stale/expired).
+  static bool isResourceNameKnownBad(String? resourceName) {
+    if (resourceName == null || resourceName.isEmpty) return false;
+    return _failedResourceNames.contains(resourceName);
+  }
+
+  /// Resolves a photo resource name to a direct Google-hosted URL that can be
+  /// loaded without authentication headers (e.g. via NetworkImage).
+  /// Results are cached in-memory so subsequent calls return instantly.
+  /// Stale/expired resource names are tracked so they aren't retried.
+  Future<String?> resolvePhotoMediaUrl(String? resourceName,
+      {int? maxWidthPx, int? maxHeightPx}) async {
+    if (resourceName == null || resourceName.isEmpty) return null;
+
+    final cached = _resolvedPhotoUrlCache[resourceName];
+    if (cached != null) return cached;
+
+    if (_failedResourceNames.contains(resourceName)) return null;
+
+    final key = _getApiKey();
+    if (key.isEmpty) return null;
+
+    final params = <String>['skipHttpRedirect=true'];
+    if (maxWidthPx != null) params.add('maxWidthPx=$maxWidthPx');
+    if (maxHeightPx != null) params.add('maxHeightPx=$maxHeightPx');
+    final url =
+        'https://places.googleapis.com/v1/$resourceName/media?${params.join('&')}';
+
+    try {
+      final headers = <String, dynamic>{
+        'X-Goog-Api-Key': key,
+      };
+      if (!kIsWeb && Platform.isAndroid) {
+        headers['X-Android-Package'] = 'com.plendy.app';
+        final sha1 = await _getAndroidCertSha1();
+        if (sha1 != null) headers['X-Android-Cert'] = sha1;
+      } else if (!kIsWeb && Platform.isIOS) {
+        headers['X-Ios-Bundle-Identifier'] = ApiKeys.firebaseIosBundleId;
+      }
+
+      final response = await _dio.get(url, options: Options(headers: headers));
+      if (response.statusCode == 200 && response.data is Map) {
+        final photoUri = response.data['photoUri'] as String?;
+        if (photoUri != null) {
+          _resolvedPhotoUrlCache[resourceName] = photoUri;
+        }
+        return photoUri;
+      }
+    } catch (e) {
+      _failedResourceNames.add(resourceName);
+    }
+    return null;
+  }
+
+  /// Fetches a fresh photo for a place and returns a direct resolved URL.
+  /// Use this when the stored photoResourceName is stale/expired.
+  Future<String?> fetchAndResolvePhotoForPlace(String placeId,
+      {int maxWidthPx = 800, int maxHeightPx = 600}) async {
+    try {
+      final details = await fetchPlaceDetailsData(placeId);
+      if (details == null) return null;
+      if (details['photos'] is List &&
+          (details['photos'] as List).isNotEmpty) {
+        final first = (details['photos'] as List).first;
+        if (first is Map<String, dynamic>) {
+          final resourceName = first['name'] as String?;
+          if (resourceName != null && resourceName.isNotEmpty) {
+            return await resolvePhotoMediaUrl(resourceName,
+                maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx);
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ fetchAndResolvePhotoForPlace: Failed for $placeId: $e');
+    }
+    return null;
   }
 
   /// Check and request location permissions
@@ -147,18 +259,14 @@ class GoogleMapsService {
         print("🔎 PLACES SEARCH: Autocomplete Request body: ${jsonEncode(requestBody)}");
 
         // Call Google Places Autocomplete API (New)
+        final autocompleteHeaders = await _placesApiHeaders(
+          apiKey,
+          'suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.types',
+        );
         final response = await _dio.post(
-          'https://places.googleapis.com/v1/places:autocomplete', // CORRECTED ENDPOINT
+          'https://places.googleapis.com/v1/places:autocomplete',
           data: requestBody,
-          options: Options(
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Goog-Api-Key': apiKey,
-              // FieldMask for Autocomplete (New) - adjust based on what you need from suggestions
-              // This requests common fields from the PlacePrediction part of the suggestion.
-              'X-Goog-FieldMask': 'suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.types'
-            },
-          ),
+          options: Options(headers: autocompleteHeaders),
         );
 
         if (response.statusCode == 200) {
@@ -484,134 +592,127 @@ class GoogleMapsService {
 
     print('📍 PLACE DETAILS CACHE MISS for Place ID: $placeId. Calling API...');
 
-    // Default location (used if there's an error)
     Location defaultLocation = Location(
       latitude: 0.0,
       longitude: 0.0,
       address: 'Location not found',
-      placeId: placeId, // Include the place ID even in the default location
+      placeId: placeId,
     );
 
     try {
-      final apiKey = _getApiKey();
-      if (apiKey.isEmpty) {
+      final key = _getApiKey();
+      if (key.isEmpty) {
         print('Error: No API key available');
         return defaultLocation;
       }
 
-      // Include 'website', 'rating', 'user_ratings_total', 'types' in the fields parameter
-      final url =
-          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity,website,photos,rating,user_ratings_total,types&key=$apiKey';
+      final fieldMask = [
+        'id',
+        'displayName',
+        'formattedAddress',
+        'addressComponents',
+        'location',
+        'websiteUri',
+        'rating',
+        'userRatingCount',
+        'types',
+        if (includePhotoUrl) 'photos',
+      ].join(',');
 
-      final response = await _dio.get(url);
+      final url = 'https://places.googleapis.com/v1/places/$placeId';
+      final headers = await _placesApiHeaders(key, fieldMask);
+
+      final response = await _dio.get(
+        url,
+        options: Options(headers: headers),
+      );
 
       if (response.statusCode == 200) {
-        final data = response.data;
+        final data = response.data as Map<String, dynamic>;
+        print('Place Details (v1) response OK for Place ID: $placeId');
 
-        // Log the first part of the response
-        print(
-            'Place Details response: ${data.toString().substring(0, data.toString().length > 100 ? 100 : data.toString().length)}...');
+        final loc = data['location'] as Map<String, dynamic>?;
+        if (loc != null) {
+          final double lat = (loc['latitude'] as num?)?.toDouble() ?? 0.0;
+          final double lng = (loc['longitude'] as num?)?.toDouble() ?? 0.0;
 
-        if (data['status'] == 'OK' && data['result'] != null) {
-          final result = data['result'];
+          String? formattedAddress = data['formattedAddress'] as String?;
+          String? city;
+          String? state;
+          String? country;
+          String? zipCode;
 
-          // Extract coordinates
-          if (result['geometry'] != null &&
-              result['geometry']['location'] != null) {
-            final location = result['geometry']['location'];
-            final double lat = location['lat'] ?? 0.0;
-            final double lng = location['lng'] ?? 0.0;
+          final addressComponents = data['addressComponents'] as List<dynamic>?;
+          if (addressComponents != null) {
+            for (var component in addressComponents) {
+              final types = (component['types'] as List<dynamic>?) ?? [];
+              final longText = component['longText'] as String?;
+              final shortText = component['shortText'] as String?;
 
-            // Extract address components
-            String? formattedAddress = result['formatted_address'];
-            String? vicinity = result['vicinity']; // Simplified address
-            String? city;
-            String? state;
-            String? country;
-            String? zipCode;
-
-            if (result['address_components'] != null) {
-              // Process address components
-              for (var component in result['address_components']) {
-                if (component['types'] != null) {
-                  List<dynamic> types = component['types'];
-
-                  if (types.contains('locality')) {
-                    city = component['long_name'];
-                  } else if (types.contains('administrative_area_level_1')) {
-                    state =
-                        component['short_name']; // Using abbreviation for state
-                  } else if (types.contains('country')) {
-                    country = component['long_name'];
-                  } else if (types.contains('postal_code')) {
-                    zipCode = component['long_name'];
-                  }
-                }
+              if (types.contains('locality')) {
+                city = longText;
+              } else if (types.contains('administrative_area_level_1')) {
+                state = shortText;
+              } else if (types.contains('country')) {
+                country = longText;
+              } else if (types.contains('postal_code')) {
+                zipCode = longText;
               }
             }
-
-            // Get the name of the place
-            String? name = result['name'];
-
-            // Get the website URL if available
-            String? websiteUrl = result['website'];
-            if (websiteUrl != null) {
-              print('Found website URL for place: $websiteUrl');
-            }
-
-            // Get rating and userRatingCount
-            final double? rating = (result['rating'] as num?)?.toDouble();
-            final int? userRatingCount = result['user_ratings_total'] as int?;
-            
-            // Get place types for auto-categorization
-            final List<String>? placeTypes = (result['types'] as List<dynamic>?)?.cast<String>();
-
-            // Get the first photo reference if available
-            String? photoReference;
-            if (result['photos'] != null &&
-                (result['photos'] as List).isNotEmpty) {
-              photoReference = result['photos'][0]['photo_reference'];
-            }
-
-            // If we have a photo reference, create a photo URL (only if requested)
-            String? photoUrl;
-            if (includePhotoUrl && photoReference != null) {
-              photoUrl =
-                  'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=$photoReference&key=$apiKey';
-              print(
-                  'Generated photo URL for place: ${photoUrl.substring(0, photoUrl.length > 50 ? 50 : photoUrl.length)}...');
-            }
-
-            // Create location object with all available details
-            final locationObj = Location(
-              latitude: lat,
-              longitude: lng,
-              address: formattedAddress ?? vicinity,
-              city: city,
-              state: state,
-              country: country,
-              zipCode: zipCode,
-              displayName: name,
-              placeId: placeId, // Save the place ID
-              photoUrl: photoUrl, // Save the photo URL
-              website: websiteUrl, // Save the website URL directly
-              rating: rating, // ADDED
-              userRatingCount: userRatingCount, // ADDED
-              placeTypes: placeTypes, // ADDED: For auto-categorization
-            );
-
-            // 2. Store successful result in cache before returning
-            _placeDetailsCache[placeId] = locationObj;
-            print('📍 PLACE DETAILS CACHE STORED for Place ID: $placeId');
-            return locationObj;
           }
+
+          final displayNameMap = data['displayName'] as Map<String, dynamic>?;
+          String? name = displayNameMap?['text'] as String?;
+
+          String? websiteUrl = data['websiteUri'] as String?;
+          if (websiteUrl != null) {
+            print('Found website URL for place: $websiteUrl');
+          }
+
+          final double? rating = (data['rating'] as num?)?.toDouble();
+          final int? userRatingCount = (data['userRatingCount'] as num?)?.toInt();
+
+          final List<String>? placeTypes =
+              (data['types'] as List<dynamic>?)?.cast<String>();
+
+          String? photoUrl;
+          if (includePhotoUrl) {
+            final photos = data['photos'] as List<dynamic>?;
+            if (photos != null && photos.isNotEmpty) {
+              final photoName = photos[0]['name'] as String?;
+              if (photoName != null) {
+                photoUrl =
+                    'https://places.googleapis.com/v1/$photoName/media?maxWidthPx=400&key=$key';
+                print(
+                    'Generated photo URL for place: ${photoUrl.substring(0, photoUrl.length > 50 ? 50 : photoUrl.length)}...');
+              }
+            }
+          }
+
+          final locationObj = Location(
+            latitude: lat,
+            longitude: lng,
+            address: formattedAddress,
+            city: city,
+            state: state,
+            country: country,
+            zipCode: zipCode,
+            displayName: name,
+            placeId: placeId,
+            photoUrl: photoUrl,
+            website: websiteUrl,
+            rating: rating,
+            userRatingCount: userRatingCount,
+            placeTypes: placeTypes,
+          );
+
+          _placeDetailsCache[placeId] = locationObj;
+          print('📍 PLACE DETAILS CACHE STORED for Place ID: $placeId');
+          return locationObj;
         } else {
-          // Don't cache API errors like NOT_FOUND, let it retry next time
-          print(
-              'Error in API response: ${data['status']} for Place ID: $placeId');
+          print('No location coordinates in v1 response for Place ID: $placeId');
         }
       } else {
-        // Don't cache network errors
         print(
             'Failed with status code: ${response.statusCode} for Place ID: $placeId');
       }
@@ -622,12 +723,10 @@ class GoogleMapsService {
         print('DioError response: ${e.response?.data}');
       }
     } catch (e, s) {
-      // Don't cache exceptions
       print('Error getting place details for Place ID $placeId: $e');
       print('Stack trace: $s');
     }
 
-    // Return default location if API call failed or returned error status
     return defaultLocation;
   }
 
@@ -672,12 +771,10 @@ class GoogleMapsService {
                 "DISTANCE" // Prioritize places closest to the tapped point
           },
           options: Options(
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Goog-Api-Key': apiKey,
-              'X-Goog-FieldMask':
-                  'places.id,places.displayName,places.formattedAddress,places.location'
-            },
+            headers: await _placesApiHeaders(
+              apiKey,
+              'places.id,places.displayName,places.formattedAddress,places.location',
+            ),
           ),
         );
 
@@ -1216,15 +1313,10 @@ class GoogleMapsService {
       print(
           '🔍 PLACE IMAGE: Request URL: ${url.replaceAll(apiKey, "API_KEY_HIDDEN")}');
 
+      final photoHeaders = await _placesApiHeaders(apiKey, 'photos,displayName');
       final response = await _dio.get(
         url,
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask': 'photos,displayName'
-          },
-        ),
+        options: Options(headers: photoHeaders),
       );
 
       if (response.statusCode == 200) {
@@ -1277,17 +1369,18 @@ class GoogleMapsService {
 
         // Check if place has photos
         if (data['photos'] != null && data['photos'].isNotEmpty) {
-          // Get the first photo - each photo has a name field in Places API (New)
-          // The name format is 'places/PLACE_ID/photos/PHOTO_REFERENCE'
-          final photoResource = data['photos'][0]['name'];
-          print('🔍 PLACE IMAGE: Found photo resource: $photoResource');
+          final photoResource = data['photos'][0]['name'] as String?;
+          if (photoResource != null) {
+            final resolved = await resolvePhotoMediaUrl(photoResource,
+                maxWidthPx: maxWidth, maxHeightPx: maxHeight);
+            if (resolved != null) return resolved;
+          }
 
-          // Construct the photo URL using Places API (New) format
-          final photoUrl =
-              'https://places.googleapis.com/v1/$photoResource/media?maxWidthPx=$maxWidth&maxHeightPx=$maxHeight&key=$apiKey';
-          print('🔍 PLACE IMAGE: Photo URL constructed successfully');
-
-          return photoUrl;
+          final fallbackUrl = buildPlacePhotoUrlFromResourceName(
+              photoResource,
+              maxWidthPx: maxWidth,
+              maxHeightPx: maxHeight);
+          if (fallbackUrl != null) return fallbackUrl;
         } else {
           print(
               '🔍 PLACE IMAGE: No photos available in Places API (New), trying legacy API');
@@ -1521,6 +1614,32 @@ class GoogleMapsService {
     return apiKey;
   }
 
+  /// Builds standard headers for Places API (New) REST calls.
+  /// On iOS/Android, includes the platform bundle/package identifier so
+  /// platform-restricted API keys are accepted by Google
+  /// (Dio requests don't send these automatically like the native SDK does).
+  Future<Map<String, String>> _placesApiHeaders(
+      String key, String fieldMask) async {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': fieldMask,
+    };
+    if (!kIsWeb && Platform.isIOS) {
+      headers['X-Ios-Bundle-Identifier'] = ApiKeys.firebaseIosBundleId;
+    } else if (!kIsWeb && Platform.isAndroid) {
+      headers['X-Android-Package'] = 'com.plendy.app';
+      final sha1 = await _getAndroidCertSha1();
+      if (sha1 != null) {
+        headers['X-Android-Cert'] = sha1;
+        print('🔑 PLACES API: Android cert SHA-1: $sha1');
+      } else {
+        print('⚠️ PLACES API: Android cert SHA-1 is null — header not sent');
+      }
+    }
+    return headers;
+  }
+
   /// Fetches detailed place information using the Places API (New).
   ///
   /// Returns a Map containing the fetched data, or null if an error occurs.
@@ -1544,15 +1663,11 @@ class GoogleMapsService {
     print('📍 PLACES DETAILS (v1): FieldMask: $fieldMask');
 
     try {
+      final detailsHeaders = await _placesApiHeaders(apiKey, fieldMask);
       final response = await _dio.get(
         url,
         options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask': fieldMask,
-          },
-          // Set a reasonable timeout
+          headers: detailsHeaders,
           sendTimeout: Duration(seconds: 10),
           receiveTimeout: Duration(seconds: 10),
         ),
@@ -1742,14 +1857,11 @@ class GoogleMapsService {
     print('📝 PLACE SUMMARY: Fetching summaries for Place ID: $placeId');
 
     try {
+      final summaryHeaders = await _placesApiHeaders(apiKey, fieldMask);
       final response = await _dio.get(
         url,
         options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask': fieldMask,
-          },
+          headers: summaryHeaders,
           sendTimeout: Duration(seconds: 10),
           receiveTimeout: Duration(seconds: 10),
         ),

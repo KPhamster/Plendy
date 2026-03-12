@@ -7095,7 +7095,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final firstExp = experiences.first;
 
       // First try to get photo from existing data
-      coverImageUrl = _buildCoverImageUrlFromExperience(firstExp);
+      coverImageUrl = await _buildCoverImageUrlFromExperience(firstExp);
 
       // If no photo data but we have a placeId, fetch from Google Places API
       if (coverImageUrl == null &&
@@ -7147,20 +7147,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
-  /// Build a cover image URL from an Experience's location photo data.
-  /// Returns null if no photo is available.
-  String? _buildCoverImageUrlFromExperience(Experience experience) {
+  Future<String?> _buildCoverImageUrlFromExperience(
+      Experience experience) async {
+    final mapsService = GoogleMapsService();
     final resourceName = experience.location.photoResourceName;
     if (resourceName != null && resourceName.isNotEmpty) {
-      return GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-        resourceName,
-        maxWidthPx: 800,
-        maxHeightPx: 600,
-      );
+      final resolved = await mapsService.resolvePhotoMediaUrl(resourceName,
+          maxWidthPx: 800, maxHeightPx: 600);
+      if (resolved != null) return resolved;
     }
     final photoUrl = experience.location.photoUrl;
     if (photoUrl != null && photoUrl.isNotEmpty) {
       return photoUrl;
+    }
+    final placeId = experience.location.placeId;
+    if (placeId != null && placeId.isNotEmpty) {
+      return await mapsService.fetchAndResolvePhotoForPlace(placeId);
     }
     return null;
   }

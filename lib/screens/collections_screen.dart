@@ -957,6 +957,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
         }
       }
       if (resourceName != null && resourceName.isNotEmpty) {
+        await GoogleMapsService().resolvePhotoMediaUrl(resourceName,
+            maxWidthPx: 600, maxHeightPx: 400);
         final updatedLocation = Location(
           placeId: experience.location.placeId,
           latitude: experience.location.latitude,
@@ -967,7 +969,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           country: experience.location.country,
           zipCode: experience.location.zipCode,
           displayName: experience.location.displayName,
-          photoUrl: experience.location.photoUrl, // keep existing URL field
+          photoUrl: experience.location.photoUrl,
           photoResourceName: resourceName,
           website: experience.location.website,
           rating: experience.location.rating,
@@ -976,7 +978,6 @@ class CollectionsScreenState extends State<CollectionsScreen>
         final updated = experience.copyWith(location: updatedLocation);
         await _experienceService.updateExperience(updated);
         if (mounted) {
-          // Update local state: replace the experience in lists
           setState(() {
             final idx = _experiences.indexWhere((e) => e.id == experience.id);
             if (idx != -1) {
@@ -5959,13 +5960,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final Event? matchingEvent = _experienceIdToEvent[experience.id];
 
     String? photoUrl;
-    if (experience.location.photoResourceName != null &&
-        experience.location.photoResourceName!.isNotEmpty) {
-      photoUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-        experience.location.photoResourceName,
-        maxWidthPx: 600,
-        maxHeightPx: 400,
-      );
+    final resourceName = experience.location.photoResourceName;
+    if (resourceName != null && resourceName.isNotEmpty) {
+      photoUrl = GoogleMapsService.getCachedResolvedPhotoUrl(resourceName);
+      if (photoUrl == null && !_photoRefreshAttempts.contains(experience.id)) {
+        _photoRefreshAttempts.add(experience.id);
+        GoogleMapsService()
+            .resolvePhotoMediaUrl(resourceName,
+                maxWidthPx: 600, maxHeightPx: 400)
+            .then((resolved) {
+          if (resolved != null && mounted) setState(() {});
+        });
+      }
     }
     photoUrl ??= experience.location.photoUrl;
     if ((photoUrl == null || photoUrl.isEmpty) &&

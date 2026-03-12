@@ -1660,8 +1660,8 @@ class _EventExperienceSelectorScreenState
     return updatedEntries;
   }
 
-  String? _deriveCoverImageFromEntries(
-      List<EventExperienceEntry> experienceEntries) {
+  Future<String?> _deriveCoverImageFromEntries(
+      List<EventExperienceEntry> experienceEntries) async {
     if (experienceEntries.isEmpty) return null;
     final firstExpId = experienceEntries.first.experienceId;
     final firstExp =
@@ -1669,22 +1669,26 @@ class _EventExperienceSelectorScreenState
 
     if (firstExp == null) return null;
 
+    final mapsService = GoogleMapsService();
     String? coverImageUrl;
     final resourceName = firstExp.location.photoResourceName;
     if (resourceName != null && resourceName.isNotEmpty) {
-      coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-        resourceName,
-        maxWidthPx: 800,
-        maxHeightPx: 600,
-      );
+      coverImageUrl = await mapsService.resolvePhotoMediaUrl(resourceName,
+          maxWidthPx: 800, maxHeightPx: 600);
     }
     coverImageUrl ??= firstExp.location.photoUrl;
+    if (coverImageUrl == null) {
+      final placeId = firstExp.location.placeId;
+      if (placeId != null && placeId.isNotEmpty) {
+        coverImageUrl =
+            await mapsService.fetchAndResolvePhotoForPlace(placeId);
+      }
+    }
     return coverImageUrl;
   }
 
-  Event _buildEventForEditor(String currentUserId) {
+  Future<Event> _buildEventForEditor(String currentUserId) async {
     final DateTime now = DateTime.now();
-    // Use initialEvent if provided (editing existing event), then draft, then create new
     final Event baseEvent = _draftEvent ??
         widget.initialEvent ??
         Event(
@@ -1702,8 +1706,8 @@ class _EventExperienceSelectorScreenState
 
     final List<EventExperienceEntry> updatedEntries =
         _buildEventExperienceEntries(baseEvent.experiences);
-    final String? coverImageUrl =
-        baseEvent.coverImageUrl ?? _deriveCoverImageFromEntries(updatedEntries);
+    final String? coverImageUrl = baseEvent.coverImageUrl ??
+        await _deriveCoverImageFromEntries(updatedEntries);
 
     return baseEvent.copyWith(
       experiences: updatedEntries,
@@ -1723,8 +1727,7 @@ class _EventExperienceSelectorScreenState
       return;
     }
 
-    // Build an event with the currently selected experiences
-    final Event event = _buildEventForEditor(currentUserId);
+    final Event event = await _buildEventForEditor(currentUserId);
 
     final result = await Navigator.push<Event>(
       context,
@@ -1882,7 +1885,7 @@ class _EventExperienceSelectorScreenState
       return;
     }
 
-    final Event event = _buildEventForEditor(currentUserId);
+    final Event event = await _buildEventForEditor(currentUserId);
 
     final result = await Navigator.of(context).push<EventEditorResult>(
       MaterialPageRoute(

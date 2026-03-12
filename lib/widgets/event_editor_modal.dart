@@ -193,6 +193,68 @@ class _EventEditorModalState extends State<EventEditorModal>
     _capacityController.addListener(() => _markUnsavedChanges());
 
     _loadUserProfiles();
+    _migrateStalePhotoUrlIfNeeded();
+  }
+
+  void _migrateStalePhotoUrlIfNeeded() {
+    final url = _coverImageUrlController.text.trim();
+    if (url.isEmpty) return;
+
+    final bool isNewApi = url.contains('places.googleapis.com/v1/') &&
+        url.contains('/media');
+    final bool isLegacyApi =
+        url.contains('maps.googleapis.com/maps/api/place/photo');
+
+    if (!isNewApi && !isLegacyApi) return;
+
+    final mapsService = GoogleMapsService();
+
+    if (isNewApi) {
+      final nameMatch =
+          RegExp(r'places/([^/]+)/photos/[^\?/]+').firstMatch(url);
+      if (nameMatch == null) return;
+      final resourceName = nameMatch.group(0)!;
+      final placeId = nameMatch.group(1)!;
+
+      mapsService
+          .resolvePhotoMediaUrl(resourceName,
+              maxWidthPx: 800, maxHeightPx: 600)
+          .then((resolved) async {
+        if (resolved != null) {
+          if (mounted) _coverImageUrlController.text = resolved;
+          return;
+        }
+        final freshUrl =
+            await mapsService.fetchAndResolvePhotoForPlace(placeId);
+        if (freshUrl != null && mounted) {
+          _coverImageUrlController.text = freshUrl;
+        }
+      });
+    } else {
+      _resolveFromFirstExperiencePlaceId(mapsService);
+    }
+  }
+
+  void _resolveFromFirstExperiencePlaceId(GoogleMapsService mapsService) {
+    for (final entry in _currentEvent.experiences) {
+      final String? placeId;
+      if (entry.isEventOnly) {
+        placeId = entry.inlineLocation?.placeId;
+      } else {
+        final exp = _availableExperiences.firstWhereOrNull(
+          (e) => e.id == entry.experienceId,
+        );
+        placeId = exp?.location.placeId;
+      }
+      if (placeId != null && placeId.isNotEmpty) {
+        mapsService.fetchAndResolvePhotoForPlace(placeId).then((freshUrl) {
+          if (freshUrl != null && mounted) {
+            _coverImageUrlController.text = freshUrl;
+          }
+        });
+        return;
+      }
+    }
   }
 
   @override
@@ -1173,39 +1235,45 @@ class _EventEditorModalState extends State<EventEditorModal>
     );
   }
 
-  String? _buildCoverImageUrlFromExperience(Experience experience) {
+  String? _buildCoverImageUrlFromExperienceSync(Experience experience) {
     final resourceName = experience.location.photoResourceName;
     if (resourceName != null && resourceName.isNotEmpty) {
-      final url = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-        resourceName,
-        maxWidthPx: 800,
-        maxHeightPx: 600,
-      );
-      debugPrint('EventEditorModal: Built photo URL from resourceName: $url');
-      return url;
+      return GoogleMapsService.getCachedResolvedPhotoUrl(resourceName);
     }
     final photoUrl = experience.location.photoUrl;
     if (photoUrl != null && photoUrl.isNotEmpty) {
-      debugPrint('EventEditorModal: Using photoUrl: $photoUrl');
       return photoUrl;
     }
-    debugPrint(
-        'EventEditorModal: No photo available for experience ${experience.id}');
     return null;
   }
 
-  /// Automatically updates the cover image from the top-most experience if:
-  /// - Event has no cover image
-  /// - Top-most experience changed
-  void _updateCoverImageFromTopExperienceIfNeeded(
+  Future<String?> _buildCoverImageUrlFromExperience(
+      Experience experience) async {
+    final mapsService = GoogleMapsService();
+    final resourceName = experience.location.photoResourceName;
+    if (resourceName != null && resourceName.isNotEmpty) {
+      final url = await mapsService.resolvePhotoMediaUrl(resourceName,
+          maxWidthPx: 800, maxHeightPx: 600);
+      if (url != null) return url;
+    }
+    final photoUrl = experience.location.photoUrl;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return photoUrl;
+    }
+    final placeId = experience.location.placeId;
+    if (placeId != null && placeId.isNotEmpty) {
+      return await mapsService.fetchAndResolvePhotoForPlace(placeId);
+    }
+    return null;
+  }
+
+  Future<void> _updateCoverImageFromTopExperienceIfNeeded(
     String? previousTopExperienceId,
     List<EventExperienceEntry> updatedEntries,
-  ) {
-    // Check if event has no cover image
+  ) async {
     final bool hasNoCoverImage = _coverImageUrlController.text.trim().isEmpty;
     if (!hasNoCoverImage) return;
 
-    // Check if top-most experience changed
     final EventExperienceEntry? newTopEntry =
         updatedEntries.isNotEmpty ? updatedEntries.first : null;
     final String? newTopExperienceId = newTopEntry?.experienceId;
@@ -1213,41 +1281,40 @@ class _EventEditorModalState extends State<EventEditorModal>
         previousTopExperienceId != newTopExperienceId;
     if (!topExperienceChanged) return;
 
-    // Find the first experience with a valid cover image
+    final mapsService = GoogleMapsService();
     String? coverImageUrl;
     for (final entry in updatedEntries) {
       if (entry.isEventOnly) {
-        // Event-only experiences: try to get image from inline location
         final photoResourceName = entry.inlineLocation?.photoResourceName;
         final photoUrl = entry.inlineLocation?.photoUrl;
         if (photoResourceName != null && photoResourceName.isNotEmpty) {
-          coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-            photoResourceName,
-            maxWidthPx: 800,
-            maxHeightPx: 600,
-          );
-          break;
-        } else if (photoUrl != null && photoUrl.isNotEmpty) {
-          coverImageUrl = photoUrl;
-          break;
+          coverImageUrl = await mapsService.resolvePhotoMediaUrl(
+              photoResourceName,
+              maxWidthPx: 800,
+              maxHeightPx: 600);
         }
-        // If no photo, continue to next experience
+        coverImageUrl ??= photoUrl;
+        if (coverImageUrl == null) {
+          final placeId = entry.inlineLocation?.placeId;
+          if (placeId != null && placeId.isNotEmpty) {
+            coverImageUrl =
+                await mapsService.fetchAndResolvePhotoForPlace(placeId);
+          }
+        }
+        if (coverImageUrl != null) break;
         continue;
       }
 
-      // Saved experience: get from _availableExperiences
       final experience = _availableExperiences.firstWhereOrNull(
         (exp) => exp.id == entry.experienceId,
       );
       if (experience != null) {
-        coverImageUrl = _buildCoverImageUrlFromExperience(experience);
-        if (coverImageUrl != null) {
-          break;
-        }
+        coverImageUrl = await _buildCoverImageUrlFromExperience(experience);
+        if (coverImageUrl != null) break;
       }
     }
 
-    if (coverImageUrl != null) {
+    if (coverImageUrl != null && mounted) {
       _coverImageUrlController.text = coverImageUrl;
     }
   }
@@ -1336,17 +1403,26 @@ class _EventEditorModalState extends State<EventEditorModal>
                         if (photoResourceName != null &&
                             photoResourceName.isNotEmpty) {
                           derivedUrl = GoogleMapsService
-                              .buildPlacePhotoUrlFromResourceName(
-                            photoResourceName,
-                            maxWidthPx: 800,
-                            maxHeightPx: 600,
-                          );
-                        } else if (photoUrl != null && photoUrl.isNotEmpty) {
-                          derivedUrl = photoUrl;
+                              .getCachedResolvedPhotoUrl(photoResourceName);
+                          if (derivedUrl == null) {
+                            GoogleMapsService()
+                                .resolvePhotoMediaUrl(photoResourceName,
+                                    maxWidthPx: 800, maxHeightPx: 600)
+                                .then((url) {
+                              if (url != null && mounted) setState(() {});
+                            });
+                          }
                         }
+                        derivedUrl ??= photoUrl;
                       } else if (experience != null) {
                         derivedUrl =
-                            _buildCoverImageUrlFromExperience(experience);
+                            _buildCoverImageUrlFromExperienceSync(experience);
+                        if (derivedUrl == null) {
+                          _buildCoverImageUrlFromExperience(experience)
+                              .then((url) {
+                            if (url != null && mounted) setState(() {});
+                          });
+                        }
                       }
 
                       final hasDerivedImage = derivedUrl != null;
@@ -1612,19 +1688,18 @@ class _EventEditorModalState extends State<EventEditorModal>
               ? _currentEvent.experiences.first.experienceId
               : null;
 
+      late final List<EventExperienceEntry> finalExperiences;
       setState(() {
         var updatedEvent = _currentEvent.copyWith(experiences: updatedEntries);
         updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
         _currentEvent = updatedEvent;
-
-        // Automatically update cover image from top-most experience if needed
-        _updateCoverImageFromTopExperienceIfNeeded(
-          previousTopExperienceId,
-          updatedEvent.experiences,
-        );
-
+        finalExperiences = updatedEvent.experiences;
         _markUnsavedChanges();
       });
+      _updateCoverImageFromTopExperienceIfNeeded(
+        previousTopExperienceId,
+        finalExperiences,
+      );
     } catch (e) {
       if (dialogContext != null) {
         Navigator.of(dialogContext!).pop();
@@ -1861,28 +1936,25 @@ class _EventEditorModalState extends State<EventEditorModal>
     );
 
     if (result != null && mounted) {
+      final String? previousTopExperienceId =
+          _currentEvent.experiences.isNotEmpty
+              ? _currentEvent.experiences.first.experienceId
+              : null;
+      late final List<EventExperienceEntry> finalExperiences;
       setState(() {
-        // Track the previous top-most experience ID
-        final String? previousTopExperienceId =
-            _currentEvent.experiences.isNotEmpty
-                ? _currentEvent.experiences.first.experienceId
-                : null;
-
         final entries =
             List<EventExperienceEntry>.from(_currentEvent.experiences);
         entries.add(result);
         var updatedEvent = _currentEvent.copyWith(experiences: entries);
         updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
         _currentEvent = updatedEvent;
-
-        // Automatically update cover image from top-most experience if needed
-        _updateCoverImageFromTopExperienceIfNeeded(
-          previousTopExperienceId,
-          updatedEvent.experiences,
-        );
-
+        finalExperiences = updatedEvent.experiences;
         _markUnsavedChanges();
       });
+      _updateCoverImageFromTopExperienceIfNeeded(
+        previousTopExperienceId,
+        finalExperiences,
+      );
     }
   }
 
@@ -3929,13 +4001,12 @@ class _EventEditorModalState extends State<EventEditorModal>
                   ? (_, __) {}
                   : (oldIndex, newIndex) {
                       if (_help.isActive) return;
+                      final String? previousTopExperienceId =
+                          _currentEvent.experiences.isNotEmpty
+                              ? _currentEvent.experiences.first.experienceId
+                              : null;
+                      late final List<EventExperienceEntry> finalExperiences;
                       setState(() {
-                        // Track the previous top-most experience ID
-                        final String? previousTopExperienceId =
-                            _currentEvent.experiences.isNotEmpty
-                                ? _currentEvent.experiences.first.experienceId
-                                : null;
-
                         if (newIndex > oldIndex) {
                           newIndex -= 1;
                         }
@@ -3948,15 +4019,13 @@ class _EventEditorModalState extends State<EventEditorModal>
                         updatedEvent =
                             _eventWithAutoPrimarySchedule(updatedEvent);
                         _currentEvent = updatedEvent;
-
-                        // Automatically update cover image from top-most experience if needed
-                        _updateCoverImageFromTopExperienceIfNeeded(
-                          previousTopExperienceId,
-                          updatedEvent.experiences,
-                        );
-
+                        finalExperiences = updatedEvent.experiences;
                         _markUnsavedChanges();
                       });
+                      _updateCoverImageFromTopExperienceIfNeeded(
+                        previousTopExperienceId,
+                        finalExperiences,
+                      );
                     },
               itemBuilder: (context, index) {
                 final entry = _currentEvent.experiences[index];
@@ -5794,13 +5863,12 @@ class _EventEditorModalState extends State<EventEditorModal>
   }
 
   void _removeExperience(int index) {
+    final String? previousTopExperienceId =
+        _currentEvent.experiences.isNotEmpty
+            ? _currentEvent.experiences.first.experienceId
+            : null;
+    late final List<EventExperienceEntry> finalExperiences;
     setState(() {
-      // Track the previous top-most experience ID
-      final String? previousTopExperienceId =
-          _currentEvent.experiences.isNotEmpty
-              ? _currentEvent.experiences.first.experienceId
-              : null;
-
       final entries =
           List<EventExperienceEntry>.from(_currentEvent.experiences);
       final removedEntry = entries.removeAt(index);
@@ -5808,15 +5876,13 @@ class _EventEditorModalState extends State<EventEditorModal>
       var updatedEvent = _currentEvent.copyWith(experiences: entries);
       updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
       _currentEvent = updatedEvent;
-
-      // Automatically update cover image from top-most experience if needed
-      _updateCoverImageFromTopExperienceIfNeeded(
-        previousTopExperienceId,
-        updatedEvent.experiences,
-      );
-
+      finalExperiences = updatedEvent.experiences;
       _markUnsavedChanges();
     });
+    _updateCoverImageFromTopExperienceIfNeeded(
+      previousTopExperienceId,
+      finalExperiences,
+    );
   }
 
   Event _eventWithAutoPrimarySchedule(Event event) {

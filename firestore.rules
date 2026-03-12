@@ -14,21 +14,21 @@ service cloud.firestore {
       );
 
       match /categories/{categoryId} {
-        // Allow reading categories for shared event viewing
-        // Categories are just organizational labels (names + icons)
-        // Write access remains restricted
         allow get, list: if true;
-        // Temporarily allow any authenticated user to write (for debugging)
-        allow write: if request.auth != null;
+        allow create: if request.auth != null && request.auth.uid == userId;
+        allow update, delete: if request.auth != null && (
+          request.auth.uid == userId ||
+          hasMatchingCategoryEditPermission(userId, categoryId, request.auth.uid)
+        );
       }
 
       match /color_categories/{colorCategoryId} {
-        // Allow reading color categories for shared event viewing
-        // Color categories are just colors + names
-        // Write access remains restricted
         allow get, list: if true;
-        // Temporarily allow any authenticated user to write (for debugging)
-        allow write: if request.auth != null;
+        allow create: if request.auth != null && request.auth.uid == userId;
+        allow update, delete: if request.auth != null && (
+          request.auth.uid == userId ||
+          hasMatchingCategoryEditPermission(userId, colorCategoryId, request.auth.uid)
+        );
       }
 
       // Rules for followers subcollection
@@ -338,7 +338,7 @@ service cloud.firestore {
       
       // Users can list their own reports only
       allow list: if request.auth != null &&
-        request.auth.uid != null;
+        resource.data.userId == request.auth.uid;
       
       // Only admins can update reports (status changes, review notes, etc.)
       // For now, updates are disabled - will be handled by Cloud Functions/Admin SDK
