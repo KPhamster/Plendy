@@ -71,10 +71,11 @@ final Set<String> _recentlyReceivedMessageIds = {};
 // FCM: Background message handler (must be a top-level function)
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions
-        .currentPlatform, // Ensure Firebase is initialized here too
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } on FirebaseException catch (_) {}
   print("Handling a background message: ${message.messageId}");
   print("Background Message data: ${message.data}");
   if (message.notification != null) {
@@ -535,9 +536,11 @@ void main() async {
     print('No .env file found - using API keys from config files instead: $e');
   }));
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } on FirebaseException catch (_) {}
 
   final cachedUser = FirebaseAuth.instance.currentUser;
   if (cachedUser?.photoURL != null && cachedUser!.photoURL!.isNotEmpty) {
