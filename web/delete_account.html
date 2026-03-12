@@ -12,7 +12,7 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
+      min-height: 100vh;
       margin: 0;
     }
     .container {
@@ -34,15 +34,67 @@
       font-size: 16px;
       margin-bottom: 20px;
     }
-    input[type="email"] {
+    .input-field {
       width: calc(100% - 20px);
       padding: 10px;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
       border: 1px solid #ccc;
       border-radius: 4px;
       font-size: 16px;
     }
-    button {
+
+    /* Social sign-in buttons */
+    .btn-social {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 12px 20px;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      border: none;
+      box-sizing: border-box;
+    }
+    .btn-social:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn-social svg {
+      flex-shrink: 0;
+    }
+    .btn-google {
+      background-color: #fff;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+    .btn-google:hover:not(:disabled) { background-color: #f5f5f5; }
+    .btn-apple {
+      background-color: #000;
+      color: #fff;
+    }
+    .btn-apple:hover:not(:disabled) { background-color: #333; }
+
+    .btn-primary {
+      background-color: #1976d2;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      width: 100%;
+      transition: background-color 0.3s;
+    }
+    .btn-primary:hover:not(:disabled) { background-color: #1565c0; }
+    .btn-primary:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .btn-danger {
       background-color: #e53935;
       color: white;
       border: none;
@@ -53,85 +105,357 @@
       width: 100%;
       transition: background-color 0.3s;
     }
-    button:hover {
-      background-color: #c62828;
-    }
-    button:disabled {
+    .btn-danger:hover:not(:disabled) { background-color: #c62828; }
+    .btn-danger:disabled {
       background-color: #ccc;
       cursor: not-allowed;
     }
+    .btn-text {
+      background: none;
+      border: none;
+      color: #1976d2;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 8px;
+      margin-top: 8px;
+    }
+    .btn-text:hover { text-decoration: underline; }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 20px 0;
+      gap: 12px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background-color: #ddd;
+    }
+    .divider span {
+      color: #999;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
     .message {
       margin-top: 20px;
       font-size: 14px;
       font-weight: 500;
     }
-    .message.success {
+    .message.success { color: #2e7d32; }
+    .message.error { color: #c62828; }
+    .step-indicator {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .step-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background-color: #ccc;
+    }
+    .step-dot.active { background-color: #1976d2; }
+    .warning-box {
+      background-color: #fff3e0;
+      border: 1px solid #ffcc80;
+      border-radius: 4px;
+      padding: 16px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+    .warning-box p {
+      color: #e65100;
+      margin: 0;
+      font-size: 14px;
+    }
+    .user-info {
+      background-color: #e3f2fd;
+      border-radius: 4px;
+      padding: 12px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      color: #1565c0;
+    }
+    .email-sent-box {
+      background-color: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      border-radius: 4px;
+      padding: 16px;
+      margin-top: 16px;
+      text-align: left;
+    }
+    .email-sent-box p {
       color: #2e7d32;
+      margin: 0;
+      font-size: 14px;
     }
-    .message.error {
-      color: #c62828;
-    }
+    .hidden { display: none; }
+    .social-buttons { display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Delete Your Account</h1>
-    <p>Enter the email address associated with your Plendy account to permanently delete your account and all of your data. This action cannot be undone.</p>
-    <form id="deleteForm">
-      <input type="email" id="email" placeholder="your.email@example.com" required>
-      <button type="submit" id="submitButton">Request Account Deletion</button>
-    </form>
+    <div class="step-indicator">
+      <div class="step-dot active" id="dot1"></div>
+      <div class="step-dot" id="dot2"></div>
+    </div>
+
+    <!-- State 1: Verify Identity -->
+    <div id="authStep">
+      <h1>Delete Your Account</h1>
+      <p>Verify your identity to continue.</p>
+
+      <div class="social-buttons">
+        <button class="btn-social btn-google" id="googleBtn">
+          <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.0 24.0 0 0 0 0 21.56l7.98-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Sign in with Google
+        </button>
+        <button class="btn-social btn-apple" id="appleBtn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+          Sign in with Apple
+        </button>
+      </div>
+
+      <div class="divider"><span>Or verify with email</span></div>
+
+      <form id="emailForm">
+        <input type="email" id="email" class="input-field" placeholder="Email address" required>
+        <button type="submit" class="btn-primary" id="emailBtn">Send Verification Link</button>
+      </form>
+      <div id="emailSentBox" class="email-sent-box hidden">
+        <p>Verification link sent! Check your inbox (and spam folder) and click the link to continue.</p>
+      </div>
+    </div>
+
+    <!-- State 2: Email link re-entry (different device) -->
+    <div id="emailConfirmStep" class="hidden">
+      <h1>Confirm Your Email</h1>
+      <p>Please enter your email to complete verification.</p>
+      <form id="emailConfirmForm">
+        <input type="email" id="confirmEmail" class="input-field" placeholder="Email address" required>
+        <button type="submit" class="btn-primary" id="confirmEmailBtn">Continue</button>
+      </form>
+    </div>
+
+    <!-- State 3: Confirm Deletion -->
+    <div id="deleteStep" class="hidden">
+      <h1>Confirm Deletion</h1>
+      <div class="user-info" id="userInfo"></div>
+      <div class="warning-box">
+        <p>This action is permanent and cannot be undone. All of your data, including experiences and reviews, will be removed.</p>
+      </div>
+      <button id="deleteButton" class="btn-danger">Delete My Account</button>
+      <br>
+      <button id="cancelButton" class="btn-text">Cancel</button>
+    </div>
+
+    <!-- State 4: Success -->
+    <div id="successStep" class="hidden">
+      <h1>Account Deleted</h1>
+      <p>Your Plendy account and all associated data have been removed.</p>
+    </div>
+
     <div id="message" class="message"></div>
   </div>
 
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script>
-    document.getElementById('deleteForm').addEventListener('submit', async function(event) {
-      event.preventDefault();
+    firebase.initializeApp({
+      apiKey: 'AIzaSyDNBl0QYcPTHV-FN26bJ-vpXhYy2Q_wi1g',
+      authDomain: 'plendy-7df50.firebaseapp.com',
+      projectId: 'plendy-7df50',
+      storageBucket: 'plendy-7df50.appspot.com',
+      messagingSenderId: '449728842508',
+      appId: '1:449728842508:web:041c6caf934fceb335d729',
+    });
 
-      const emailInput = document.getElementById('email');
-      const submitButton = document.getElementById('submitButton');
-      const messageDiv = document.getElementById('message');
+    const FUNCTION_URL = 'https://us-central1-plendy-7df50.cloudfunctions.net/requestUserDataDeletion';
+    const EMAIL_LINK_SETTINGS = {
+      url: 'https://plendy.app/delete_account.html',
+      handleCodeInApp: true,
+    };
 
-      const email = emailInput.value;
-      if (!email) {
-        messageDiv.textContent = 'Please enter a valid email address.';
-        messageDiv.className = 'message error';
+    const auth = firebase.auth();
+    const messageDiv = document.getElementById('message');
+    let currentUser = null;
+
+    function showMessage(text, type) {
+      messageDiv.textContent = text;
+      messageDiv.className = 'message ' + type;
+    }
+
+    function clearMessage() {
+      messageDiv.textContent = '';
+      messageDiv.className = 'message';
+    }
+
+    function showStep(stepId) {
+      ['authStep', 'emailConfirmStep', 'deleteStep', 'successStep'].forEach(function(id) {
+        document.getElementById(id).classList.add('hidden');
+      });
+      document.getElementById(stepId).classList.remove('hidden');
+
+      var isAuth = (stepId === 'authStep' || stepId === 'emailConfirmStep');
+      document.getElementById('dot1').classList.toggle('active', isAuth);
+      document.getElementById('dot2').classList.toggle('active', !isAuth);
+      clearMessage();
+    }
+
+    function setButtonLoading(btn, loading, originalText) {
+      btn.disabled = loading;
+      btn.textContent = loading ? 'Please wait...' : originalText;
+    }
+
+    async function handleAuthResult(result) {
+      if (result.additionalUserInfo && result.additionalUserInfo.isNewUser) {
+        try { await result.user.delete(); } catch (_) {}
+        showStep('authStep');
+        showMessage('No Plendy account found for this email. Account deletion is only available for existing accounts.', 'error');
         return;
       }
+      currentUser = result.user;
+      document.getElementById('userInfo').textContent = 'Signed in as: ' + currentUser.email;
+      showStep('deleteStep');
+    }
 
-      submitButton.disabled = true;
-      submitButton.textContent = 'Processing...';
-      messageDiv.textContent = '';
-      
-      // *** REPLACE WITH YOUR ACTUAL CLOUD FUNCTION URL ***
-      const functionUrl = 'https://us-central1-plendy-7df50.cloudfunctions.net/requestUserDataDeletion';
+    // --- Google Sign-In ---
+    document.getElementById('googleBtn').addEventListener('click', async function() {
+      var btn = this;
+      setButtonLoading(btn, true, 'Sign in with Google');
+      clearMessage();
+      try {
+        var result = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+        await handleAuthResult(result);
+      } catch (error) {
+        if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+          showMessage('Google sign-in failed. Please try again.', 'error');
+        }
+      } finally {
+        setButtonLoading(btn, false, 'Sign in with Google');
+      }
+    });
+
+    // --- Apple Sign-In ---
+    document.getElementById('appleBtn').addEventListener('click', async function() {
+      var btn = this;
+      setButtonLoading(btn, true, 'Sign in with Apple');
+      clearMessage();
+      try {
+        var provider = new firebase.auth.OAuthProvider('apple.com');
+        provider.addScope('email');
+        var result = await auth.signInWithPopup(provider);
+        await handleAuthResult(result);
+      } catch (error) {
+        if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+          showMessage('Apple sign-in failed. Please try again.', 'error');
+        }
+      } finally {
+        setButtonLoading(btn, false, 'Sign in with Apple');
+      }
+    });
+
+    // --- Email Link: Send ---
+    document.getElementById('emailForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var email = document.getElementById('email').value.trim();
+      var btn = document.getElementById('emailBtn');
+      setButtonLoading(btn, true, 'Send Verification Link');
+      clearMessage();
 
       try {
-        const response = await fetch(functionUrl, {
+        await auth.sendSignInLinkToEmail(email, EMAIL_LINK_SETTINGS);
+        window.localStorage.setItem('plendyDeleteEmail', email);
+        document.getElementById('emailSentBox').classList.remove('hidden');
+        btn.classList.add('hidden');
+      } catch (error) {
+        if (error.code === 'auth/invalid-email') {
+          showMessage('Please enter a valid email address.', 'error');
+        } else {
+          showMessage('Failed to send verification link. Please try again.', 'error');
+        }
+      } finally {
+        setButtonLoading(btn, false, 'Send Verification Link');
+      }
+    });
+
+    // --- Email Link: Complete sign-in on return ---
+    async function completeEmailLinkSignIn(email) {
+      try {
+        var result = await auth.signInWithEmailLink(email, window.location.href);
+        window.localStorage.removeItem('plendyDeleteEmail');
+        await handleAuthResult(result);
+      } catch (error) {
+        showMessage('Verification link is invalid or expired. Please request a new one.', 'error');
+        showStep('authStep');
+      }
+    }
+
+    // Check on page load if this is an email link return
+    if (auth.isSignInWithEmailLink(window.location.href)) {
+      var savedEmail = window.localStorage.getItem('plendyDeleteEmail');
+      if (savedEmail) {
+        completeEmailLinkSignIn(savedEmail);
+      } else {
+        showStep('emailConfirmStep');
+      }
+    }
+
+    // Handle email re-entry for different-device case
+    document.getElementById('emailConfirmForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      var email = document.getElementById('confirmEmail').value.trim();
+      var btn = document.getElementById('confirmEmailBtn');
+      setButtonLoading(btn, true, 'Continue');
+      completeEmailLinkSignIn(email).finally(function() {
+        setButtonLoading(btn, false, 'Continue');
+      });
+    });
+
+    // --- Delete Account ---
+    document.getElementById('deleteButton').addEventListener('click', async function() {
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Deleting...';
+      clearMessage();
+
+      try {
+        var idToken = await currentUser.getIdToken(true);
+        var response = await fetch(FUNCTION_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + idToken,
           },
-          body: JSON.stringify({ email: email }),
         });
-
-        const result = await response.json();
+        var result = await response.json();
 
         if (response.ok) {
-          messageDiv.textContent = result.message || 'Your account deletion request has been processed. Your data will be removed shortly.';
-          messageDiv.className = 'message success';
-          emailInput.value = ''; // Clear the input on success
+          await auth.signOut();
+          showStep('successStep');
         } else {
-          throw new Error(result.message || 'An unknown error occurred.');
+          throw new Error(result.message || 'Deletion failed.');
         }
       } catch (error) {
-        messageDiv.textContent = 'Error: ' + error.message;
-        messageDiv.className = 'message error';
-      } finally {
-        submitButton.disabled = false;
-        submitButton.textContent = 'Request Account Deletion';
+        showMessage(error.message || 'An error occurred. Please try again.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Delete My Account';
       }
+    });
+
+    // --- Cancel ---
+    document.getElementById('cancelButton').addEventListener('click', async function() {
+      await auth.signOut();
+      currentUser = null;
+      document.getElementById('email').value = '';
+      document.getElementById('emailSentBox').classList.add('hidden');
+      document.getElementById('emailBtn').classList.remove('hidden');
+      showStep('authStep');
     });
   </script>
 </body>
-</html> 
+</html>

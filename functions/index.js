@@ -36,6 +36,10 @@ Object.assign(exports, analyzeYouTubeModule);
 const deleteUserModule = require("./src/delete_user");
 Object.assign(exports, deleteUserModule);
 
+// Import and export user data deletion request (HTTP endpoint)
+const requestDeleteModule = require("./src/request_delete_user");
+Object.assign(exports, requestDeleteModule);
+
 
 /**
  * Sends a notification when a new follow request is created (2nd Gen).

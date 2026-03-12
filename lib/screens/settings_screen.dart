@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../config/colors.dart';
+import 'auth_screen.dart';
 import 'browser_signin_screen.dart';
 import '../services/auth_service.dart';
 import '../services/ai_settings_service.dart';
@@ -374,9 +375,16 @@ class _SettingsScreenState extends State<SettingsScreen>
 
       await user.delete();
 
+      // Clean up local auth state (notifications, FCM, etc.)
+      try {
+        await _authService.signOut();
+      } catch (_) {}
+
       if (mounted) {
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+          (route) => false,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Account successfully deleted.')),
         );

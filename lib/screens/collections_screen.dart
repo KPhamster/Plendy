@@ -6306,9 +6306,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildShareInstructionEmptyState({required bool isSaves}) {
     final ThemeData theme = Theme.of(context);
-    final String title = isSaves ? 'No saves yet' : 'No experiences yet';
+    final String title = isSaves ? 'No saves yet. Save a post to Plendy!' : 'No experiences yet. Save to Plendy to create your first experience!';
     final String body = isSaves
-        ? 'Saves are posts, videos, and links attached to your experiences.'
+        ? 'Saves are posts, videos, and links attached to your experiences. You can share them with your friends or keep them private.'
         : 'Share a post or link to Plendy to turn it into an experience.';
     final List<String> steps = isSaves
         ? <String>[

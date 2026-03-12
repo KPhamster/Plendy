@@ -4,8 +4,8 @@ const cors = require("cors")({ origin: true });
 
 /**
  * An HTTP-triggered Cloud Function to handle user data deletion requests.
- * @param {functions.https.Request} req The request object.
- * @param {functions.https.Response} res The response object.
+ * Requires a valid Firebase Auth ID token in the Authorization header.
+ * Only the authenticated user can delete their own account.
  */
 exports.requestUserDataDeletion = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
@@ -13,32 +13,44 @@ exports.requestUserDataDeletion = functions.https.onRequest((req, res) => {
       return res.status(405).json({ message: "Method Not Allowed" });
     }
 
-    const { email } = req.body;
-
-    if (!email || typeof email !== "string") {
-      return res.status(400)
-        .json({ message: "Invalid request: Please provide a valid email." });
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        message: "Unauthorized: Please sign in to delete your account.",
+      });
     }
 
+    const idToken = authHeader.split("Bearer ")[1];
+
     try {
-      const userRecord = await admin.auth().getUserByEmail(email);
-      const { uid } = userRecord;
-      console.log(`Found user ${uid} for email ${email}. Deleting.`);
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const { uid } = decodedToken;
+      console.log(`Authenticated deletion request from user: ${uid}`);
 
       await admin.auth().deleteUser(uid);
-      console.log(`Successfully initiated deletion for user: ${uid}`);
+      console.log(`Successfully deleted user: ${uid}`);
 
       return res.status(200).json({
-        message: "Request received. Your account will be deleted.",
+        message: "Your account has been successfully deleted.",
       });
     } catch (error) {
-      if (error.code === "auth/user-not-found") {
-        console.log(`No user found with email: ${email}`);
-        return res.status(200).json({
-          message: "If an account with this email exists, it will be deleted.",
+      if (
+        error.code === "auth/id-token-expired" ||
+        error.code === "auth/id-token-revoked"
+      ) {
+        return res.status(401).json({
+          message: "Session expired. Please sign in again.",
         });
       }
-      console.error(`Error processing deletion for ${email}:`, error);
+      if (
+        error.code === "auth/invalid-id-token" ||
+        error.code === "auth/argument-error"
+      ) {
+        return res.status(401).json({
+          message: "Invalid authentication. Please sign in again.",
+        });
+      }
+      console.error("Error processing deletion:", error);
       return res.status(500)
         .json({ message: "An internal error occurred." });
     }

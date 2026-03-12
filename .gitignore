@@ -90,6 +90,7 @@ build/
 *.swo
 
 # Firebase config
+lib/firebase_options.dart
 google-services.json
 GoogleService-Info.plist
 web/index.html
