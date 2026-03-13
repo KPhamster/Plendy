@@ -329,119 +329,122 @@ class GoogleMapsService {
         // Continue to fallback method
       }
 
-      // Fallback to the standard Places API Text Search if the first approach failed
+      // Fallback to the v1 Text Search API if Autocomplete failed
       try {
-        print("🔎 PLACES SEARCH: Trying method 2 - Places Text Search API");
+        print("🔎 PLACES SEARCH: Trying method 2 - Places Text Search API (v1)");
 
-        // Build base URL
-        String baseUrl =
-            'https://maps.googleapis.com/maps/api/place/textsearch/json';
-        String encodedQuery = Uri.encodeComponent(query);
-        String url = '$baseUrl?query=$encodedQuery&key=$apiKey';
+        const fieldMask =
+            'places.id,places.displayName,places.formattedAddress,places.location,'
+            'places.rating,places.userRatingCount,places.types,'
+            'places.currentOpeningHours,places.priceLevel';
 
-        // Add location bias parameters if provided
+        final body = <String, dynamic>{
+          'textQuery': query,
+        };
         if (latitude != null && longitude != null) {
-          url += '&location=$latitude,$longitude';
-          // Use provided radius or default to 50km for legacy API
-          url += '&radius=${radius ?? 50000}';
+          body['locationBias'] = {
+            'circle': {
+              'center': {'latitude': latitude, 'longitude': longitude},
+              'radius': radius ?? 50000.0,
+            }
+          };
         }
 
-        print(
-            "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
-
-        final response = await http.get(Uri.parse(url));
+        final textSearchHeaders = await _placesApiHeaders(apiKey, fieldMask);
+        final response = await _dio.post(
+          'https://places.googleapis.com/v1/places:searchText',
+          data: body,
+          options: Options(headers: textSearchHeaders),
+        );
 
         if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          print("🔎 PLACES SEARCH: Response status: ${data['status']}");
+          final data = response.data as Map<String, dynamic>;
+          final places = data['places'] as List<dynamic>? ?? [];
+          print(
+              "🔎 PLACES SEARCH: Found ${places.length} places via Text Search (v1)");
 
-          if (data['status'] == 'OK' && data['results'] != null) {
-            final places = data['results'] as List;
-            print(
-                "🔎 PLACES SEARCH: Found ${places.length} places via TextSearch");
+          if (latitude != null && longitude != null) {
+            places.sort((a, b) {
+              final locA = a['location'] as Map<String, dynamic>?;
+              final locB = b['location'] as Map<String, dynamic>?;
+              if (locA == null || locB == null) return 0;
+              final distA = _calculateDistance(
+                  latitude, longitude, locA['latitude'], locA['longitude']);
+              final distB = _calculateDistance(
+                  latitude, longitude, locB['latitude'], locB['longitude']);
+              return distA.compareTo(distB);
+            });
+            print("🔎 PLACES SEARCH: Sorted results by distance.");
+          }
 
-            // If we have location bias, sort results by distance (approximate)
-            if (latitude != null && longitude != null) {
-              places.sort((a, b) {
-                final locA = a['geometry']?['location'];
-                final locB = b['geometry']?['location'];
-                if (locA == null || locB == null) return 0;
-                final distA = _calculateDistance(
-                    latitude, longitude, locA['lat'], locA['lng']);
-                final distB = _calculateDistance(
-                    latitude, longitude, locB['lat'], locB['lng']);
-                return distA.compareTo(distB);
+          List<Map<String, dynamic>> results = [];
+          for (var place in places) {
+            final nameMap = place['displayName'] as Map<String, dynamic>?;
+            String? name = nameMap?['text'] as String?;
+            String? address = place['formattedAddress'] as String?;
+            double? rating = (place['rating'] as num?)?.toDouble();
+            int? userRatingCount =
+                (place['userRatingCount'] as num?)?.toInt();
+            List<String>? types =
+                (place['types'] as List<dynamic>?)?.cast<String>();
+            bool? isOpen = (place['currentOpeningHours']
+                as Map<String, dynamic>?)?['openNow'] as bool?;
+            final priceLevelStr = place['priceLevel'] as String?;
+            int? priceLevel;
+            if (priceLevelStr != null) {
+              const priceLevelMap = {
+                'PRICE_LEVEL_FREE': 0,
+                'PRICE_LEVEL_INEXPENSIVE': 1,
+                'PRICE_LEVEL_MODERATE': 2,
+                'PRICE_LEVEL_EXPENSIVE': 3,
+                'PRICE_LEVEL_VERY_EXPENSIVE': 4,
+              };
+              priceLevel = priceLevelMap[priceLevelStr];
+            }
+            final loc = place['location'] as Map<String, dynamic>?;
+            double? lat = (loc?['latitude'] as num?)?.toDouble();
+            double? lng = (loc?['longitude'] as num?)?.toDouble();
+
+            final rawId = place['id'] as String? ?? '';
+            final placeId =
+                rawId.startsWith('places/') ? rawId.substring(7) : rawId;
+
+            if (name != null && address != null && lat != null && lng != null) {
+              results.add({
+                'placeId': placeId,
+                'description': name,
+                'address': address,
+                'vicinity': address,
+                'rating': rating,
+                'userRatingCount': userRatingCount,
+                'types': types,
+                'isOpen': isOpen,
+                'priceLevel': priceLevel,
+                'latitude': lat,
+                'longitude': lng,
+                'place': place,
               });
-              print("🔎 PLACES SEARCH: Sorted results by distance.");
             }
+          }
 
-            // Process and return results (moved logic inside)
-            List<Map<String, dynamic>> results = [];
-            for (var place in places) {
-              String? name = place['name'];
-              String? address = place['formatted_address'];
-              String? vicinity = place['vicinity'];
-              double? rating = place['rating']?.toDouble();
-              int? userRatingCount = place['user_ratings_total'];
-              List<String>? types = (place['types'] as List?)?.cast<String>();
-              bool? isOpen = place['opening_hours']?['open_now'];
-              int? priceLevel = place['price_level'];
-              Map<String, dynamic>? geometry = place['geometry'];
-              Map<String, dynamic>? location = geometry?['location'];
-              double? lat = location?['lat'];
-              double? lng = location?['lng'];
-
-              if (name != null &&
-                  (address != null || vicinity != null) &&
-                  lat != null &&
-                  lng != null) {
-                results.add({
-                  'placeId': place['place_id'] ?? '',
-                  'description': name +
-                      (vicinity != null && vicinity != name
-                          ? ' - $vicinity'
-                          : ''), // Better description
-                  'address': address ?? vicinity,
-                  'vicinity': vicinity, // Keep vicinity separately if needed
-                  'rating': rating,
-                  'userRatingCount': userRatingCount,
-                  'types': types,
-                  'isOpen': isOpen,
-                  'priceLevel': priceLevel,
-                  'latitude': lat,
-                  'longitude': lng,
-                  'place': place
-                });
-              }
-            }
-
-            if (results.isNotEmpty) {
+          if (results.isNotEmpty) {
+            print(
+                "🔎 PLACES SEARCH: Found ${results.length} verified results using Text Search (v1)");
+            for (int i = 0; i < min(3, results.length); i++) {
               print(
-                  "🔎 PLACES SEARCH: Found ${results.length} verified results using Places Text Search API");
-              for (int i = 0; i < min(3, results.length); i++) {
-                print(
-                    "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
-              }
-              return results;
-            } else {
-              print(
-                  "🔎 PLACES SEARCH: No verified results from Places Text Search API despite OK status");
+                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
             }
+            return results;
           } else {
             print(
-                "🔎 PLACES SEARCH: API returned non-OK status: ${data['status']}");
-            if (data['error_message'] != null) {
-              print(
-                  "🔎 PLACES SEARCH: Error message: ${data['error_message']}");
-            }
+                "🔎 PLACES SEARCH: No verified results from Text Search (v1)");
           }
         } else {
           print(
-              "🔎 PLACES SEARCH: Text Search API returned non-200 status code: ${response.statusCode}");
+              "🔎 PLACES SEARCH: Text Search (v1) returned non-200 status code: ${response.statusCode}");
         }
       } catch (e) {
-        print("🔎 PLACES SEARCH: Error with Places Text Search API: $e");
-        // Continue to next fallback? (Currently no other fallback here)
+        print("🔎 PLACES SEARCH: Error with Text Search (v1): $e");
       }
 
       // If we got here, all search methods inside this function failed
@@ -454,8 +457,7 @@ class GoogleMapsService {
     }
   }
 
-  /// Search for places using ONLY the Text Search API (bypasses Autocomplete)
-  /// Returns up to 20 results with full place details including coordinates
+  /// Search for places using the Text Search API (v1, bypasses Autocomplete)
   Future<List<Map<String, dynamic>>> searchPlacesTextSearch(
     String query, {
     double? latitude,
@@ -467,98 +469,115 @@ class GoogleMapsService {
     }
 
     print("\n🔎 TEXT SEARCH: Starting direct text search for query: '$query'");
-    
-    try {
-      // Build base URL
-      String baseUrl =
-          'https://maps.googleapis.com/maps/api/place/textsearch/json';
-      String encodedQuery = Uri.encodeComponent(query);
-      String url = '$baseUrl?query=$encodedQuery&key=$apiKey';
 
-      // Add location bias parameters if provided
-      if (latitude != null && longitude != null) {
-        url += '&location=$latitude,$longitude';
-        url += '&radius=${radius ?? 50000}';
+    try {
+      final key = _getApiKey();
+      if (key.isEmpty) {
+        print("🔎 TEXT SEARCH: No API key available");
+        return [];
       }
 
-      print("🔎 TEXT SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
+      const fieldMask =
+          'places.id,places.displayName,places.formattedAddress,places.location,'
+          'places.rating,places.userRatingCount,places.types,'
+          'places.currentOpeningHours,places.priceLevel';
 
-      final response = await http.get(Uri.parse(url));
+      final body = <String, dynamic>{
+        'textQuery': query,
+      };
+      if (latitude != null && longitude != null) {
+        body['locationBias'] = {
+          'circle': {
+            'center': {'latitude': latitude, 'longitude': longitude},
+            'radius': radius ?? 50000.0,
+          }
+        };
+      }
+
+      print("🔎 TEXT SEARCH: Calling v1 searchText API");
+
+      final headers = await _placesApiHeaders(key, fieldMask);
+      final response = await _dio.post(
+        'https://places.googleapis.com/v1/places:searchText',
+        data: body,
+        options: Options(headers: headers),
+      );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print("🔎 TEXT SEARCH: Response status: ${data['status']}");
+        final data = response.data as Map<String, dynamic>;
+        final places = data['places'] as List<dynamic>? ?? [];
+        print("🔎 TEXT SEARCH: Found ${places.length} places");
 
-        if (data['status'] == 'OK' && data['results'] != null) {
-          final places = data['results'] as List;
-          print("🔎 TEXT SEARCH: Found ${places.length} places");
+        if (latitude != null && longitude != null) {
+          places.sort((a, b) {
+            final locA = a['location'] as Map<String, dynamic>?;
+            final locB = b['location'] as Map<String, dynamic>?;
+            if (locA == null || locB == null) return 0;
+            final distA = _calculateDistance(
+                latitude, longitude, locA['latitude'], locA['longitude']);
+            final distB = _calculateDistance(
+                latitude, longitude, locB['latitude'], locB['longitude']);
+            return distA.compareTo(distB);
+          });
+        }
 
-          // If we have location bias, sort results by distance
-          if (latitude != null && longitude != null) {
-            places.sort((a, b) {
-              final locA = a['geometry']?['location'];
-              final locB = b['geometry']?['location'];
-              if (locA == null || locB == null) return 0;
-              final distA = _calculateDistance(
-                  latitude, longitude, locA['lat'], locA['lng']);
-              final distB = _calculateDistance(
-                  latitude, longitude, locB['lat'], locB['lng']);
-              return distA.compareTo(distB);
+        List<Map<String, dynamic>> results = [];
+        for (var place in places) {
+          final nameMap = place['displayName'] as Map<String, dynamic>?;
+          String? name = nameMap?['text'] as String?;
+          String? address = place['formattedAddress'] as String?;
+          double? rating = (place['rating'] as num?)?.toDouble();
+          int? userRatingCount = (place['userRatingCount'] as num?)?.toInt();
+          List<String>? types =
+              (place['types'] as List<dynamic>?)?.cast<String>();
+          bool? isOpen = (place['currentOpeningHours']
+              as Map<String, dynamic>?)?['openNow'] as bool?;
+          final priceLevelStr = place['priceLevel'] as String?;
+          int? priceLevel;
+          if (priceLevelStr != null) {
+            const priceLevelMap = {
+              'PRICE_LEVEL_FREE': 0,
+              'PRICE_LEVEL_INEXPENSIVE': 1,
+              'PRICE_LEVEL_MODERATE': 2,
+              'PRICE_LEVEL_EXPENSIVE': 3,
+              'PRICE_LEVEL_VERY_EXPENSIVE': 4,
+            };
+            priceLevel = priceLevelMap[priceLevelStr];
+          }
+          final loc = place['location'] as Map<String, dynamic>?;
+          double? lat = (loc?['latitude'] as num?)?.toDouble();
+          double? lng = (loc?['longitude'] as num?)?.toDouble();
+
+          final rawId = place['id'] as String? ?? '';
+          final placeId =
+              rawId.startsWith('places/') ? rawId.substring(7) : rawId;
+
+          if (name != null && address != null && lat != null && lng != null) {
+            results.add({
+              'placeId': placeId,
+              'name': name,
+              'description': name,
+              'address': address,
+              'vicinity': address,
+              'rating': rating,
+              'userRatingCount': userRatingCount,
+              'types': types,
+              'isOpen': isOpen,
+              'priceLevel': priceLevel,
+              'latitude': lat,
+              'longitude': lng,
+              'place': place,
             });
           }
+        }
 
-          List<Map<String, dynamic>> results = [];
-          for (var place in places) {
-            String? name = place['name'];
-            String? address = place['formatted_address'];
-            String? vicinity = place['vicinity'];
-            double? rating = place['rating']?.toDouble();
-            int? userRatingCount = place['user_ratings_total'];
-            List<String>? types = (place['types'] as List?)?.cast<String>();
-            bool? isOpen = place['opening_hours']?['open_now'];
-            int? priceLevel = place['price_level'];
-            Map<String, dynamic>? geometry = place['geometry'];
-            Map<String, dynamic>? location = geometry?['location'];
-            double? lat = location?['lat'];
-            double? lng = location?['lng'];
-
-            if (name != null &&
-                (address != null || vicinity != null) &&
-                lat != null &&
-                lng != null) {
-              results.add({
-                'placeId': place['place_id'] ?? '',
-                'name': name,
-                'description': name +
-                    (vicinity != null && vicinity != name
-                        ? ' - $vicinity'
-                        : ''),
-                'address': address ?? vicinity,
-                'vicinity': vicinity,
-                'rating': rating,
-                'userRatingCount': userRatingCount,
-                'types': types,
-                'isOpen': isOpen,
-                'priceLevel': priceLevel,
-                'latitude': lat,
-                'longitude': lng,
-                'place': place
-              });
-            }
+        if (results.isNotEmpty) {
+          print("🔎 TEXT SEARCH: Found ${results.length} verified results");
+          for (int i = 0; i < min(3, results.length); i++) {
+            print(
+                "🔎 TEXT SEARCH: Result ${i + 1}: '${results[i]['name']}' at '${results[i]['address']}'");
           }
-
-          if (results.isNotEmpty) {
-            print("🔎 TEXT SEARCH: Found ${results.length} verified results");
-            for (int i = 0; i < min(3, results.length); i++) {
-              print("🔎 TEXT SEARCH: Result ${i + 1}: '${results[i]['name']}' at '${results[i]['address']}'");
-            }
-            return results;
-          }
-        } else {
-          print("🔎 TEXT SEARCH: API returned status: ${data['status']}");
-          if (data['error_message'] != null) {
-            print("🔎 TEXT SEARCH: Error: ${data['error_message']}");
-          }
+          return results;
         }
       } else {
         print("🔎 TEXT SEARCH: HTTP error: ${response.statusCode}");
