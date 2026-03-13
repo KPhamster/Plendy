@@ -14,6 +14,26 @@ class _SocialBrowserDialogState extends State<SocialBrowserDialog> {
   late final WebViewController _controller;
   bool _isLoading = true;
 
+  static const _allowedOAuthHosts = [
+    'instagram.com',
+    'www.instagram.com',
+    'facebook.com',
+    'www.facebook.com',
+    'm.facebook.com',
+    'web.facebook.com',
+    'tiktok.com',
+    'www.tiktok.com',
+    'yelp.com',
+    'www.yelp.com',
+  ];
+
+  static bool _isSafeRedirectUrl(String raw) {
+    final uri = Uri.tryParse(raw);
+    if (uri == null || uri.scheme != 'https') return false;
+    return _allowedOAuthHosts
+        .any((h) => uri.host == h || uri.host.endsWith('.$h'));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -37,7 +57,9 @@ class _SocialBrowserDialogState extends State<SocialBrowserDialog> {
               if (uri.queryParameters.containsKey('params_url')) {
                 final originalUrl =
                     Uri.decodeComponent(uri.queryParameters['params_url']!);
-                _controller.loadRequest(Uri.parse(originalUrl));
+                if (_isSafeRedirectUrl(originalUrl)) {
+                  _controller.loadRequest(Uri.parse(originalUrl));
+                }
               }
               return NavigationDecision.prevent;
             }

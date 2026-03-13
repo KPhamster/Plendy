@@ -9,6 +9,7 @@ import '../models/gemini_grounding_result.dart';
 import 'gemini_service.dart';
 import 'google_maps_service.dart';
 import 'instagram_oembed_service.dart';
+import '../utils/url_validator.dart';
 
 /// Callback type for reporting extraction progress
 /// [current] is the current item being processed (1-indexed)
@@ -1797,10 +1798,12 @@ class LinkLocationExtractionService {
 
       // For other social media URLs, try to get page metadata
       String? pageDescription;
-      if (_isSocialMediaUrl(url) && !_isInstagramUrl(url) && !_isYouTubeUrl(url)) {
+      if (_isSocialMediaUrl(url) && !_isInstagramUrl(url) && !_isYouTubeUrl(url) && UrlValidator.isAllowedUrl(url)) {
         print('📄 EXTRACTION: Fetching metadata for social media URL...');
         try {
-          final metadata = await AnyLinkPreview.getMetadata(link: url);
+          final metadata = await AnyLinkPreview.getMetadata(
+            link: url,
+          ).timeout(UrlValidator.defaultTimeout);
           if (metadata != null) {
             // Combine title and description for context
             final title = metadata.title ?? '';

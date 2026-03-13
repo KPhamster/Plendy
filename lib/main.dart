@@ -1000,11 +1000,24 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  static const Set<String> _allowedDeepLinkHosts = <String>{
+    'plendy.app',
+    'www.plendy.app',
+  };
+
+  bool _isAllowedHost(Uri uri) {
+    return uri.host.isEmpty || _allowedDeepLinkHosts.contains(uri.host);
+  }
+
   Uri? _tryExtractNestedUri(Uri uri) {
     final String? linkParam = uri.queryParameters['link'];
     if (linkParam != null && linkParam.isNotEmpty) {
       try {
         final Uri nested = Uri.parse(linkParam);
+        if (!_isAllowedHost(nested)) {
+          print('DeepLink: Rejected nested link param with disallowed host: ${nested.host}');
+          return null;
+        }
         print('DeepLink: Unwrapped link parameter -> $nested');
         return nested;
       } catch (e) {
@@ -1016,6 +1029,10 @@ class _MyAppState extends State<MyApp> {
     if (deepLinkId != null && deepLinkId.isNotEmpty) {
       try {
         final Uri nested = Uri.parse(deepLinkId);
+        if (!_isAllowedHost(nested)) {
+          print('DeepLink: Rejected nested deep_link_id with disallowed host: ${nested.host}');
+          return null;
+        }
         print('DeepLink: Unwrapped deep_link_id -> $nested');
         return nested;
       } catch (e) {
@@ -1032,6 +1049,10 @@ class _MyAppState extends State<MyApp> {
           final dynamic target = parsed['target_url'];
           if (target is String && target.isNotEmpty) {
             final Uri nested = Uri.parse(target);
+            if (!_isAllowedHost(nested)) {
+              print('DeepLink: Rejected nested al_applink_data target_url with disallowed host: ${nested.host}');
+              return null;
+            }
             print('DeepLink: Unwrapped al_applink_data target_url -> $nested');
             return nested;
           }
@@ -1046,6 +1067,10 @@ class _MyAppState extends State<MyApp> {
       if (fragment.startsWith('http')) {
         try {
           final Uri nested = Uri.parse(fragment);
+          if (!_isAllowedHost(nested)) {
+            print('DeepLink: Rejected nested fragment URL with disallowed host: ${nested.host}');
+            return null;
+          }
           print('DeepLink: Unwrapped fragment URL -> $nested');
           return nested;
         } catch (e) {
@@ -1058,6 +1083,10 @@ class _MyAppState extends State<MyApp> {
             fragment.startsWith('/') ? fragment : '/$fragment';
         try {
           final Uri nested = Uri.parse(prefix + candidate);
+          if (!_isAllowedHost(nested)) {
+            print('DeepLink: Rejected composed fragment URL with disallowed host: ${nested.host}');
+            return null;
+          }
           print('DeepLink: Composed fragment URL -> $nested');
           return nested;
         } catch (e) {
@@ -2064,9 +2093,7 @@ List<SharedMediaFile> _convertSharedMedia(SharedMedia media) {
   if (content != null && content.trim().isNotEmpty) {
     final url = _extractFirstUrl(content);
     out.add(SharedMediaFile(
-      // Use the extracted URL if found, otherwise use the full content
-      // This handles cases like "Share the event! https://..." where we only want the URL
-      path: url ?? content,
+      path: content,
       thumbnail: null,
       duration: null,
       type: url != null ? SharedMediaType.url : SharedMediaType.text,

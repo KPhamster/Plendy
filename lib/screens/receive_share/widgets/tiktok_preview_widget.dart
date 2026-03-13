@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:plendy/models/receive_share_help_target.dart';
+import 'package:plendy/utils/url_validator.dart';
 
 /// Data extracted from TikTok oEmbed API
 class TikTokOEmbedData {
@@ -161,22 +162,27 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
 
   /// Resolve short URLs (vm.tiktok.com) to get the full URL with post ID
   Future<void> _resolveShortUrl() async {
+    if (!UrlValidator.isTikTokUrl(widget.url)) return;
     try {
-      // Make a HEAD request to follow redirects and get the final URL
       final client = http.Client();
-      final request = http.Request('GET', Uri.parse(widget.url))
-        ..followRedirects = false;
-      
-      final response = await client.send(request);
-      
-      if (response.statusCode == 301 || response.statusCode == 302) {
-        final redirectUrl = response.headers['location'];
-        if (redirectUrl != null) {
-          print('TikTok Embed Player: Resolved to $redirectUrl');
-          _postId = _extractPostId(redirectUrl);
+      try {
+        final request = http.Request('GET', Uri.parse(widget.url))
+          ..followRedirects = false;
+
+        final response = await client.send(request).timeout(
+          UrlValidator.defaultTimeout,
+        );
+
+        if (response.statusCode == 301 || response.statusCode == 302) {
+          final redirectUrl = response.headers['location'];
+          if (redirectUrl != null && UrlValidator.isTikTokUrl(redirectUrl)) {
+            print('TikTok Embed Player: Resolved to $redirectUrl');
+            _postId = _extractPostId(redirectUrl);
+          }
         }
+      } finally {
+        client.close();
       }
-      client.close();
     } catch (e) {
       print('TikTok Embed Player: Error resolving short URL: $e');
     }

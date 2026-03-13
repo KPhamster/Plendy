@@ -28,6 +28,7 @@ import '../services/ai_settings_service.dart';
 import '../models/extracted_location_data.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
+import '../utils/url_validator.dart';
 import 'dart:async';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
@@ -4949,6 +4950,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print('🎬 Caption: ${data.title}');
     print('🎬 Author: ${data.authorName}');
 
+    // Store the caption so the Locations Found dialog can show the actual
+    // TikTok caption text in "Show scanned text" (mirrors Instagram flow).
+    if (data.title != null && data.title!.isNotEmpty) {
+      _storeExtractedContent(
+        caption: data.title!,
+        sourceUrl: url,
+        platform: 'TikTok',
+      );
+    }
+
     setState(() {
       _isExtractingLocation = true;
       _isAiScanInProgress = true;
@@ -8827,10 +8838,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<String?> _resolveShortUrl(String shortUrl) async {
+    if (!UrlValidator.isAllowedUrl(shortUrl)) return null;
     try {
       final dio = Dio(BaseOptions(
         followRedirects: true,
         maxRedirects: 5,
+        connectTimeout: UrlValidator.defaultTimeout,
+        receiveTimeout: UrlValidator.defaultTimeout,
         validateStatus: (status) => status != null && status < 500,
       ));
 
@@ -8838,7 +8852,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       if (response.statusCode == 200) {
         final finalUrl = response.realUri.toString();
-        if (finalUrl != shortUrl) {
+        if (finalUrl != shortUrl && UrlValidator.isAllowedUrl(finalUrl)) {
           return finalUrl;
         } else {
           return null;
@@ -8853,8 +8867,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   Future<Map<String, String>?> _getLocationDetailsFromYelpPage(
       String url) async {
+    if (!UrlValidator.isYelpUrl(url)) return null;
     try {
-      final dio = Dio();
+      final dio = Dio(BaseOptions(
+        connectTimeout: UrlValidator.defaultTimeout,
+        receiveTimeout: UrlValidator.defaultTimeout,
+      ));
       final response = await dio.get(url);
 
       if (response.statusCode == 200) {

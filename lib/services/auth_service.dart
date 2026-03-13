@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'user_service.dart';
 import 'experience_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,6 +9,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async'; // For Timer
 import 'notification_state_service.dart';
+import '../config/app_constants.dart';
 
 class AuthService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -487,6 +489,8 @@ class AuthService extends ChangeNotifier {
 
   // Sign Out
   Future<void> signOut() async {
+    final userId = _currentUser?.uid;
+
     // Clean up notification state service listeners BEFORE signing out
     // to prevent permission-denied errors from active Firestore listeners
     final notificationService = NotificationStateService();
@@ -498,17 +502,84 @@ class AuthService extends ChangeNotifier {
     _fcmSetupComplete = false;
     _fcmSetupInProgress = null;
 
-    // Optional: Before signing out, you might want to delete the current device's FCM token
-    // from the user's list if you have a way to identify it specifically.
-    // String? token = await _firebaseMessaging.getToken();
-    // if (currentUser != null && token != null) {
-    //   await _deleteTokenFromFirestore(currentUser!.uid, token);
-    // }
+    // Remove this device's FCM token so the user stops receiving notifications
+    if (userId != null && !kIsWeb) {
+      try {
+        final token = await _firebaseMessaging.getToken();
+        if (token != null) {
+          await _deleteTokenFromFirestore(userId, token);
+        }
+      } catch (e) {
+        print('DEBUG: Error removing FCM token during sign-out: $e');
+      }
+    }
 
     await _auth.signOut();
     await _googleSignIn.signOut();
+
+    await _clearUserPreferences(userId);
+
     _currentUser = null;
     notifyListeners();
+  }
+
+  /// Clears all user-specific SharedPreferences to prevent data leaking
+  /// to the next user on a shared device.
+  Future<void> _clearUserPreferences(String? userId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      if (userId != null) {
+        await prefs.remove('last_seen_followers_$userId');
+        await prefs.remove('last_seen_requests_$userId');
+        await prefs.remove('seen_followers_$userId');
+        await prefs.remove('collections_category_order_$userId');
+        await prefs.remove('collections_color_category_order_$userId');
+        await prefs.remove('collections_use_manual_category_order_$userId');
+        await prefs.remove('collections_use_manual_color_category_order_$userId');
+      }
+
+      // Last-used category selections
+      await prefs.remove(AppConstants.lastUsedCategoryKey);
+      await prefs.remove(AppConstants.lastUsedColorCategoryKey);
+      await prefs.remove(AppConstants.lastUsedOtherCategoriesKey);
+      await prefs.remove(AppConstants.lastUsedOtherColorCategoriesKey);
+
+      // Map filter selections (may contain followee IDs)
+      await prefs.remove(AppConstants.mapFilterCategoryIdsKey);
+      await prefs.remove(AppConstants.mapFilterColorIdsKey);
+      await prefs.remove(AppConstants.mapFilterFolloweeIdsKey);
+
+      // Share mode preferences
+      await prefs.remove(AppConstants.lastShareModeKey);
+      await prefs.remove(AppConstants.lastShareGiveEditAccessKey);
+
+      // Transient share flow state and persisted content
+      await prefs.remove('shareFlowActive');
+      await prefs.remove('receiveShareScreenOpen');
+      await prefs.remove('navigatingAwayFromShare');
+      await prefs.remove('originalSharedContent');
+      await prefs.remove('currentSharedContent');
+      await prefs.remove('experienceCardFormData');
+
+      // Discovery feed caches
+      await prefs.remove('discovery_seen_media_keys_v1');
+      await prefs.remove('discovery_saved_places_v1');
+      await prefs.remove('discovery_saved_media_v1');
+      await prefs.remove('discovery_saved_places_v1_timestamp');
+
+      // Collection sort/group preferences
+      await prefs.remove('collections_category_sort');
+      await prefs.remove('collections_color_category_sort');
+      await prefs.remove('collections_experience_sort');
+      await prefs.remove('collections_content_sort');
+      await prefs.remove('collections_group_by_location_experiences');
+      await prefs.remove('collections_group_by_location_content');
+
+      print('AUTH: Cleared user-specific SharedPreferences on sign-out');
+    } catch (e) {
+      print('AUTH: Error clearing SharedPreferences on sign-out: $e');
+    }
   }
 
   Future<void> reloadCurrentUser() async {
@@ -863,19 +934,18 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  // Optional: Method to delete a specific token (e.g., on sign out for this device)
-  // Future<void> _deleteTokenFromFirestore(String userId, String token) async {
-  //   if (userId.isEmpty || token.isEmpty) return;
-  //   try {
-  //     await _firestore
-  //         .collection('users')
-  //         .doc(userId)
-  //         .collection('fcmTokens')
-  //         .doc(token)
-  //         .delete();
-  //     print("FCM token deleted for user $userId: $token");
-  //   } catch (e) {
-  //     print("Error deleting FCM token for user $userId: $e");
-  //   }
-  // }
+  Future<void> _deleteTokenFromFirestore(String userId, String token) async {
+    if (userId.isEmpty || token.isEmpty) return;
+    try {
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('fcmTokens')
+          .doc(token)
+          .delete();
+      print('DEBUG: FCM token deleted for user $userId');
+    } catch (e) {
+      print('DEBUG: Error deleting FCM token for user $userId: $e');
+    }
+  }
 }
