@@ -585,8 +585,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                             return;
                           }
                           await authService.signOut();
-                          // The StreamBuilder in main.dart will automatically show AuthScreen
-                          // when it detects the user is logged out
+                          // Root `MaterialApp` home uses auth state; `effectiveUser` is driven
+                          // from Firebase `authStateChanges` so sign-out shows `AuthScreen`.
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Theme.of(context).primaryColor,

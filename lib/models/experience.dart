@@ -27,6 +27,8 @@ class Location extends Equatable {
   final double? rating; // ADDED: Google Maps rating for the place
   final int? userRatingCount; // ADDED: Number of ratings
   final List<String>? placeTypes; // ADDED: Google Places API types for auto-categorization
+  final String? primaryType; // e.g., "italian_restaurant"
+  final String? primaryTypeDisplayName; // e.g., "Italian Restaurant"
 
   const Location({
     this.placeId,
@@ -51,6 +53,8 @@ class Location extends Equatable {
     this.rating, // ADDED
     this.userRatingCount, // ADDED
     this.placeTypes, // ADDED: Google Places API types
+    this.primaryType,
+    this.primaryTypeDisplayName,
   });
 
   @override
@@ -77,6 +81,8 @@ class Location extends Equatable {
         rating, // ADDED
         userRatingCount, // ADDED
         placeTypes, // ADDED
+        primaryType,
+        primaryTypeDisplayName,
       ];
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -104,6 +110,8 @@ class Location extends Equatable {
       rating: (map['rating'] as num?)?.toDouble(), // ADDED
       userRatingCount: map['userRatingCount'] as int?, // ADDED
       placeTypes: (map['placeTypes'] as List<dynamic>?)?.cast<String>(), // ADDED
+      primaryType: map['primaryType'] as String?,
+      primaryTypeDisplayName: map['primaryTypeDisplayName'] as String?,
     );
   }
 
@@ -153,6 +161,10 @@ class Location extends Equatable {
     }
     if (placeTypes != null && placeTypes!.isNotEmpty) {
       map['placeTypes'] = placeTypes; // ADDED
+    }
+    if (primaryType != null) map['primaryType'] = primaryType;
+    if (primaryTypeDisplayName != null) {
+      map['primaryTypeDisplayName'] = primaryTypeDisplayName;
     }
 
     return map;
@@ -211,6 +223,8 @@ class Location extends Equatable {
     double? rating,
     int? userRatingCount,
     List<String>? placeTypes,
+    String? primaryType,
+    String? primaryTypeDisplayName,
   }) {
     return Location(
       placeId: placeId ?? this.placeId,
@@ -242,6 +256,9 @@ class Location extends Equatable {
       rating: rating ?? this.rating,
       userRatingCount: userRatingCount ?? this.userRatingCount,
       placeTypes: placeTypes ?? this.placeTypes,
+      primaryType: primaryType ?? this.primaryType,
+      primaryTypeDisplayName:
+          primaryTypeDisplayName ?? this.primaryTypeDisplayName,
     );
   }
 

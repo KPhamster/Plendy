@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import '../../firebase_options.dart';
+import '../services/certificate_pinning_service.dart';
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -64,6 +65,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     with TickerProviderStateMixin {
   final UserService _userService = UserService();
   final ExperienceService _experienceService = ExperienceService();
+  final http.Client _pinnedHttpClient = CertificatePinningService().createPinnedHttpClient();
 
   UserProfile? _profile;
   int _followersCount = 0;
@@ -432,7 +434,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       // Fetch categories via REST
       final categoriesUrl = Uri.parse(
           'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/categories');
-      final categoriesResp = await http.get(categoriesUrl, headers: headers);
+      final categoriesResp = await _pinnedHttpClient.get(categoriesUrl, headers: headers);
 
       // Fetch experiences via REST query with pagination
       final experiencesQueryUrl = Uri.parse(
@@ -476,7 +478,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         }
 
         final experiencesPayload = {'structuredQuery': structuredQuery};
-        final experiencesResp = await http.post(
+        final experiencesResp = await _pinnedHttpClient.post(
           experiencesQueryUrl,
           headers: headers,
           body: json.encode(experiencesPayload),
@@ -582,7 +584,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           final colorCategoriesUrl = Uri.parse(
               'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/color_categories');
           final colorCategoriesResp =
-              await http.get(colorCategoriesUrl, headers: headers);
+              await _pinnedHttpClient.get(colorCategoriesUrl, headers: headers);
 
           if (colorCategoriesResp.statusCode == 200) {
             final body =

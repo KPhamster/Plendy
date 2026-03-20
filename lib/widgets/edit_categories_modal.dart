@@ -400,9 +400,9 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     print(
         "EditCategoriesModal BUILD START - Current category count: ${_Categories.length}"); // Log Build Start (use _Categories)
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
-    // Calculate a max height (e.g., 70% of screen height)
+    // Calculate a max height that accounts for the keyboard being up
     final screenHeight = MediaQuery.of(context).size.height;
-    final maxHeight = screenHeight * 0.9;
+    final maxHeight = (screenHeight - bottomPadding) * 0.9;
 
     return PopScope(
       canPop: false,

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import '../../firebase_options.dart';
+import '../services/certificate_pinning_service.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart'; // Import UserCategory
 // TODO: Import your PlaceDetails model and PlacesService
@@ -46,6 +47,8 @@ import '../widgets/cached_profile_avatar.dart';
 // ADDED: Import for SystemUiOverlayStyle
 import 'package:flutter/services.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
+import '../utils/local_shared_media_image.dart';
+import '../utils/shared_media_display_labels.dart';
 import '../models/public_experience.dart';
 // --- ADDED: Import ColorCategory ---
 import '../models/color_category.dart';
@@ -80,6 +83,7 @@ import '../config/experience_help_content.dart';
 import '../models/help_target.dart';
 import '../widgets/help_bubble.dart';
 import '../widgets/help_spotlight_painter.dart';
+import '../services/gemini_service.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -120,6 +124,7 @@ class ExperiencePageScreen extends StatefulWidget {
 // ADDED: SingleTickerProviderStateMixin for TabController
 class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     with TickerProviderStateMixin {
+  final http.Client _pinnedHttpClient = CertificatePinningService().createPinnedHttpClient();
   static const String _legacySharedContentDescription =
       'Created from shared content';
 
@@ -160,6 +165,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _hasAttemptedPublicMediaFetch = false;
   List<SharedMediaItem> _publicMediaItems = [];
   PublicExperience? _cachedReadOnlyPublicExperienceForMap;
+
+  bool _isCheckingOwnExperience = false;
+  bool _userHasOwnExperienceAtPlace = false;
 
   // Hours Expansion State
   bool _isHoursExpanded = false;
@@ -875,7 +883,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             _isLoadingDetails = false;
           });
 
-          if (updatedExperience != null && !widget.readOnlyPreview) {
+          if (updatedExperience != null && !widget.readOnlyPreview && _canEditExperience()) {
             _experienceService.updateExperience(updatedExperience).then((_) {
               print(
                   "ExperiencePageScreen: Saved updated experience with refreshed photo metadata to Firestore.");
@@ -884,6 +892,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   "ExperiencePageScreen: Error saving updated experience to Firestore: $e");
             });
           }
+
+          // Backfill place tags for legacy experiences that lack them
+          _backfillPlaceTagsIfNeeded(fetchedDetailsMap);
         } else {
           setState(() {
             _isLoadingDetails = false;
@@ -1020,6 +1031,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           print(
               'ExperiencePageScreen: Error saving backfilled description to Experience: $e');
         }
+      } else if (experienceNeedsBackfill && widget.readOnlyPreview) {
+        // Read-only view: update local state for display without persisting
+        if (mounted) {
+          setState(() {
+            _currentExperience = _currentExperience.copyWith(
+              description: fetchedSummary,
+            );
+          });
+        }
+        print(
+            'ExperiencePageScreen: Updated local description for read-only display.');
       }
 
       // Update PublicExperience document if it needs backfilling
@@ -1044,6 +1066,221 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     } catch (e) {
       print('ExperiencePageScreen: Error during description backfill: $e');
+    }
+  }
+
+  /// Backfills place tags (placeTypes, primaryType, primaryTypeDisplayName)
+  /// for experiences that have fewer than 5 tags.
+  /// Reads the already-fetched [placeDetailsMap] from [_fetchPlaceDetails] so
+  /// no extra API call is needed.
+  Future<void> _backfillPlaceTagsIfNeeded(
+      Map<String, dynamic> placeDetailsMap) async {
+    final location = _currentExperience.location;
+
+    final existingTags = location.placeTypes ?? [];
+    final visibleTagCount = existingTags
+        .where((t) => !_hiddenPlaceTypes.contains(t))
+        .length;
+    print('ExperiencePageScreen: Tag enrichment check – '
+        '${existingTags.length} existing tags ($visibleTagCount visible): ${existingTags.join(", ")}');
+    if (visibleTagCount >= 5) {
+      print('ExperiencePageScreen: Skipping tag enrichment – already has >= 5 visible tags.');
+      return;
+    }
+
+    final List<String>? apiPlaceTypes =
+        (placeDetailsMap['types'] as List<dynamic>?)?.cast<String>();
+    final String? primaryType = placeDetailsMap['primaryType'] as String?;
+    final primaryTypeDisplayNameMap =
+        placeDetailsMap['primaryTypeDisplayName'] as Map<String, dynamic>?;
+    final String? primaryTypeDisplayName =
+        primaryTypeDisplayNameMap?['text'] as String?;
+
+    final existingLower = existingTags.map((t) => t.toLowerCase()).toSet();
+    final newApiTags = (apiPlaceTypes ?? [])
+        .where((t) => !existingLower.contains(t.toLowerCase()))
+        .toList();
+    final mergedTypes = <String>[...existingTags, ...newApiTags];
+
+    print('ExperiencePageScreen: Places API returned ${apiPlaceTypes?.length ?? 0} types, '
+        '${newApiTags.length} are new after dedup → ${mergedTypes.length} merged total');
+
+    final effectivePrimaryType = location.primaryType ?? primaryType;
+    final effectivePrimaryTypeDisplayName =
+        location.primaryTypeDisplayName ?? primaryTypeDisplayName;
+
+    final bool hasChanges = newApiTags.isNotEmpty ||
+        effectivePrimaryType != location.primaryType ||
+        effectivePrimaryTypeDisplayName != location.primaryTypeDisplayName;
+
+    if (hasChanges) {
+      print(
+          'ExperiencePageScreen: Backfilling place tags – primaryType=$effectivePrimaryType, '
+          'types=${mergedTypes.take(3).join(", ")} '
+          '(${existingTags.length} existing + ${newApiTags.length} new)');
+
+      final updatedLocation = location.copyWith(
+        placeTypes: mergedTypes,
+        primaryType: effectivePrimaryType,
+        primaryTypeDisplayName: effectivePrimaryTypeDisplayName,
+      );
+      final updatedExperience =
+          _currentExperience.copyWith(location: updatedLocation);
+
+      if (mounted) {
+        setState(() {
+          _currentExperience = updatedExperience;
+          _didDataChange = true;
+        });
+      }
+
+      if (!widget.readOnlyPreview && _canEditExperience()) {
+        try {
+          await _experienceService.updateExperience(updatedExperience);
+          print('ExperiencePageScreen: Saved backfilled tags to Experience.');
+        } catch (e) {
+          print('ExperiencePageScreen: Error saving backfilled tags: $e');
+        }
+      }
+
+      if (_publicExperience != null) {
+        try {
+          await _experienceService.updatePublicExperiencePlaceTags(
+            _publicExperience!.id,
+            placeTypes: mergedTypes,
+            primaryType: effectivePrimaryType,
+            primaryTypeDisplayName: effectivePrimaryTypeDisplayName,
+          );
+          if (mounted) {
+            setState(() {
+              _publicExperience = _publicExperience!.copyWith(
+                placeTypes: mergedTypes,
+                location: _publicExperience!.location.copyWith(
+                  placeTypes: mergedTypes,
+                  primaryType: effectivePrimaryType,
+                  primaryTypeDisplayName: effectivePrimaryTypeDisplayName,
+                ),
+              );
+            });
+          }
+          print(
+              'ExperiencePageScreen: Saved backfilled tags to PublicExperience.');
+        } catch (e) {
+          print(
+              'ExperiencePageScreen: Error saving backfilled tags to PublicExperience: $e');
+        }
+      }
+    }
+
+    final mergedVisibleCount = mergedTypes
+        .where((t) => !_hiddenPlaceTypes.contains(t))
+        .length;
+    if (mergedVisibleCount < 5) {
+      _enrichBackfilledTagsWithGemini(mergedTypes, effectivePrimaryType,
+          effectivePrimaryTypeDisplayName, _currentExperience.location);
+    }
+  }
+
+  /// Suggests additional tags via Gemini for an experience with fewer than 5
+  /// tags, then persists them.
+  Future<void> _enrichBackfilledTagsWithGemini(
+    List<String>? placeTypes,
+    String? primaryType,
+    String? primaryTypeDisplayName,
+    Location location,
+  ) async {
+    final gemini = GeminiService();
+    if (!gemini.isConfigured) {
+      print('ExperiencePageScreen: Gemini not configured – skipping tag enrichment.');
+      return;
+    }
+
+    final placeName = location.displayName ?? location.getPlaceName();
+    final locationContext = location.city ?? location.address;
+
+    try {
+      print('ExperiencePageScreen: Asking Gemini for additional tags for "$placeName" '
+          '(${placeTypes?.length ?? 0} existing types)');
+      final suggestedTags = await gemini.suggestAdditionalTags(
+        placeName: placeName,
+        existingTypes: placeTypes,
+        primaryTypeDisplayName: primaryTypeDisplayName,
+        locationContext: locationContext,
+      );
+
+      if (suggestedTags.isEmpty) {
+        print('ExperiencePageScreen: Gemini returned no additional tags.');
+        return;
+      }
+
+      print(
+          'ExperiencePageScreen: Gemini suggested ${suggestedTags.length} '
+          'additional tags for "$placeName": ${suggestedTags.join(", ")}');
+
+      // Deduplicate against existing types
+      final existingFormatted = (placeTypes ?? [])
+          .map((t) => t
+              .split('_')
+              .map((w) => w.isNotEmpty
+                  ? '${w[0].toUpperCase()}${w.substring(1)}'
+                  : '')
+              .join(' ')
+              .toLowerCase())
+          .toSet();
+
+      final newTags = suggestedTags
+          .where((tag) => !existingFormatted.contains(tag.toLowerCase()))
+          .toList();
+
+      if (newTags.isEmpty) return;
+
+      final mergedTypes = <String>[...(placeTypes ?? []), ...newTags];
+
+      final updatedLocation = _currentExperience.location.copyWith(
+        placeTypes: mergedTypes,
+      );
+      final updatedExperience =
+          _currentExperience.copyWith(location: updatedLocation);
+
+      if (mounted) {
+        setState(() {
+          _currentExperience = updatedExperience;
+          _didDataChange = true;
+        });
+      }
+
+      // Persist merged tags
+      if (!widget.readOnlyPreview && _canEditExperience()) {
+        try {
+          await _experienceService.updateExperience(updatedExperience);
+        } catch (e) {
+          print('ExperiencePageScreen: Error saving Gemini tags: $e');
+        }
+      }
+
+      if (_publicExperience != null) {
+        try {
+          await _experienceService.updatePublicExperiencePlaceTags(
+            _publicExperience!.id,
+            placeTypes: mergedTypes,
+          );
+          if (mounted) {
+            setState(() {
+              _publicExperience = _publicExperience!.copyWith(
+                placeTypes: mergedTypes,
+                location: _publicExperience!.location.copyWith(
+                  placeTypes: mergedTypes,
+                ),
+              );
+            });
+          }
+        } catch (e) {
+          print(
+              'ExperiencePageScreen: Error saving Gemini tags to PublicExperience: $e');
+        }
+      }
+    } catch (e) {
+      print('ExperiencePageScreen: Error enriching tags with Gemini: $e');
     }
   }
 
@@ -1126,16 +1363,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     try {
       final userId = _authService.currentUser?.uid;
       if (mounted) {
+        final bool isEditor = userId != null &&
+            _currentExperience.editorUserIds.contains(userId);
         setState(() {
           _currentUserId = userId;
           _isLoadingAuth = false;
+          _isCheckingOwnExperience = userId != null && !isEditor;
         });
 
         // Set _userVote based on whether current user is an editor of this experience
         // Only show the experience's userThumbRating if the current user is an editor
         // This prevents showing another user's rating as if it were our own
-        if (userId != null &&
-            _currentExperience.editorUserIds.contains(userId)) {
+        if (isEditor) {
           setState(() {
             _userVote = _currentExperience.userThumbRating;
           });
@@ -1188,7 +1427,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   /// Checks both the user's own experience and the public experience for their rating
   Future<void> _loadUserRatingForPlace() async {
     final String? placeId = _currentExperience.location.placeId;
-    if (placeId == null || placeId.isEmpty || _currentUserId == null) return;
+    if (placeId == null || placeId.isEmpty || _currentUserId == null) {
+      if (mounted) {
+        setState(() {
+          _isCheckingOwnExperience = false;
+        });
+      }
+      return;
+    }
 
     try {
       // First, try to find the user's own experience for this placeId
@@ -1200,6 +1446,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (userExperience != null && mounted) {
         setState(() {
           _userVote = userExperience.userThumbRating;
+          _userHasOwnExperienceAtPlace = true;
+          _isCheckingOwnExperience = false;
         });
         return;
       }
@@ -1207,13 +1455,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       // If no own experience, check if they have a rating on the public experience
       final publicRating =
           await _experienceService.getUserRatingForPlace(placeId);
-      if (publicRating != null && mounted) {
+      if (mounted) {
         setState(() {
-          _userVote = publicRating;
+          if (publicRating != null) {
+            _userVote = publicRating;
+          }
+          _isCheckingOwnExperience = false;
         });
       }
     } catch (e) {
       debugPrint('Failed to load user rating for place: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingOwnExperience = false;
+        });
+      }
     }
   }
 
@@ -1246,6 +1502,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
     final String? accessMode = widget.shareAccessMode?.toLowerCase();
     return accessMode == 'edit';
+  }
+
+  bool get _shouldShowSaveButton {
+    if (widget.readOnlyPreview) return true;
+    if (_isLoadingAuth || _currentUserId == null) return false;
+    if (_currentExperience.editorUserIds.contains(_currentUserId)) return false;
+    if (widget.shareAccessMode?.toLowerCase() == 'edit') return false;
+    if (_isCheckingOwnExperience) return false;
+    return !_userHasOwnExperienceAtPlace;
   }
 
   // ADDED: Method stub to show the edit modal
@@ -1907,10 +2172,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           ),
                         ),
                       ]),
-                  if (widget.readOnlyPreview) ...[
+                  if (_shouldShowSaveButton) ...[
                     const SizedBox(height: 16), // Spacing below the top row
 
-                    // Save button only shown in read-only experience view
+                    // Save button shown in read-only preview or non-owned experiences
                     Builder(
                       builder: (saveBtnCtx) => Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -2679,6 +2944,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             ),
           ),
           // --- END ADDED ---
+          // --- Place Tags Row ---
+          _buildPlaceTagsRow(context, _currentExperience),
         ],
       ),
     );
@@ -3187,6 +3454,33 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return clampedHeight.toDouble();
   }
 
+  String _sharedMediaCardHeaderText(SharedMediaItem item) {
+    final mediaById = {for (final m in _mediaItems) m.id: m};
+    final ord =
+        SharedMediaDisplayLabels.savedImageOrdinalForItemInExperience(
+      sharedMediaItemIdsInOrder: _currentExperience.sharedMediaItemIds,
+      targetMediaItemId: item.id,
+      mediaById: mediaById,
+    );
+    return SharedMediaDisplayLabels.mediaCardTitle(
+      path: item.path,
+      caption: item.caption,
+      savedImageOrdinal: ord,
+    );
+  }
+
+  /// True when [path] looks like a local image file (for share-intent / persisted paths).
+  bool _looksLikeLocalSharedImagePath(String path) {
+    final l = path.toLowerCase();
+    return l.endsWith('.png') ||
+        l.endsWith('.jpg') ||
+        l.endsWith('.jpeg') ||
+        l.endsWith('.gif') ||
+        l.endsWith('.webp') ||
+        l.endsWith('.heic') ||
+        l.endsWith('.heif');
+  }
+
   bool _isTicketmasterUrl(String url) {
     return TicketmasterService.isTicketmasterUrl(url);
   }
@@ -3463,12 +3757,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       isExpanded && _isMediaPreviewHeightExpanded;
                   final double? previewHeightOverride =
                       _getMediaPreviewHeightOverride(context, url);
-                  final bool canEditMediaPrivacy = !widget.readOnlyPreview &&
+                  final bool canEditMediaPrivacy = _canEditExperience() &&
                       !_showingPublicMedia &&
                       item.id.isNotEmpty;
 
                   if (isExpanded) {
-                    if (isTikTokUrl) {
+                    final localExpanded = tryBuildLocalSharedMediaImage(url);
+                    if (localExpanded != null) {
+                      mediaWidget = localExpanded;
+                    } else if (isTikTokUrl) {
                       final key = _tiktokControllerKeys.putIfAbsent(
                         url,
                         () => GlobalKey<TikTokPreviewWidgetState>(),
@@ -3587,7 +3884,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       );
                     } else if (isNetworkUrl) {
                       final lowerUrl = url.toLowerCase();
-                      if (lowerUrl.endsWith('.jpg') ||
+                      final bool isFirebaseStorageImage =
+                          lowerUrl.contains('firebasestorage.googleapis.com') &&
+                              lowerUrl.contains('shared_media');
+                      if (isFirebaseStorageImage ||
+                          lowerUrl.endsWith('.jpg') ||
                           lowerUrl.endsWith('.jpeg') ||
                           lowerUrl.endsWith('.png') ||
                           lowerUrl.endsWith('.gif') ||
@@ -3634,6 +3935,24 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           launchUrlCallback: _launchUrl,
                         );
                       }
+                    } else if (!kIsWeb &&
+                        !isNetworkUrl &&
+                        _looksLikeLocalSharedImagePath(url) &&
+                        File(url).existsSync()) {
+                      mediaWidget = Image.file(
+                        File(url),
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: Colors.grey[200],
+                            height: 200,
+                            child: Center(
+                              child: Icon(Icons.broken_image_outlined,
+                                  color: Colors.grey[600], size: 40),
+                            ),
+                          );
+                        },
+                      );
                     } else {
                       mediaWidget = Container(
                         height: 150,
@@ -3763,7 +4082,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       children: [
                                         Expanded(
                                           child: Text(
-                                            item.caption ?? url,
+                                            _sharedMediaCardHeaderText(item),
                                             style: const TextStyle(
                                               color: Colors.white,
                                             ),
@@ -4124,7 +4443,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       },
                                     ),
                                   ),
-                                if (!widget.readOnlyPreview && !isPublicView)
+                                if (_canEditExperience() && !isPublicView)
                                   Builder(
                                     builder: (deleteCtx) => IconButton(
                                       icon: const Icon(Icons.delete_outline),
@@ -5181,7 +5500,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- END: Helper method to launch map location --- //
 
   Future<void> _handleSaveExperiencePressed() async {
-    if (!widget.readOnlyPreview) return;
+    if (!_shouldShowSaveButton) return;
     if (_isSaveSheetOpen) return;
 
     // Check if user is authenticated - redirect to auth screen on web if not
@@ -5818,7 +6137,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       try {
         final url = Uri.parse(
             'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/sharedMediaItems/$mediaId');
-        final response = await http.get(url, headers: headers);
+        final response = await _pinnedHttpClient.get(url, headers: headers);
 
         if (response.statusCode == 200) {
           final doc = json.decode(response.body) as Map<String, dynamic>;
@@ -6396,6 +6715,116 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
   // --- ADDED: Helper Widget for Other Categories Row --- END ---
+
+  // --- Place Tags Row ---
+  static const _hiddenPlaceTypes = {
+    'establishment',
+    'point_of_interest',
+    'political',
+    'premise',
+    'street_address',
+    'route',
+    'floor',
+    'room',
+    'post_box',
+    'postal_town',
+    'postal_code',
+    'postal_code_prefix',
+    'postal_code_suffix',
+    'geocode',
+    'subpremise',
+    'plus_code',
+  };
+
+  static String _formatPlaceType(String? type) {
+    if (type == null || type.isEmpty) return '';
+    return type
+        .split('_')
+        .map(
+            (w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
+        .join(' ');
+  }
+
+  List<String> _getDisplayTagsForExperience(Experience experience) {
+    final tags = <String>[];
+    final location = experience.location;
+
+    final primaryDisplay =
+        location.primaryTypeDisplayName ?? _formatPlaceType(location.primaryType);
+    if (primaryDisplay.isNotEmpty) {
+      tags.add(primaryDisplay);
+    }
+
+    final placeTypes = location.placeTypes;
+    if (placeTypes != null) {
+      for (final type in placeTypes) {
+        if (_hiddenPlaceTypes.contains(type)) continue;
+        if (type == location.primaryType) continue;
+        final formatted = _formatPlaceType(type);
+        if (formatted.isNotEmpty && !tags.contains(formatted)) {
+          tags.add(formatted);
+        }
+      }
+    }
+
+    return tags;
+  }
+
+  Widget _buildPlaceTagsRow(BuildContext context, Experience experience) {
+    final tags = _getDisplayTagsForExperience(experience);
+    if (tags.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.label_outline, size: 20.0, color: Colors.black54),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Tags',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6.0,
+                  runSpacing: 6.0,
+                  children: tags.map((tag) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.grey.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Text(
+                        tag,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  // --- END Place Tags Row ---
 
   void _showReportDialog() {
     String? selectedReason;

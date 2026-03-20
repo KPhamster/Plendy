@@ -815,6 +815,58 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     return matchingCategory.color;
   }
 
+  static const _hiddenPlaceTypes = {
+    'establishment',
+    'point_of_interest',
+    'political',
+    'premise',
+    'street_address',
+    'route',
+    'floor',
+    'room',
+    'post_box',
+    'postal_town',
+    'postal_code',
+    'postal_code_prefix',
+    'postal_code_suffix',
+    'geocode',
+    'subpremise',
+    'plus_code',
+  };
+
+  String _formatPlaceType(String? type) {
+    if (type == null || type.isEmpty) return '';
+    return type
+        .split('_')
+        .map((w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
+        .join(' ');
+  }
+
+  List<String> _getDisplayTags() {
+    final tags = <String>[];
+    final card = widget.cardData;
+
+    final primaryDisplay = card.primaryTypeDisplayName ??
+        _formatPlaceType(card.primaryType);
+    if (primaryDisplay.isNotEmpty) {
+      tags.add(primaryDisplay);
+    }
+
+    final placeTypes = card.placeTypes ?? card.selectedLocation?.placeTypes;
+    if (placeTypes != null) {
+      for (final type in placeTypes) {
+        if (_hiddenPlaceTypes.contains(type)) continue;
+        if (type == card.primaryType) continue;
+        final formatted = _formatPlaceType(type);
+        if (formatted.isNotEmpty && !tags.contains(formatted)) {
+          tags.add(formatted);
+        }
+      }
+    }
+
+    return tags;
+  }
+
   ColorCategory? _getSelectedColorCategoryObject() {
     final selectedId = widget.cardData.selectedColorCategoryId;
     if (selectedId == null) {
@@ -2072,6 +2124,43 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         },
                       ),
                       // --- END ADDED ---
+
+                      // --- Place Tags from Google Places API ---
+                      if (_getDisplayTags().isNotEmpty) ...[
+                        SizedBox(height: 16),
+                        Text('Tags',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: _getDisplayTags().map((tag) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.withValues(alpha: 0.10),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: Colors.grey.withValues(alpha: 0.25),
+                                ),
+                              ),
+                              child: Text(
+                                tag,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[700],
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      // --- END Place Tags ---
 
                       SizedBox(height: 16),
 

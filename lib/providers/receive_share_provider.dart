@@ -16,6 +16,10 @@ class ReceiveShareProvider extends ChangeNotifier {
   List<ColorCategory> _userColorCategories = [];
   SharedPreferences? _prefs; // ADDED: To store SharedPreferences instance
 
+  /// Called after a card is populated from an existing experience,
+  /// so the screen can enrich tags if needed.
+  void Function(String cardId)? onExistingExperienceLoaded;
+
   List<ExperienceCardData> get experienceCards => _experienceCards;
 
   // MODIFIED: Constructor is now simpler. Dependencies are set via setDependencies.
@@ -238,6 +242,8 @@ class ReceiveShareProvider extends ChangeNotifier {
         if (location.placeTypes != null && location.placeTypes!.isNotEmpty) {
           targetCard.placeTypes = location.placeTypes;
         }
+        targetCard.primaryType = location.primaryType;
+        targetCard.primaryTypeDisplayName = location.primaryTypeDisplayName;
         // Update search query only if it's empty or location address is different
         if (targetCard.searchController.text.isEmpty ||
             targetCard.searchController.text != (location.address ?? '')) {
@@ -346,8 +352,19 @@ class ReceiveShareProvider extends ChangeNotifier {
       // Optionally update placeIdForPreview if the location has one
       targetCard.placeIdForPreview = selectedExperience.location.placeId;
 
+      // Copy place tags from the experience's location
+      if (selectedExperience.location.placeTypes != null &&
+          selectedExperience.location.placeTypes!.isNotEmpty) {
+        targetCard.placeTypes = selectedExperience.location.placeTypes;
+      }
+      targetCard.primaryType = selectedExperience.location.primaryType;
+      targetCard.primaryTypeDisplayName =
+          selectedExperience.location.primaryTypeDisplayName;
+
       // print('PROVIDER_DEBUG: Updated card $cardId with existing experience ${selectedExperience.id} (${selectedExperience.name})');
       notifyListeners();
+
+      onExistingExperienceLoaded?.call(cardId);
     } // else {
     // print('PROVIDER_DEBUG: Card with ID $cardId not found for update with existing experience.');
     // }
@@ -430,6 +447,8 @@ class ReceiveShareProvider extends ChangeNotifier {
       if (location.placeTypes != null && location.placeTypes!.isNotEmpty) {
         card.placeTypes = location.placeTypes;
       }
+      card.primaryType = location.primaryType;
+      card.primaryTypeDisplayName = location.primaryTypeDisplayName;
 
       if (yelpUrl != null) {
         card.yelpUrlController.text = yelpUrl;

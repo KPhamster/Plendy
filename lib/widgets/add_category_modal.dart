@@ -174,7 +174,8 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
 
     return Material(
       color: Colors.white,
-      child: Padding(
+      child: SingleChildScrollView(
+        child: Padding(
         padding: EdgeInsets.only(
           left: 16.0,
           right: 16.0,
@@ -312,6 +313,7 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

@@ -153,9 +153,8 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
                   mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
                   // Enable DOM storage for YouTube player state
                   domStorageEnabled: true,
-                  // Allow file access for media playback
-                  allowFileAccess: true,
-                  allowContentAccess: true,
+                  allowFileAccess: false,
+                  allowContentAccess: false,
                   // Support zoom for better UX
                   supportZoom: false,
                   // Disable text zoom to maintain layout

@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/experience.dart';
 import '../models/review.dart';
 import '../models/comment.dart';
@@ -1031,6 +1034,41 @@ class ExperienceService {
     }
   }
 
+  /// Updates place tags on a PublicExperience document (placeTypes + location sub-fields).
+  Future<bool> updatePublicExperiencePlaceTags(
+    String publicExperienceId, {
+    List<String>? placeTypes,
+    String? primaryType,
+    String? primaryTypeDisplayName,
+  }) async {
+    if (publicExperienceId.isEmpty) return false;
+
+    try {
+      final Map<String, dynamic> updateData = {};
+      if (placeTypes != null && placeTypes.isNotEmpty) {
+        updateData['placeTypes'] = placeTypes;
+        updateData['location.placeTypes'] = placeTypes;
+      }
+      if (primaryType != null) {
+        updateData['location.primaryType'] = primaryType;
+      }
+      if (primaryTypeDisplayName != null) {
+        updateData['location.primaryTypeDisplayName'] = primaryTypeDisplayName;
+      }
+      if (updateData.isEmpty) return true;
+
+      await _firestore
+          .collection('public_experiences')
+          .doc(publicExperienceId)
+          .update(updateData);
+      return true;
+    } catch (e) {
+      print(
+          'updatePublicExperiencePlaceTags: Error for ID $publicExperienceId: $e');
+      return false;
+    }
+  }
+
   // ======= Shared Media Item Operations =======
 
   /// Finds a single SharedMediaItem document by its path.
@@ -1061,6 +1099,63 @@ class ExperienceService {
       print("Error finding shared media item by path '$path': $e");
       return null;
     }
+  }
+
+  /// Copies a share-intent image from cache/temp into app documents so it survives
+  /// after the system clears the share cache. Returns [source.path] if copy fails.
+  Future<String> copySharedMediaToAppDocuments(File source) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final sub = Directory('${dir.path}/plendy_shared_media');
+      if (!sub.existsSync()) {
+        sub.createSync(recursive: true);
+      }
+      final normalized = source.path.replaceAll('\\', '/');
+      final baseName = normalized.split('/').last;
+      final name =
+          '${DateTime.now().millisecondsSinceEpoch}_$baseName';
+      final dest = File('${sub.path}/$name');
+      await source.copy(dest.path);
+      debugPrint('copySharedMediaToAppDocuments: ${source.path} -> ${dest.path}');
+      return dest.path;
+    } catch (e) {
+      debugPrint('copySharedMediaToAppDocuments: failed, using source path: $e');
+      return source.path;
+    }
+  }
+
+  /// Uploads a local image file to Firebase Storage and returns the download URL.
+  /// Files are stored under `shared_media/{userId}/{timestamp}_{filename}`.
+  /// Returns null if the upload fails.
+  Future<String?> uploadSharedImage(File imageFile, String userId) async {
+    try {
+      final fileName = imageFile.path.split('/').last;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final storagePath = 'shared_media/$userId/${timestamp}_$fileName';
+
+      final ref = FirebaseStorage.instance.ref(storagePath);
+      final metadata = SettableMetadata(
+        contentType: _inferImageContentType(fileName),
+      );
+
+      await ref.putFile(imageFile, metadata);
+      final downloadUrl = await ref.getDownloadURL();
+
+      debugPrint('uploadSharedImage: Uploaded to $storagePath');
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('uploadSharedImage: Failed to upload image: $e');
+      return null;
+    }
+  }
+
+  String _inferImageContentType(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'image/heic';
+    return 'image/jpeg';
   }
 
   /// Creates a new SharedMediaItem document in Firestore.

@@ -7,6 +7,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../config/api_secrets.dart';
 import '../models/gemini_grounding_result.dart';
 import '../models/extracted_event_info.dart';
+import 'certificate_pinning_service.dart';
 
 /// Service for interacting with Google's Gemini API with Maps grounding
 /// 
@@ -19,7 +20,7 @@ class GeminiService {
 
   GeminiService._internal();
 
-  final Dio _dio = Dio();
+  final Dio _dio = CertificatePinningService().createPinnedDio();
   
   // Gemini API base URL
   static const String _baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
@@ -334,8 +335,7 @@ If you cannot find the business with confidence, return:
 - Return ONLY the JSON object, no other text
 ''';
 
-      // Use Gemini with Google Search grounding - use higher token limit for JSON response
-      final response = await _callGeminiWithSearchGrounding(prompt, maxOutputTokens: 512);
+      final response = await _callGeminiWithSearchGrounding(prompt);
       
       if (response == null) {
         print('⚠️ GEMINI HANDLE LOOKUP: No response from API');
@@ -615,25 +615,16 @@ WRONG (do NOT do this):
   }
 
   /// Call Gemini API with Google Search grounding (for web lookups)
-  /// 
-  /// [prompt] - The prompt to send
-  /// [maxOutputTokens] - Max tokens for response. If null, uses model's full capacity.
-  ///                     Set to lower values (e.g., 256) for simple lookups to reduce cost.
   Future<Map<String, dynamic>?> _callGeminiWithSearchGrounding(
-    String prompt, {
-    int? maxOutputTokens,
-  }) async {
+    String prompt,
+  ) async {
     final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
     
-    // Build generation config - only include maxOutputTokens if specified
     final generationConfig = <String, dynamic>{
-      'temperature': 0.1, // Low temperature for factual lookups
+      'temperature': 0.1,
       'topP': 0.8,
       'topK': 40,
     };
-    if (maxOutputTokens != null) {
-      generationConfig['maxOutputTokens'] = maxOutputTokens;
-    }
     
     // Build request with Google Search grounding
     final requestBody = {
@@ -706,7 +697,18 @@ WRONG (do NOT do this):
             return extracted;
           }
         }
-        // If we detected JSON but couldn't extract a name, return null rather than garbage
+        // Fallback: handle truncated name values where the closing quote is missing
+        // e.g., "name": "Shin-Sen-  (response cut off mid-name)
+        final truncatedMatch = RegExp(r'"name"\s*:\s*"([^"]{3,})').firstMatch(businessName);
+        if (truncatedMatch != null) {
+          var extracted = truncatedMatch.group(1)!.trim();
+          // Remove trailing incomplete fragments (punctuation, ellipsis)
+          extracted = extracted.replaceAll(RegExp(r'[\s,.\-]+$'), '');
+          if (extracted.length >= 3 && extracted.toLowerCase() != 'null') {
+            print('📝 HANDLE PARSE: Extracted truncated name from JSON: "$extracted"');
+            return extracted;
+          }
+        }
         print('⚠️ HANDLE PARSE: Detected JSON response but could not extract name');
         return null;
       }
@@ -964,7 +966,6 @@ Return a JSON array with all locations found:
         'temperature': 0.1,
         'topP': 0.8,
         'topK': 40,
-        'maxOutputTokens': 4096, // Higher limit for video content
       }
     };
 
@@ -1176,7 +1177,6 @@ Return a JSON array with ONLY relevant locations:
         'temperature': 0.1,
         'topP': 0.8,
         'topK': 40,
-        'maxOutputTokens': 2048,
       }
     };
 
@@ -3072,7 +3072,6 @@ If you cannot verify the place exists, return:
         'temperature': 0.2,
         'topP': 0.9,
         'topK': 50,
-        'maxOutputTokens': 4096,
       }
     };
 
@@ -3273,10 +3272,9 @@ If you cannot verify the place exists, return:
       ],
       // Generation config - slightly higher temperature for better OCR creativity
       'generationConfig': {
-        'temperature': 0.2,  // Slightly higher for better text recognition
-        'topP': 0.9,         // More diverse outputs 
-        'topK': 50,          // Wider selection
-        'maxOutputTokens': 4096,  // More room for multiple locations
+        'temperature': 0.2,
+        'topP': 0.9,
+        'topK': 50,
       }
     };
 
@@ -3847,7 +3845,7 @@ If you see @handles, convert them to business names:
       // Check for truncation (finish_reason will be MAX_TOKENS if truncated)
       final finishReason = candidate['finishReason'] as String?;
       if (finishReason == 'MAX_TOKENS') {
-        print('⚠️ GEMINI CONTEXT: Response was truncated (MAX_TOKENS). Consider increasing maxOutputTokens.');
+        print('⚠️ GEMINI CONTEXT: Response was truncated (MAX_TOKENS).');
       }
       
       final content = candidate['content'] as Map<String, dynamic>?;
@@ -4747,8 +4745,7 @@ If you cannot find reliable information about this specific place, return:
         }
       ],
       'generationConfig': {
-        'temperature': 0.1,  // Low temperature for more deterministic responses
-        'maxOutputTokens': 256,  // Keep responses short
+        'temperature': 0.1,
       },
     };
 
@@ -4808,6 +4805,77 @@ If you cannot find reliable information about this specific place, return:
     } catch (e) {
       print('❌ GEMINI SIMPLE ERROR: $e');
       return null;
+    }
+  }
+
+  /// Suggest additional descriptive tags for a place using Gemini.
+  ///
+  /// Given the place name, its Google Places API types, and optional context,
+  /// returns a list of short human-readable tags that complement the existing ones.
+  /// Returns an empty list on failure.
+  Future<List<String>> suggestAdditionalTags({
+    required String placeName,
+    List<String>? existingTypes,
+    String? primaryTypeDisplayName,
+    String? locationContext,
+    List<String>? socialHashtags,
+  }) async {
+    if (!isConfigured) return [];
+
+    final existingFormatted = (existingTypes ?? [])
+        .map((t) => t.split('_').map((w) =>
+            w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '').join(' '))
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    if (primaryTypeDisplayName != null && primaryTypeDisplayName.isNotEmpty) {
+      existingFormatted.insert(0, primaryTypeDisplayName);
+    }
+
+    final contextClause = locationContext != null
+        ? ' located in $locationContext'
+        : '';
+
+    final hashtagClause = (socialHashtags != null && socialHashtags.isNotEmpty)
+        ? '\nSocial media hashtags from the post: ${socialHashtags.take(15).map((h) => '#$h').join(' ')}'
+        : '';
+
+    final prompt = '''
+You are a place tagging assistant. Given a place and its existing tags, suggest 3-5 additional short descriptive tags that would help someone browsing a list of saved places.
+
+PRIORITY ORDER for tags:
+1. Specific cuisine or food type (e.g. "Sushi", "Tacos", "Omakase", "BBQ", "Ramen") — ALWAYS include at least one if it's a food/drink venue
+2. Dining style or format (e.g. "Fine Dining", "Casual", "Counter Service", "Omakase")
+3. Ambiance or vibe (e.g. "Date Night", "Cozy", "Rooftop")
+4. Distinguishing features (e.g. "Craft Cocktails", "Reservations Required", "Outdoor Seating")
+
+Each tag should be 1-3 words, Title Case, no hashtags.
+
+Do NOT repeat any existing tags. Do NOT include generic labels like "Establishment", "Point Of Interest", "Food", or "Restaurant". Do NOT include the place name itself.
+
+Place: "$placeName"$contextClause
+Existing tags: ${existingFormatted.isNotEmpty ? existingFormatted.join(', ') : 'None'}$hashtagClause
+
+Return ONLY a JSON array of strings, nothing else. Example: ["Sushi", "Omakase", "Fine Dining", "Intimate Setting"]
+''';
+
+    try {
+      final responseText = await generateTextWithGoogleSearch(prompt);
+      if (responseText == null || responseText.trim().isEmpty) return [];
+
+      final cleaned = responseText.trim();
+      final jsonMatch = RegExp(r'\[.*\]', dotAll: true).firstMatch(cleaned);
+      if (jsonMatch == null) return [];
+
+      final parsed = jsonDecode(jsonMatch.group(0)!) as List;
+      return parsed
+          .whereType<String>()
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty && s.length <= 30)
+          .toList();
+    } catch (e) {
+      print('❌ GEMINI TAGS: Error suggesting tags: $e');
+      return [];
     }
   }
 

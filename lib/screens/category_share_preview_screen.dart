@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:provider/provider.dart';
 import '../../firebase_options.dart';
+import '../services/certificate_pinning_service.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
@@ -31,6 +32,7 @@ class CategorySharePreviewScreen extends StatefulWidget {
 
 class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
     with TickerProviderStateMixin {
+  final http.Client _pinnedHttpClient = CertificatePinningService().createPinnedHttpClient();
   late final ScreenHelpController<CategorySharePreviewHelpTargetId> _help;
 
   @override
@@ -301,11 +303,11 @@ class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
         'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/category_shares/$token');
     try {
       http.Response? byIdResp =
-          await retryHttp(() => http.get(byIdUrl, headers: headers));
+          await retryHttp(() => _pinnedHttpClient.get(byIdUrl, headers: headers));
       // If not found immediately, wait briefly and try byId one more time to avoid propagation races
       if (byIdResp != null && byIdResp.statusCode == 404 && !kIsWeb) {
         await Future.delayed(const Duration(milliseconds: 600));
-        byIdResp = await retryHttp(() => http.get(byIdUrl, headers: headers));
+        byIdResp = await retryHttp(() => _pinnedHttpClient.get(byIdUrl, headers: headers));
       }
       if (byIdResp != null && byIdResp.statusCode == 200) {
         final body = json.decode(byIdResp.body) as Map<String, dynamic>;
@@ -356,7 +358,7 @@ class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
     http.Response? resp;
     try {
       resp = await retryHttp(() =>
-          http.post(runQueryUrl, body: json.encode(payload), headers: headers));
+          _pinnedHttpClient.post(runQueryUrl, body: json.encode(payload), headers: headers));
     } catch (e) {
       throw Exception('Network error while looking up share');
     }
@@ -373,7 +375,7 @@ class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
       // Cold-start race or transient propagation; retry a couple more times with backoff
       for (final delay in [700, 1200]) {
         await Future.delayed(Duration(milliseconds: delay));
-        final retry = await retryHttp(() => http.post(runQueryUrl,
+        final retry = await retryHttp(() => _pinnedHttpClient.post(runQueryUrl,
             body: json.encode(payload), headers: headers));
         if (retry != null && retry.statusCode == 200) {
           results = json.decode(retry.body) as List;

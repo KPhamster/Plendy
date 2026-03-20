@@ -59,6 +59,9 @@ import '../services/event_service.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../utils/shared_media_display_labels.dart';
+import '../utils/local_shared_media_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/collections_help_target.dart';
 import '../config/collections_help_content.dart';
 import '../widgets/collections_help_bubble.dart';
@@ -145,23 +148,28 @@ class GroupedContentItem {
   final SharedMediaItem mediaItem;
   final List<Experience> associatedExperiences;
   double? minDistance; // Used for distance sorting
+  /// 1-based "Saved Image N" index on the primary linked experience, if applicable.
+  final int? savedImageOrdinal;
 
   GroupedContentItem({
     required this.mediaItem,
     required this.associatedExperiences,
     this.minDistance,
+    this.savedImageOrdinal,
   });
 
   GroupedContentItem copyWith({
     SharedMediaItem? mediaItem,
     List<Experience>? associatedExperiences,
     double? minDistance,
+    int? savedImageOrdinal,
   }) {
     return GroupedContentItem(
       mediaItem: mediaItem ?? this.mediaItem,
       associatedExperiences:
           associatedExperiences ?? this.associatedExperiences,
       minDistance: minDistance ?? this.minDistance,
+      savedImageOrdinal: savedImageOrdinal ?? this.savedImageOrdinal,
     );
   }
 }
@@ -7324,21 +7332,27 @@ class CollectionsScreenState extends State<CollectionsScreen>
             const SizedBox(height: 8),
             // Display the content path or a placeholder
             Text(
-              mediaItem.path.contains('instagram.com')
-                  ? 'Instagram Post'
-                  : mediaItem.path.contains('facebook.com') ||
-                          mediaItem.path.contains('fb.com') ||
-                          mediaItem.path.contains('fb.watch')
-                      ? 'Facebook Post'
-                      : mediaItem.path.contains('tiktok.com') ||
-                              mediaItem.path.contains('vm.tiktok.com')
-                          ? 'TikTok Post'
-                          : mediaItem.path.contains('youtube.com') ||
-                                  mediaItem.path.contains('youtu.be')
-                              ? 'YouTube Video'
-                              : mediaItem.path
-                                  .split('/')
-                                  .last, // Show filename if possible
+              group.savedImageOrdinal != null
+                  ? SharedMediaDisplayLabels.mediaCardTitle(
+                      path: mediaItem.path,
+                      caption: mediaItem.caption,
+                      savedImageOrdinal: group.savedImageOrdinal,
+                    )
+                  : mediaItem.path.contains('instagram.com')
+                      ? 'Instagram Post'
+                      : mediaItem.path.contains('facebook.com') ||
+                              mediaItem.path.contains('fb.com') ||
+                              mediaItem.path.contains('fb.watch')
+                          ? 'Facebook Post'
+                          : mediaItem.path.contains('tiktok.com') ||
+                                  mediaItem.path.contains('vm.tiktok.com')
+                              ? 'TikTok Post'
+                              : mediaItem.path.contains('youtube.com') ||
+                                      mediaItem.path.contains('youtu.be')
+                                  ? 'YouTube Video'
+                                  : mediaItem.path
+                                      .split('/')
+                                      .last, // Show filename if possible
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
@@ -9311,10 +9325,32 @@ class CollectionsScreenState extends State<CollectionsScreen>
     if (pattern.isEmpty) {
       return [];
     }
-    // Simple case-insensitive search on the name (using the full list)
-    List<Experience> suggestions = _experiences
-        .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
-        .toList();
+    final patternLower = pattern.toLowerCase();
+    List<Experience> suggestions = _experiences.where((exp) {
+      if (exp.name.toLowerCase().contains(patternLower)) return true;
+      if (exp.tags != null &&
+          exp.tags!.any((tag) => tag.toLowerCase().contains(patternLower))) {
+        return true;
+      }
+      final loc = exp.location;
+      if (loc.primaryTypeDisplayName != null &&
+          loc.primaryTypeDisplayName!.toLowerCase().contains(patternLower)) {
+        return true;
+      }
+      if (loc.primaryType != null &&
+          loc.primaryType!
+              .replaceAll('_', ' ')
+              .toLowerCase()
+              .contains(patternLower)) {
+        return true;
+      }
+      if (loc.placeTypes != null &&
+          loc.placeTypes!.any((t) =>
+              t.replaceAll('_', ' ').toLowerCase().contains(patternLower))) {
+        return true;
+      }
+      return false;
+    }).toList();
 
     // Sort suggestions: those matching _selectedCategoryIds first, then by name
     if (_selectedCategory != null) {
@@ -9388,7 +9424,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
         mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
     Widget mediaDisplayWidget;
-    if (isTikTokUrl) {
+    final localSavedPreview = tryBuildLocalSharedMediaImage(mediaPath);
+    if (localSavedPreview != null) {
+      mediaDisplayWidget = localSavedPreview;
+    } else if (isTikTokUrl) {
       mediaDisplayWidget = kIsWeb
           ? WebMediaPreviewCard(
               url: mediaPath,
@@ -9484,26 +9523,29 @@ class CollectionsScreenState extends State<CollectionsScreen>
         imageUrl: mediaItem.ticketmasterImageUrl ?? details?.imageUrl,
       );
     } else if (isNetworkUrl) {
-      // Check if it's an image URL
-      if (mediaPath.toLowerCase().endsWith('.jpg') ||
-          mediaPath.toLowerCase().endsWith('.jpeg') ||
-          mediaPath.toLowerCase().endsWith('.png') ||
-          mediaPath.toLowerCase().endsWith('.gif') ||
-          mediaPath.toLowerCase().endsWith('.webp')) {
-        mediaDisplayWidget = Image.network(
-          mediaPath,
+      final lp = mediaPath.toLowerCase();
+      final isFirebaseSaved = lp.contains('firebasestorage.googleapis.com') &&
+          lp.contains('shared_media');
+      if (isFirebaseSaved ||
+          lp.endsWith('.jpg') ||
+          lp.endsWith('.jpeg') ||
+          lp.endsWith('.png') ||
+          lp.endsWith('.gif') ||
+          lp.endsWith('.webp')) {
+        mediaDisplayWidget = CachedNetworkImage(
+          imageUrl: mediaPath,
           fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return const Center(child: CircularProgressIndicator());
-          },
-          errorBuilder: (context, error, stackTrace) {
+          placeholder: (context, _) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+          errorWidget: (context, _, __) {
             return Container(
               color: Colors.grey[200],
               height: 200,
               child: Center(
-                  child: Icon(Icons.broken_image_outlined,
-                      color: Colors.grey[600], size: 40)),
+                child: Icon(Icons.broken_image_outlined,
+                    color: Colors.grey[600], size: 40),
+              ),
             );
           },
         );
@@ -9741,7 +9783,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     Widget? mediaWidget;
     if (isExpanded) {
-      if (isTikTokUrl) {
+      final localExpanded = tryBuildLocalSharedMediaImage(mediaPath);
+      if (localExpanded != null) {
+        mediaWidget = localExpanded;
+      } else if (isTikTokUrl) {
         mediaWidget = kIsWeb
             ? WebMediaPreviewCard(
                 url: mediaPath,
@@ -9832,25 +9877,29 @@ class CollectionsScreenState extends State<CollectionsScreen>
           imageUrl: mediaItem.ticketmasterImageUrl ?? details?.imageUrl,
         );
       } else if (isNetworkUrl) {
-        if (lowerPath.endsWith('.jpg') ||
+        final isFirebaseSaved = lowerPath
+                .contains('firebasestorage.googleapis.com') &&
+            lowerPath.contains('shared_media');
+        if (isFirebaseSaved ||
+            lowerPath.endsWith('.jpg') ||
             lowerPath.endsWith('.jpeg') ||
             lowerPath.endsWith('.png') ||
             lowerPath.endsWith('.gif') ||
             lowerPath.endsWith('.webp')) {
-          mediaWidget = Image.network(
-            mediaPath,
+          mediaWidget = CachedNetworkImage(
+            imageUrl: mediaPath,
             fit: BoxFit.cover,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return const Center(child: CircularProgressIndicator());
-            },
-            errorBuilder: (context, error, stackTrace) {
+            placeholder: (context, _) => const Center(
+              child: CircularProgressIndicator(),
+            ),
+            errorWidget: (context, _, __) {
               return Container(
                 color: Colors.grey[200],
                 height: 200,
                 child: Center(
-                    child: Icon(Icons.broken_image_outlined,
-                        color: Colors.grey[600], size: 40)),
+                  child: Icon(Icons.broken_image_outlined,
+                      color: Colors.grey[600], size: 40),
+                ),
               );
             },
           );
@@ -9998,7 +10047,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          mediaItem.caption ?? mediaPath,
+                          SharedMediaDisplayLabels.mediaCardTitle(
+                            path: mediaPath,
+                            caption: mediaItem.caption,
+                            savedImageOrdinal: group.savedImageOrdinal,
+                          ),
                           style: const TextStyle(color: Colors.white),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -10327,19 +10380,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
       builder: (BuildContext dialogContext) {
         // Use a different name for dialog's own context
         return AlertDialog(
-          title: Text(group.mediaItem.path.contains("instagram.com")
-              ? "Instagram Post Details"
-              : group.mediaItem.path.contains('facebook.com') ||
-                      group.mediaItem.path.contains('fb.com') ||
-                      group.mediaItem.path.contains('fb.watch')
-                  ? 'Facebook Post Details'
-                  : group.mediaItem.path.contains('tiktok.com') ||
-                          group.mediaItem.path.contains('vm.tiktok.com')
-                      ? 'TikTok Post Details'
-                      : group.mediaItem.path.contains('youtube.com') ||
-                              group.mediaItem.path.contains('youtu.be')
-                          ? 'YouTube Video Details'
-                          : "Shared Media Details"),
+          title: Text(group.savedImageOrdinal != null
+              ? 'Saved image details'
+              : group.mediaItem.path.contains("instagram.com")
+                  ? "Instagram Post Details"
+                  : group.mediaItem.path.contains('facebook.com') ||
+                          group.mediaItem.path.contains('fb.com') ||
+                          group.mediaItem.path.contains('fb.watch')
+                      ? 'Facebook Post Details'
+                      : group.mediaItem.path.contains('tiktok.com') ||
+                              group.mediaItem.path.contains('vm.tiktok.com')
+                          ? 'TikTok Post Details'
+                          : group.mediaItem.path.contains('youtube.com') ||
+                                  group.mediaItem.path.contains('youtu.be')
+                              ? 'YouTube Video Details'
+                              : "Shared Media Details"),
           content: SizedBox(
             // Wrap the Column with SizedBox to constrain its width
             width: MediaQuery.of(dialogContext).size.width *
@@ -10523,9 +10578,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
               associatedExperiences.sort((a, b) =>
                   a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
+              final primaryExp = associatedExperiences.first;
+              final savedOrd =
+                  SharedMediaDisplayLabels.savedImageOrdinalForItemInExperience(
+                sharedMediaItemIdsInOrder: primaryExp.sharedMediaItemIds,
+                targetMediaItemId: mediaItem.id,
+                mediaById: mediaItemMap,
+              );
+
               groupedContent.add(GroupedContentItem(
                 mediaItem: mediaItem,
                 associatedExperiences: associatedExperiences,
+                savedImageOrdinal: savedOrd,
               ));
             }
           });

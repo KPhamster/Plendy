@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../config/api_keys.dart';
 import '../config/api_secrets.dart';
 import '../models/experience.dart';
+import 'certificate_pinning_service.dart';
 
 /// Service class for Google Maps functionality
 class GoogleMapsService {
@@ -22,8 +23,9 @@ class GoogleMapsService {
 
   GoogleMapsService._internal();
 
-  // For more advanced API requests
-  final Dio _dio = Dio();
+  // Pinned to Google root CAs to prevent MITM attacks
+  final Dio _dio = CertificatePinningService().createPinnedDio();
+  final http.Client _httpClient = CertificatePinningService().createPinnedHttpClient();
 
   // Cache for Place Details results keyed by Place ID
   final Map<String, Location> _placeDetailsCache = {};
@@ -635,6 +637,8 @@ class GoogleMapsService {
         'rating',
         'userRatingCount',
         'types',
+        'primaryType',
+        'primaryTypeDisplayName',
         if (includePhotoUrl) 'photos',
       ].join(',');
 
@@ -694,6 +698,12 @@ class GoogleMapsService {
           final List<String>? placeTypes =
               (data['types'] as List<dynamic>?)?.cast<String>();
 
+          final String? primaryType = data['primaryType'] as String?;
+          final primaryTypeDisplayNameMap =
+              data['primaryTypeDisplayName'] as Map<String, dynamic>?;
+          final String? primaryTypeDisplayName =
+              primaryTypeDisplayNameMap?['text'] as String?;
+
           String? photoUrl;
           if (includePhotoUrl) {
             final photos = data['photos'] as List<dynamic>?;
@@ -723,6 +733,8 @@ class GoogleMapsService {
             rating: rating,
             userRatingCount: userRatingCount,
             placeTypes: placeTypes,
+            primaryType: primaryType,
+            primaryTypeDisplayName: primaryTypeDisplayName,
           );
 
           _placeDetailsCache[placeId] = locationObj;
@@ -900,7 +912,7 @@ class GoogleMapsService {
         final geocodeUrl = Uri.parse(
             'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey');
 
-        final geocodeResponse = await http.get(geocodeUrl);
+        final geocodeResponse = await _httpClient.get(geocodeUrl);
 
         if (geocodeResponse.statusCode == 200) {
           final geocodeData = json.decode(geocodeResponse.body);
@@ -1017,7 +1029,7 @@ class GoogleMapsService {
       final url = Uri.parse(
           'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey');
 
-      final response = await http.get(url);
+      final response = await _httpClient.get(url);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1672,7 +1684,7 @@ class GoogleMapsService {
 
     // Define the fields to request using FieldMask syntax
     const String fieldMask =
-        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,currentOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos';
+        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,currentOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos,types,primaryType,primaryTypeDisplayName';
 
     final url = 'https://places.googleapis.com/v1/places/$placeId';
 
@@ -1753,7 +1765,7 @@ class GoogleMapsService {
     url += '&key=$apiKey';
 
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await _httpClient.get(Uri.parse(url));
       print(
           "🔍 NEARBY SEARCH: API response status code: ${response.statusCode}");
 
@@ -1838,7 +1850,7 @@ class GoogleMapsService {
         'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey';
 
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await _httpClient.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);

@@ -76,6 +76,12 @@ class ExperienceCardData {
   /// This is populated from extracted location data or Places API responses
   List<String>? placeTypes;
 
+  /// Primary type from Places API (e.g., "italian_restaurant")
+  String? primaryType;
+
+  /// Human-readable primary type display name (e.g., "Italian Restaurant")
+  String? primaryTypeDisplayName;
+
   /// Fetched description from Google Places API (editorialSummary/reviewSummary/generativeSummary)
   /// This is used as the description when user hasn't provided their own notes
   String? fetchedDescription;

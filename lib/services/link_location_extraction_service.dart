@@ -968,21 +968,32 @@ class LinkLocationExtractionService {
   List<String> _extractExplicitAddresses(String text) {
     final addresses = <String>[];
     
+    // Street type pattern requires a preceding space so "connect" can't match "Ct"
+    const streetTypes = r'(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)';
+    // State abbreviations must be standalone words (word boundaries)
+    const stateAbbrevs = r'\b(?:CA|NY|TX|FL|WA|AZ|NV|OR|CO|IL|PA|OH|GA|NC|MI|NJ|VA|MA|TN|IN|MO|MD|WI|MN|SC|AL|LA|KY|OK|CT|UT|IA|NE|MS|AR|KS|NM|ID|WV|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC)\b';
+    
     // Full address with ZIP: "603 N La Cienega Blvd, West Hollywood, CA 90069"
     final fullPattern = RegExp(
-      r'(\d+\s+[\w\s.]+(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)\.?\s*,?\s*[\w\s]+,?\s*(?:CA|NY|TX|FL|WA|AZ|NV|OR|CO|IL|PA|OH|GA|NC|MI|NJ|VA|MA|TN|IN|MO|MD|WI|MN|SC|AL|LA|KY|OK|CT|UT|IA|NE|MS|AR|KS|NM|ID|WV|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC)\.?\s*\d{5}(?:-\d{4})?)',
+      r'(\d+\s+[\w\s.]+\s' + streetTypes + r'\.?\s*,?\s*[\w\s]+,?\s*' + stateAbbrevs + r'\.?\s*\d{5}(?:-\d{4})?)',
       caseSensitive: false,
     );
     
     // Address without ZIP: "603 N La Cienega Blvd, West Hollywood, CA"
     final partialPattern = RegExp(
-      r'(\d+\s+[\w\s.]+(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)\.?\s*,?\s*[\w\s]+,?\s*(?:CA|NY|TX|FL|WA|AZ|NV|OR|CO|IL|PA|OH|GA|NC|MI|NJ|VA|MA|TN|IN|MO|MD|WI|MN|SC|AL|LA|KY|OK|CT|UT|IA|NE|MS|AR|KS|NM|ID|WV|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC))',
+      r'(\d+\s+[\w\s.]+\s' + streetTypes + r'\.?\s*,?\s*[\w\s]+,?\s*' + stateAbbrevs + r')',
+      caseSensitive: false,
+    );
+    
+    // Noise patterns that indicate scraped UI text, not real addresses
+    final noiseIndicators = RegExp(
+      r'(notification|log\s*in|sign\s*up|connect\s+with|friends|followers|subscribe|cookie|privacy|download)',
       caseSensitive: false,
     );
     
     for (final match in fullPattern.allMatches(text)) {
       final addr = match.group(1)?.trim();
-      if (addr != null && addr.length > 10) {
+      if (addr != null && addr.length > 10 && !noiseIndicators.hasMatch(addr)) {
         addresses.add(addr);
       }
     }
@@ -990,7 +1001,7 @@ class LinkLocationExtractionService {
     if (addresses.isEmpty) {
       for (final match in partialPattern.allMatches(text)) {
         final addr = match.group(1)?.trim();
-        if (addr != null && addr.length > 10) {
+        if (addr != null && addr.length > 10 && !noiseIndicators.hasMatch(addr)) {
           addresses.add(addr);
         }
       }
@@ -1229,7 +1240,19 @@ class LinkLocationExtractionService {
         }
         
         if (businessResults.isNotEmpty) {
-          final topResult = businessResults.first;
+          // When multiple results exist and we have location context,
+          // score them to pick the best match (e.g., prefer Fountain Valley over Irvine)
+          Map<String, dynamic> topResult;
+          if (businessResults.length > 1 && locationContext != null && locationContext.isNotEmpty) {
+            final contextHints = GeographicHints(cities: {locationContext.toLowerCase().trim()});
+            final scored = _selectBestPlaceResult(businessResults, locationName, 
+              geminiType: geminiType, geographicHints: contextHints, groundedAddress: explicitAddress);
+            topResult = scored ?? businessResults.first;
+            final selectedName = (topResult['name'] ?? topResult['description']?.toString().split(',').first ?? '') as String;
+            print('🏠 PLACES RESOLVE: Scored ${businessResults.length} candidates, selected "$selectedName"');
+          } else {
+            topResult = businessResults.first;
+          }
           final topName = (topResult['name'] ?? topResult['description']?.toString().split(',').first ?? '') as String;
           final topPlaceId = topResult['placeId'] as String?;
           
@@ -1327,9 +1350,10 @@ class LinkLocationExtractionService {
       String searchQuery = locationName;
       
       // A specific street address is more useful than a generic city name from hashtags
+      // Require space before street type to prevent "connect" matching "Ct" etc.
       final hasStreetAddress = address != null && 
           address.isNotEmpty && 
-          RegExp(r'\d+\s+[\w\s]+(Ave|St|Blvd|Dr|Rd|Road|Ln|Way|Pl|Ct|Pkwy|Hwy)', caseSensitive: false).hasMatch(address);
+          RegExp(r'\d+\s+[\w\s]+\s(Ave|St|Blvd|Dr|Rd|Road|Ln|Way|Pl|Ct|Pkwy|Hwy)\b', caseSensitive: false).hasMatch(address);
       
       if (hasStreetAddress) {
         searchQuery = '$locationName, $address';
@@ -2559,6 +2583,7 @@ class LinkLocationExtractionService {
           addressResults,
           name,
           geminiType: geminiType,
+          city: regionContext,
           regionContext: regionContext,
           groundedAddress: groundedAddress,
         );
@@ -2599,6 +2624,34 @@ class LinkLocationExtractionService {
           placeResults,
           name,
           geminiType: geminiType,
+          city: regionContext,
+          regionContext: regionContext,
+          groundedAddress: groundedAddress,
+        );
+      }
+    }
+    
+    // === STRATEGY 2b: Search with city-level context ===
+    // When regionContext is a city name (not a state/region), use it directly
+    if (placeResults.isEmpty && stateFromContext == null && broaderRegion == null && 
+        regionContext != null && regionContext.isNotEmpty) {
+      final citySearchQuery = '$name, $regionContext';
+      print('🔍 VERIFY LOCATION: Searching with city context: "$citySearchQuery"');
+      
+      placeResults = await _maps.searchPlaces(
+        citySearchQuery,
+        latitude: userLocation?.latitude,
+        longitude: userLocation?.longitude,
+      );
+      
+      if (placeResults.isNotEmpty) {
+        print('🔍 VERIFY LOCATION: Found ${placeResults.length} candidates from city search');
+        
+        placeResult = _selectBestPlaceResultWithContext(
+          placeResults,
+          name,
+          geminiType: geminiType,
+          city: regionContext,
           regionContext: regionContext,
           groundedAddress: groundedAddress,
         );
@@ -2622,6 +2675,7 @@ class LinkLocationExtractionService {
           placeResults,
           name,
           geminiType: geminiType,
+          city: regionContext,
           regionContext: regionContext,
           groundedAddress: groundedAddress,
         );
@@ -2640,7 +2694,8 @@ class LinkLocationExtractionService {
         
         final textSearchQuery = stateFromContext != null 
             ? '$name, $stateFromContext'
-            : (broaderRegion != null ? '$name, $broaderRegion' : name);
+            : (broaderRegion != null ? '$name, $broaderRegion' 
+                : (regionContext != null && regionContext.isNotEmpty ? '$name, $regionContext' : name));
         
         final textSearchResults = await _maps.searchPlacesTextSearch(
           textSearchQuery,
@@ -2666,6 +2721,7 @@ class LinkLocationExtractionService {
             placeResults,
             name,
             geminiType: geminiType,
+            city: regionContext,
             regionContext: regionContext,
             groundedAddress: groundedAddress,
           );

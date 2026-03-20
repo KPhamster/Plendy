@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'certificate_pinning_service.dart';
 
 /// Service for interacting with Google Knowledge Graph Search API
 class GoogleKnowledgeGraphService {
   static const String _baseUrl = 'https://kgsearch.googleapis.com/v1/entities:search';
   
   final String? apiKey;
+  final http.Client _httpClient = CertificatePinningService().createPinnedHttpClient();
   
   GoogleKnowledgeGraphService({this.apiKey});
   
@@ -41,7 +43,7 @@ class GoogleKnowledgeGraphService {
       final uri = Uri.parse(_baseUrl).replace(queryParameters: queryParams);
       print('🔍 KNOWLEDGE GRAPH: Searching for "$query" with URL: ${uri.toString().replaceAll(apiKey!, 'API_KEY_HIDDEN')}');
       
-      final response = await http.get(uri);
+      final response = await _httpClient.get(uri);
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);

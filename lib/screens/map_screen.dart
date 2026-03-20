@@ -592,11 +592,19 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// True while this map load still belongs to the signed-in [expectedUserId].
+  /// Prevents Firestore calls after sign-out or account switch (e.g. unbounded
+  /// `experiences` queries fail rules once `request.auth` is null).
+  bool _mapSessionStillValid(String expectedUserId) {
+    final String? uid = _authService.currentUser?.uid;
+    return uid != null && uid == expectedUserId;
+  }
+
   Future<void> _loadFollowingUsers(String userId) async {
     try {
       final List<String> followingIds =
           await _userService.getFollowingIds(userId);
-      if (!mounted) {
+      if (!mounted || !_mapSessionStillValid(userId)) {
         return;
       }
 
@@ -630,7 +638,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final Set<String> resolvedIds =
           loadedProfiles.map((profile) => profile.id).toSet();
 
-      if (!mounted) {
+      if (!mounted || !_mapSessionStillValid(userId)) {
         return;
       }
       setState(() {
@@ -644,14 +652,15 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _followeeColorCategories = {};
         }
       });
-      await _fetchFolloweePublicExperiences(_followingUserIds);
+      await _fetchFolloweePublicExperiences(userId, _followingUserIds);
     } catch (e) {
       print("🗺️ MAP SCREEN: Failed to load following users: $e");
     }
   }
 
-  Future<void> _fetchFolloweePublicExperiences(Set<String> followeeIds) async {
-    if (!mounted) {
+  Future<void> _fetchFolloweePublicExperiences(
+      String sessionUserId, Set<String> followeeIds) async {
+    if (!mounted || !_mapSessionStillValid(sessionUserId)) {
       return;
     }
     if (followeeIds.isEmpty) {
@@ -667,6 +676,9 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final List<Future<MapEntry<String, List<Experience>>>> tasks =
         followeeIds.map((followeeId) async {
       try {
+        if (!_mapSessionStillValid(sessionUserId)) {
+          return MapEntry(followeeId, <Experience>[]);
+        }
         // Use forceRefresh: true to bypass in-flight deduplication since we're
         // fetching for different users in parallel. The shared in-flight tracking
         // in ExperienceService would otherwise cause all followees to get the
@@ -675,20 +687,25 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             followeeId,
             limit: 0,
             forceRefresh: true); // No limit - load all followee experiences
+        if (!_mapSessionStillValid(sessionUserId)) {
+          return MapEntry(followeeId, <Experience>[]);
+        }
         final List<Experience> publicExperiences = experiences
             .where((exp) => _canViewFolloweeExperience(exp))
             .toList();
         return MapEntry(followeeId, publicExperiences);
       } catch (e) {
-        print(
-            "🗺️ MAP SCREEN: Failed to load experiences for followee $followeeId: $e");
+        if (_mapSessionStillValid(sessionUserId)) {
+          print(
+              "🗺️ MAP SCREEN: Failed to load experiences for followee $followeeId: $e");
+        }
         return MapEntry(followeeId, <Experience>[]);
       }
     }).toList();
 
     try {
       final results = await Future.wait(tasks);
-      if (!mounted) {
+      if (!mounted || !_mapSessionStillValid(sessionUserId)) {
         return;
       }
       final Map<String, List<Experience>> newFolloweeExperiences = {};
@@ -696,6 +713,9 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final Map<String, Map<String, ColorCategory>> newFolloweeColorCategories =
           {};
       for (final entry in results) {
+        if (!_mapSessionStillValid(sessionUserId)) {
+          return;
+        }
         final String followeeId = entry.key;
         final List<Experience> experiences = entry.value;
         newFolloweeExperiences[followeeId] = experiences;
@@ -742,32 +762,51 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         }
         if (missingCategoryIds.isNotEmpty) {
           try {
+            if (!_mapSessionStillValid(sessionUserId)) {
+              return;
+            }
             final fetchedCategories =
                 await _experienceService.getUserCategoriesByOwnerAndIds(
                     followeeId, missingCategoryIds.toList());
+            if (!_mapSessionStillValid(sessionUserId)) {
+              return;
+            }
             for (final category in fetchedCategories) {
               ownerCategories[category.id] = category;
             }
           } catch (e) {
-            print(
-                "🗺️ MAP SCREEN: Failed to fetch category metadata for followee $followeeId: $e");
+            if (_mapSessionStillValid(sessionUserId)) {
+              print(
+                  "🗺️ MAP SCREEN: Failed to fetch category metadata for followee $followeeId: $e");
+            }
           }
         }
         if (missingColorIds.isNotEmpty) {
           try {
+            if (!_mapSessionStillValid(sessionUserId)) {
+              return;
+            }
             final fetchedColors =
                 await _experienceService.getColorCategoriesByOwnerAndIds(
                     followeeId, missingColorIds.toList());
+            if (!_mapSessionStillValid(sessionUserId)) {
+              return;
+            }
             for (final color in fetchedColors) {
               ownerColors[color.id] = color;
             }
           } catch (e) {
-            print(
-                "🗺️ MAP SCREEN: Failed to fetch color metadata for followee $followeeId: $e");
+            if (_mapSessionStillValid(sessionUserId)) {
+              print(
+                  "🗺️ MAP SCREEN: Failed to fetch color metadata for followee $followeeId: $e");
+            }
           }
         }
         newFolloweeCategories[followeeId] = ownerCategories;
         newFolloweeColorCategories[followeeId] = ownerColors;
+      }
+      if (!mounted || !_mapSessionStillValid(sessionUserId)) {
+        return;
       }
       setState(() {
         _followeePublicExperiences = newFolloweeExperiences;
@@ -5913,9 +5952,21 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (!mounted) return;
     // Force hide keyboard again before restore to prevent any flicker
     SystemChannels.textInput.invokeMethod('TextInput.hide');
+    // Use the freshest copy of the experience from the loaded list so that any
+    // content added/removed inside ExperiencePageScreen is reflected in the
+    // bottom sheet count.  Fall back to savedExperience if not found (e.g. it
+    // was deleted while we were on the page).
+    final Experience freshExperience = _experiences.firstWhere(
+      (e) => e.id == savedExperience.id,
+      orElse: () => savedExperience,
+    );
+    // Clear the cached media list so _prefetchExperienceMedia re-fetches based
+    // on the fresh sharedMediaItemIds list rather than returning the stale entry.
+    _experienceMediaCache.remove(savedExperience.id);
+    _mediaPrefetchInFlight.remove(savedExperience.id);
     // Restore the selected experience state after returning from navigation
     await _restoreSelectedExperience(
-      savedExperience,
+      freshExperience,
       savedCategory,
       savedLocation,
       savedBusinessStatus,
@@ -5990,6 +6041,9 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _tappedLocationBusinessStatus = businessStatus;
       _tappedLocationOpenNow = openNow;
     });
+    // Kick off a fresh prefetch so the play-button count reflects the current
+    // sharedMediaItemIds on the restored experience.
+    unawaited(_prefetchExperienceMedia(experience));
 
     // Build and set the marker
     final BitmapDescriptor firstIcon = await iconBuilder(startSize);
@@ -6058,11 +6112,22 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         try {
           final String? focusId = result['focusExperienceId'] as String?;
           if (focusId != null && focusId.isNotEmpty) {
-            // Prefer the local publicExperience we navigated with
+            // Re-focus the map on the public experience marker, then restore
+            // the public-experience state so the bottom sheet count reads from
+            // _publicPreviewMediaItems (which is still populated) instead of
+            // the draft's empty sharedMediaItemIds.
             await _focusExperienceOnMap(
               publicExperience,
               usePurpleMarker: true,
             );
+            if (mounted) {
+              setState(() {
+                _publicReadOnlyExperience = publicExperience;
+                _publicReadOnlyExperienceId = publicExperienceId;
+                _tappedExperience = null;
+                _tappedExperienceCategory = null;
+              });
+            }
             return;
           }
           // Fallback: if lat/lng provided, animate and set tapped location
@@ -8028,10 +8093,31 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final locationName = experience.location.displayName?.toLowerCase() ?? '';
       final locationAddress = experience.location.address?.toLowerCase() ?? '';
 
-      // Check if query matches experience name, location name, or address
+      final bool tagMatch = experience.tags != null &&
+          experience.tags!
+              .any((tag) => tag.toLowerCase().contains(queryLower));
+
+      final loc = experience.location;
+      final bool placeTypeMatch = (loc.primaryTypeDisplayName != null &&
+              loc.primaryTypeDisplayName!
+                  .toLowerCase()
+                  .contains(queryLower)) ||
+          (loc.primaryType != null &&
+              loc.primaryType!
+                  .replaceAll('_', ' ')
+                  .toLowerCase()
+                  .contains(queryLower)) ||
+          (loc.placeTypes != null &&
+              loc.placeTypes!.any((t) => t
+                  .replaceAll('_', ' ')
+                  .toLowerCase()
+                  .contains(queryLower)));
+
       if (experienceName.contains(queryLower) ||
           locationName.contains(queryLower) ||
-          locationAddress.contains(queryLower)) {
+          locationAddress.contains(queryLower) ||
+          tagMatch ||
+          placeTypeMatch) {
         // Find the category for display
         final category = _categories.firstWhere(
           (cat) => cat.id == experience.categoryId,
@@ -9028,19 +9114,22 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     },
                   )
                 : null,
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Add leading padding when there's no back button (e.g., from nav bar tab)
-                if (!hasLeading) const SizedBox(width: 16),
-                Image.asset(
-                  'assets/icon/icon-cropped.png',
-                  height: 28,
-                ),
-                const SizedBox(width: 8),
-                const Text('Plendy Map'),
-                const SizedBox(width: 8),
-                AnimatedSwitcher(
+            title: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Add leading padding when there's no back button (e.g., from nav bar tab)
+                  if (!hasLeading) const SizedBox(width: 16),
+                  Image.asset(
+                    'assets/icon/icon-cropped.png',
+                    height: 28,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text('Plendy Map'),
+                  const SizedBox(width: 8),
+                  AnimatedSwitcher(
                   duration: const Duration(milliseconds: 220),
                   switchInCurve: Curves.easeOut,
                   switchOutCurve: Curves.easeIn,
@@ -9069,6 +9158,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         ),
                 ),
               ],
+            ),
             ),
             actions: [
               // Calendar toggle

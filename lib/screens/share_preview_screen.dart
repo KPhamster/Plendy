@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import '../../firebase_options.dart';
+import '../services/certificate_pinning_service.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
@@ -25,6 +26,8 @@ class SharePreviewScreen extends StatelessWidget {
 
   /// Optional sender user ID for pre-loaded shares
   final String? preloadedFromUserId;
+
+  static final http.Client _pinnedHttpClient = CertificatePinningService().createPinnedHttpClient();
 
   const SharePreviewScreen({
     super.key,
@@ -252,7 +255,7 @@ class SharePreviewScreen extends StatelessWidget {
     if (idParam != null && idParam.isNotEmpty) {
       final docUrl = Uri.parse(
           'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/experience_shares/$idParam');
-      final resp = await http.get(docUrl, headers: headers);
+      final resp = await _pinnedHttpClient.get(docUrl, headers: headers);
       if (resp.statusCode == 200) {
         final body = json.decode(resp.body) as Map<String, dynamic>;
         final mapped = _mapRestDoc(body);
@@ -270,7 +273,7 @@ class SharePreviewScreen extends StatelessWidget {
       // Try fetching directly by document ID first (for direct shares)
       final docUrl = Uri.parse(
           'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/experience_shares/$token');
-      final resp = await http.get(docUrl, headers: headers);
+      final resp = await _pinnedHttpClient.get(docUrl, headers: headers);
       if (resp.statusCode == 200) {
         final body = json.decode(resp.body) as Map<String, dynamic>;
         final mapped = _mapRestDoc(body);
@@ -317,7 +320,7 @@ class SharePreviewScreen extends StatelessWidget {
         'limit': 1
       }
     };
-    final resp = await http.post(runQueryUrl,
+    final resp = await _pinnedHttpClient.post(runQueryUrl,
         headers: headers, body: json.encode(payload));
     if (resp.statusCode != 200) {
       throw Exception('Share lookup failed (${resp.statusCode})');

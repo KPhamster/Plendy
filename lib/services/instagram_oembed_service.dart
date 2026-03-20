@@ -27,8 +27,8 @@ class InstagramOEmbedService {
     receiveTimeout: const Duration(seconds: 10),
   ));
 
-  /// Base URL for Instagram oEmbed API (Meta Graph API)
-  static const String _oembedBaseUrl = 'https://graph.facebook.com/v21.0/instagram_oembed';
+  /// Base URL for Instagram oEmbed API (Meta Graph API v25.0)
+  static const String _oembedBaseUrl = 'https://graph.facebook.com/v25.0/instagram_oembed';
 
   /// Check if the service is properly configured
   bool get isConfigured {
@@ -311,11 +311,11 @@ class InstagramOEmbedService {
   /// 
   /// Returns a map with:
   /// - `html`: The embed HTML (blockquote with Instagram embed.js)
-  /// - `author_name`: The author's display name
   /// - `provider_name`: "Instagram"
-  /// - `thumbnail_url`: Thumbnail image URL (if available)
-  /// - `thumbnail_width`/`thumbnail_height`: Thumbnail dimensions
   /// - `width`: Embed width (null for responsive)
+  /// 
+  /// Note: author_name, author_url, thumbnail_* fields were deprecated Nov 2025
+  /// as part of Meta's migration to "Meta oEmbed Read".
   /// 
   /// [maxWidth] - Optional max width for the embed (320-658 pixels)
   Future<Map<String, dynamic>?> getPostMetadata(String url, {int? maxWidth}) async {
@@ -356,13 +356,8 @@ class InstagramOEmbedService {
           return null;
         }
         
-        // Note: Meta oEmbed API may not return author_name or thumbnail_url
-        // for all content types. The HTML field is always returned and contains
-        // the embed data we can parse for author/caption.
         final hasHtml = data['html'] != null;
-        print('✅ INSTAGRAM: Got metadata - html: $hasHtml, '
-              'author: ${data['author_name'] ?? 'N/A'}, '
-              'thumbnail: ${data['thumbnail_url'] != null}');
+        print('✅ INSTAGRAM: Got metadata - html: $hasHtml');
         
         return data;
       } else if (response.statusCode == 400) {

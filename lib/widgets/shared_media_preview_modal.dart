@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/experience.dart';
@@ -26,6 +27,8 @@ import '../screens/experience_page_screen.dart';
 import 'web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/share_experience_bottom_sheet.dart';
 import 'package:plendy/utils/haptic_feedback.dart';
+import '../utils/local_shared_media_image.dart';
+import '../utils/shared_media_display_labels.dart';
 
 class SharedMediaPreviewModal extends StatefulWidget {
   final Experience experience;
@@ -544,6 +547,37 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       );
     }
 
+    // Local file path (e.g. persisted under app documents when Storage upload failed)
+    final bool expandedImage = heightOverride != null;
+    final localPreview = tryBuildLocalSharedMediaImage(
+      url,
+      fit: expandedImage ? BoxFit.contain : BoxFit.cover,
+    );
+    if (localPreview != null) {
+      if (expandedImage) {
+        return ClipRRect(
+          key: ValueKey('local_expanded_$url'),
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: double.infinity,
+            height: heightOverride,
+            child: ColoredBox(
+              color: Colors.grey.shade200,
+              child: localPreview,
+            ),
+          ),
+        );
+      }
+      return ClipRRect(
+        key: ValueKey('local_$url'),
+        borderRadius: BorderRadius.circular(16),
+        child: AspectRatio(
+          aspectRatio: 4 / 5,
+          child: localPreview,
+        ),
+      );
+    }
+
     final type = _classifyUrl(url);
     // Use parity with ExperiencePageScreen content tab
     if (type == _MediaType.tiktok) {
@@ -675,33 +709,49 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       );
     }
 
-    // Image preview for direct and likely image URLs
+    // Image preview for direct and likely image URLs (use CachedNetworkImage for
+    // parity with ExperiencePageScreen — Image.network can fail on some Firebase
+    // Storage URLs and long tokenized URLs).
     if (type == _MediaType.image || _isLikelyImageUrl(url)) {
+      final String imageUrl = _normalizeNetworkImageUrl(url);
+      final bool expandedImage = heightOverride != null;
+      final Widget networkImage = CachedNetworkImage(
+        imageUrl: imageUrl,
+        fit: expandedImage ? BoxFit.contain : BoxFit.cover,
+        placeholder: (context, _) => Container(
+          alignment: Alignment.center,
+          color: Colors.grey.shade200,
+          child: const CircularProgressIndicator(),
+        ),
+        errorWidget: (context, _, __) {
+          return _buildFallbackPreview(
+            icon: Icons.broken_image_outlined,
+            label: 'Image failed to load',
+            description:
+                'We could not load this image. Try opening it in the browser.',
+          );
+        },
+      );
+      if (expandedImage) {
+        return ClipRRect(
+          key: ValueKey('expanded_$url'),
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: double.infinity,
+            height: heightOverride,
+            child: ColoredBox(
+              color: Colors.grey.shade200,
+              child: networkImage,
+            ),
+          ),
+        );
+      }
       return ClipRRect(
         key: ValueKey(url),
         borderRadius: BorderRadius.circular(16),
         child: AspectRatio(
           aspectRatio: 4 / 5,
-          child: Image.network(
-            url,
-            fit: BoxFit.cover,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return Container(
-                alignment: Alignment.center,
-                color: Colors.grey.shade200,
-                child: const CircularProgressIndicator(),
-              );
-            },
-            errorBuilder: (context, error, stackTrace) {
-              return _buildFallbackPreview(
-                icon: Icons.broken_image_outlined,
-                label: 'Image failed to load',
-                description:
-                    'We could not load this image. Try opening it in the browser.',
-              );
-            },
-          ),
+          child: networkImage,
         ),
       );
     }
@@ -714,6 +764,19 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     );
   }
 
+  /// Ensures scheme for network loaders (Firebase download URLs are always https).
+  String _normalizeNetworkImageUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('//')) {
+      return 'https:$trimmed';
+    }
+    return 'https://$trimmed';
+  }
+
   // Best-effort heuristic to detect image-like URLs without extensions
   bool _isLikelyImageUrl(String url) {
     final lower = url.toLowerCase();
@@ -721,6 +784,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         lower.contains('ggpht.com') ||
         lower.contains('gstatic.com') ||
         lower.contains('firebasestorage.googleapis.com') ||
+        lower.contains('/shared_media/') ||
+        lower.contains('%2fshared_media%2f') ||
         lower.contains('cloudfront.net') ||
         lower.contains('amazonaws.com') ||
         lower.contains('imgur.com') ||
@@ -808,6 +873,20 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final String dateValue =
         widget.isPublicExperience ? 'Community experience' : formattedDate;
 
+    final mediaById = {for (final m in widget.mediaItems) m.id: m};
+    final savedOrd =
+        SharedMediaDisplayLabels.savedImageOrdinalForItemInExperience(
+      sharedMediaItemIdsInOrder: widget.experience.sharedMediaItemIds,
+      targetMediaItemId: mediaItem.id,
+      mediaById: mediaById,
+    );
+    final String linkOrLabelValue = SharedMediaDisplayLabels.mediaCardTitle(
+      path: mediaItem.path,
+      caption: mediaItem.caption,
+      savedImageOrdinal: savedOrd,
+    );
+    final bool showSavedImageLabel = savedOrd != null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -841,10 +920,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                 const SizedBox(height: 8),
               ],
               _buildMetadataRow(
-                icon: Icons.public,
-                label: 'URL',
-                value: mediaItem.path,
-                isSelectable: true,
+                icon: showSavedImageLabel ? Icons.image_outlined : Icons.public,
+                label: showSavedImageLabel ? 'Content' : 'URL',
+                value: linkOrLabelValue,
+                isSelectable: !showSavedImageLabel,
                 iconColor: Colors.white,
                 labelColor: Colors.white,
                 valueColor: Colors.white,
@@ -1169,6 +1248,11 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
 
   _MediaType _classifyUrl(String url) {
     final lower = url.toLowerCase();
+    // Uploaded share images (Firebase Storage) — path contains shared_media/...
+    if (lower.contains('firebasestorage.googleapis.com') &&
+        lower.contains('shared_media')) {
+      return _MediaType.image;
+    }
     if (lower.endsWith('.jpg') ||
         lower.endsWith('.jpeg') ||
         lower.endsWith('.png') ||

@@ -387,7 +387,7 @@ class _MainScreenState extends State<MainScreen>
 
     return SizedBox(
       width: 64,
-      height: 32,
+      height: 24,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -490,6 +490,8 @@ class _MainScreenState extends State<MainScreen>
                 backgroundColor: AppColors.backgroundColor,
                 onTap: _onBottomNavTapped,
                 type: BottomNavigationBarType.fixed,
+                selectedFontSize: 11.0,
+                unselectedFontSize: 11.0,
               );
             },
           ),

@@ -24,6 +24,10 @@ Object.assign(exports, maintainSharedUserIds);
 const backfillModule = require("./src/backfill_shared_userids");
 Object.assign(exports, backfillModule);
 
+// Import and export place-tag backfill function
+const backfillPlaceTagsModule = require("./src/backfill_place_tags");
+Object.assign(exports, backfillPlaceTagsModule);
+
 // Import and export password reset email function
 const passwordResetModule = require("./src/send_password_reset");
 Object.assign(exports, passwordResetModule);

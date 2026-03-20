@@ -329,6 +329,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // AI Location Extraction state
   bool _isExtractingLocation = false;
   bool _isProcessingScreenshot = false; // For screenshot-based extraction
+  bool _hasProcessedSharedContent = false;
   Position? _currentUserPosition; // For location-biased extraction
 
   // Track if AI scan is running
@@ -421,7 +422,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Gate content until URL submitted when required by caller
   bool _urlGateOpen = true;
   bool _didDeferredInit = false;
-  bool _sharedMediaIsPrivate = false;
+  /// Default private for shared image/link media (user can toggle to public).
+  bool _sharedMediaIsPrivate = true;
 
   // Quick Add dialog state
   Location? _quickAddSelectedLocation;
@@ -3163,7 +3165,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           userCategories: _userCategories,
           userColorCategories: _userColorCategories,
         );
-        // TODO: Remove the line below once setDependencies in ReceiveShareProvider is confirmed implemented
+        provider.onExistingExperienceLoaded = (cardId) {
+          _enrichExistingExperienceTagsIfNeeded(cardId, provider);
+        };
       } catch (e) {}
 
       // Initialize the combined future for the FutureBuilder in build()
@@ -3180,6 +3184,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Auto-extract locations for YouTube URLs on initial load
       _autoExtractLocationsIfYouTube(_currentSharedFiles);
+
+      // Auto-scan shared images for locations
+      _autoScanSharedImage(_currentSharedFiles);
     }
   }
 
@@ -3424,6 +3431,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Auto-extract locations for YouTube URLs shared via intent
         _autoExtractLocationsIfYouTube(updatedFiles);
 
+        // Auto-scan shared images for locations
+        _autoScanSharedImage(updatedFiles);
+
         _isProcessingUpdate = false;
         return;
       }
@@ -3470,6 +3480,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Auto-extract locations for YouTube URLs shared via intent
       _autoExtractLocationsIfYouTube(updatedFiles);
 
+      // Auto-scan shared images for locations
+      _autoScanSharedImage(updatedFiles);
+
       _isProcessingUpdate = false;
     }
   }
@@ -3497,6 +3510,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         _extractLocationsFromUrl(url);
       });
     }
+  }
+
+  /// Automatically trigger image scan when an image is shared to Plendy.
+  /// Uses Gemini Vision to extract location data from the shared image.
+  void _autoScanSharedImage(List<SharedMediaFile> files) {
+    if (files.isEmpty) return;
+
+    final imageFiles = files.where((f) => f.type == SharedMediaType.image).toList();
+    if (imageFiles.isEmpty) return;
+
+    final imagePath = imageFiles.first.path;
+    final imageFile = File(imagePath);
+    if (!imageFile.existsSync()) {
+      print('⚠️ AUTO-SCAN IMAGE: File does not exist at $imagePath');
+      return;
+    }
+
+    print(
+        '📷 AUTO-SCAN IMAGE: Shared image detected, triggering auto-scan...');
+    Future.delayed(const Duration(milliseconds: 800), () async {
+      if (!mounted) return;
+      if (!await _shouldAutoExtractLocations()) return;
+      if (_isProcessingScreenshot || _isExtractingLocation) return;
+      _processScreenshotForLocations(imageFile);
+    });
   }
 
   // Helper method to compare shared files lists
@@ -5199,7 +5237,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ FACEBOOK AUTO-EXTRACT: Found ${locations.length} location(s)');
-      _updateScanProgress(0.9, sessionId: scanSessionId);
+      _updateScanProgress(0.85, sessionId: scanSessionId);
+
+      // Try to detect event information from the page content
+      final detectedEvent = await _detectEventFromTextAsync(pageContent);
+      if (!_isAnalysisSessionActive(scanSessionId)) return;
+      _updateScanProgress(0.95, sessionId: scanSessionId);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
@@ -5207,9 +5250,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final provider = context.read<ReceiveShareProvider>();
 
       // Always show the location selection dialog, even for single results
+      // If event info was detected, the dialog will show a second page for event designation
       final deepScanRequested = await _handleMultipleExtractedLocations(
         locations,
         provider,
+        detectedEventInfo: detectedEvent,
         scannedText: pageContent,
       );
       if (!_isAnalysisSessionActive(scanSessionId)) return;
@@ -5218,7 +5263,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // If user requested deep scan, run it after cleanup
       if (deepScanRequested && mounted) {
         _pendingDeepScanProvider = provider;
-        _pendingDeepScanEventInfo = null;
+        _pendingDeepScanEventInfo = detectedEvent;
       }
     } catch (e) {
       print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
@@ -6405,6 +6450,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         }
 
+        // Enrich tags with Gemini for the filled card
+        final filledCard = emptyCards[i];
+        if (filledCard.selectedLocation != null) {
+          _enrichTagsWithGemini(
+            cardId,
+            filledCard.selectedLocation!,
+            provider,
+            locationData.address,
+          );
+        }
+
         print('📍 Filled existing card with: ${locationData.name}');
       }
 
@@ -6439,6 +6495,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               );
               if (bestCategoryId != null) {
                 provider.updateCardTextCategory(cardId, bestCategoryId);
+              }
+
+              // Enrich tags with Gemini for the newly created card
+              final createdCard = provider.experienceCards[cardIndex];
+              if (createdCard.selectedLocation != null) {
+                _enrichTagsWithGemini(
+                  cardId,
+                  createdCard.selectedLocation!,
+                  provider,
+                  locationData.address,
+                );
               }
             }
           }
@@ -7259,6 +7326,129 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           ?.name;
       print('   ✅ Primary Category set to "$categoryName"');
     }
+
+    // Enrich tags with Gemini (fire-and-forget, doesn't block UI)
+    _enrichTagsWithGemini(cardId, location, provider, locationContext);
+  }
+
+  /// Uses Gemini to suggest additional descriptive tags for a location,
+  /// then merges them into the card's existing placeTypes list.
+  Future<void> _enrichTagsWithGemini(
+    String cardId,
+    Location location,
+    ReceiveShareProvider provider,
+    String? locationContext,
+  ) async {
+    final card = provider.experienceCards.firstWhereOrNull((c) => c.id == cardId);
+    if (card == null) return;
+
+    final placeName = location.displayName ?? location.getPlaceName();
+    final existingTypes = card.placeTypes ?? location.placeTypes ?? [];
+
+    try {
+      final gemini = GeminiService();
+      final suggestedTags = await gemini.suggestAdditionalTags(
+        placeName: placeName,
+        existingTypes: existingTypes,
+        primaryTypeDisplayName: card.primaryTypeDisplayName ??
+            location.primaryTypeDisplayName,
+        locationContext: locationContext,
+        socialHashtags: _extractedHashtags.isNotEmpty
+            ? _extractedHashtags
+            : null,
+      );
+
+      if (suggestedTags.isEmpty) return;
+
+      print('🏷️ GEMINI TAGS: Suggested ${suggestedTags.length} '
+          'additional tags for "$placeName": ${suggestedTags.join(", ")}');
+
+      // Merge: keep all existing types, append Gemini suggestions as-is
+      // Gemini tags are stored in display format ("Outdoor Seating")
+      // while Places API tags are snake_case ("outdoor_seating").
+      // We deduplicate by comparing formatted forms.
+      final existingFormatted = existingTypes
+          .map((t) => t
+              .split('_')
+              .map((w) => w.isNotEmpty
+                  ? '${w[0].toUpperCase()}${w.substring(1)}'
+                  : '')
+              .join(' ')
+              .toLowerCase())
+          .toSet();
+
+      final newTags = suggestedTags
+          .where((tag) => !existingFormatted.contains(tag.toLowerCase()))
+          .toList();
+
+      if (newTags.isEmpty) return;
+
+      final mergedTypes = [...existingTypes, ...newTags];
+
+      card.placeTypes = mergedTypes;
+
+      if (mounted) {
+        setState(() {});
+      }
+
+      print('🏷️ GEMINI TAGS: Added ${newTags.length} new tags to card');
+    } catch (e) {
+      print('🏷️ GEMINI TAGS: Error enriching tags: $e');
+    }
+  }
+
+  /// Enriches tags for a card loaded from an existing experience, if the
+  /// experience doesn't already have tags. Fetches Places API tags first,
+  /// then runs Gemini enrichment on top. Fire-and-forget.
+  void _enrichExistingExperienceTagsIfNeeded(
+    String cardId,
+    ReceiveShareProvider provider,
+  ) async {
+    final card =
+        provider.experienceCards.firstWhereOrNull((c) => c.id == cardId);
+    if (card == null) return;
+
+    final location = card.selectedLocation;
+    if (location == null ||
+        location.placeId == null ||
+        location.placeId!.isEmpty) return;
+
+    final hasTags = (card.placeTypes != null && card.placeTypes!.isNotEmpty) ||
+        card.primaryType != null;
+    if (hasTags) return;
+
+    // Fetch Places API tags first (types, primaryType, primaryTypeDisplayName)
+    try {
+      final details =
+          await _mapsService.getPlaceDetails(location.placeId!, includePhotoUrl: false);
+
+      if (details.placeTypes != null && details.placeTypes!.isNotEmpty) {
+        card.placeTypes = details.placeTypes;
+      }
+      if (details.primaryType != null) {
+        card.primaryType = details.primaryType;
+      }
+      if (details.primaryTypeDisplayName != null) {
+        card.primaryTypeDisplayName = details.primaryTypeDisplayName;
+      }
+
+      // Update the card's location with the tag data
+      if (details.placeTypes != null || details.primaryType != null) {
+        card.selectedLocation = location.copyWith(
+          placeTypes: details.placeTypes,
+          primaryType: details.primaryType,
+          primaryTypeDisplayName: details.primaryTypeDisplayName,
+        );
+        if (mounted) setState(() {});
+      }
+    } catch (e) {
+      print('🏷️ EXISTING EXP TAGS: Error fetching Places API tags: $e');
+    }
+
+    // Then enrich with Gemini on top of the Places API tags
+    final locationContext = location.city ?? location.address;
+    _enrichTagsWithGemini(cardId, card.selectedLocation ?? location, provider,
+        locationContext);
   }
 
   /// Show informational dialog about multiple cards added
@@ -7994,8 +8184,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _instagramUrlsProcessed.clear();
       _clearExtractedSocialContent(); // Clear any previously extracted social media content
     } else {
-      print('🔄 SHARE: Same content, preserving auto-scan state');
+      // Only skip re-processing if we've already run at least once
+      if (_hasProcessedSharedContent) {
+        print('🔄 SHARE: Same content, preserving auto-scan state');
+        return;
+      }
     }
+    _hasProcessedSharedContent = true;
     _processSharedContent(files);
     _syncSharedUrlControllerFromContent();
   }
@@ -9417,10 +9612,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final Map<String, String> mediaPathToItemIdMap = {};
       for (final path in uniqueMediaPaths) {
         try {
+          // Copy share-intent files out of system cache into app documents first
+          // so paths remain valid after save; then upload from the stable path.
+          String workingPath = path;
+          if (!path.startsWith('http://') && !path.startsWith('https://')) {
+            final src = File(path);
+            if (src.existsSync()) {
+              workingPath =
+                  await _experienceService.copySharedMediaToAppDocuments(src);
+              if (!mounted) return;
+            }
+          }
+
           SharedMediaItem? existingItem;
           try {
             SharedMediaItem? foundItem =
                 await _experienceService.findSharedMediaItemByPath(path);
+            if (foundItem == null && workingPath != path) {
+              foundItem = await _experienceService
+                  .findSharedMediaItemByPath(workingPath);
+            }
             if (!mounted) return;
 
             if (foundItem != null && foundItem.ownerUserId == currentUserId) {
@@ -9478,9 +9689,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               }
             }
 
+            // Upload local image files to Firebase Storage so they persist
+            // (requires Storage rules for shared_media/{uid}/** — see storage.rules).
+            String resolvedPath = workingPath;
+            if (!workingPath.startsWith('http://') &&
+                !workingPath.startsWith('https://')) {
+              final localFile = File(workingPath);
+              if (localFile.existsSync()) {
+                print('📤 SAVE: Uploading local image to Firebase Storage...');
+                final downloadUrl = await _experienceService.uploadSharedImage(
+                    localFile, currentUserId);
+                if (!mounted) return;
+                if (downloadUrl != null) {
+                  resolvedPath = downloadUrl;
+                  print('📤 SAVE: Upload complete, stored as $resolvedPath');
+                } else {
+                  print(
+                      '⚠️ SAVE: Upload failed, keeping persisted local file path');
+                }
+              }
+            }
+
             SharedMediaItem newItem = SharedMediaItem(
               id: '',
-              path: path,
+              path: resolvedPath,
               createdAt: now,
               ownerUserId: currentUserId,
               experienceIds: [],
@@ -13978,6 +14210,33 @@ class _MultiLocationSelectionDialogState
     return Rect.fromPoints(topLeft, bottomRight);
   }
 
+  Widget _buildDialogHelpBanner() {
+    return GestureDetector(
+      onTap: _toggleDialogHelp,
+      child: AnimatedBuilder(
+        animation: _dialogSpotlight,
+        builder: (context, child) {
+          final opacity = 0.6 + 0.4 * _dialogSpotlight.value;
+          return Opacity(opacity: opacity, child: child);
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          color: AppColors.teal.withValues(alpha: 0.08),
+          child: Text(
+            'Help mode is ON  •  Tap here to exit',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppColors.teal,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -14344,10 +14603,15 @@ class _MultiLocationSelectionDialogState
                 ),
               ),
               const SizedBox(width: 8),
-              Builder(
-                builder: (confirmCtx) => ElevatedButton(
-                  onPressed: _buildDialogConfirmAction(confirmCtx),
-                  child: Text(_buildButtonText()),
+              Flexible(
+                child: Builder(
+                  builder: (confirmCtx) => ElevatedButton(
+                    onPressed: _buildDialogConfirmAction(confirmCtx),
+                    child: Text(
+                      _buildButtonText(),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -14367,10 +14631,15 @@ class _MultiLocationSelectionDialogState
           ),
         ),
         const SizedBox(width: 8),
-        Builder(
-          builder: (confirmCtx) => ElevatedButton(
-            onPressed: _buildDialogConfirmAction(confirmCtx),
-            child: Text(_buildButtonText()),
+        Flexible(
+          child: Builder(
+            builder: (confirmCtx) => ElevatedButton(
+              onPressed: _buildDialogConfirmAction(confirmCtx),
+              child: Text(
+                _buildButtonText(),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ),
         ),
       ],
@@ -14436,6 +14705,10 @@ class _MultiLocationSelectionDialogState
               ),
             ],
           ),
+        ],
+        if (_dialogHelp.isActive) ...[
+          const SizedBox(height: 4),
+          _buildDialogHelpBanner(),
         ],
         // Show event detected indicator
         if (_hasEventInfo) ...[
@@ -15068,18 +15341,8 @@ class _MultiLocationSelectionDialogState
   }
 
   String _buildButtonText() {
-    if (_selectedIndices.length == 1) {
-      final isDuplicate = widget.duplicates.containsKey(_selectedIndices.first);
-      return isDuplicate ? 'Use Existing' : 'Create 1 Experience';
-    }
-
-    if (_selectedDuplicateCount > 0 && _selectedNewCount > 0) {
-      return 'Add ${_selectedIndices.length} ($_selectedNewCount new, $_selectedDuplicateCount existing)';
-    } else if (_selectedDuplicateCount > 0) {
-      return 'Use $_selectedDuplicateCount Existing';
-    } else {
-      return 'Create $_selectedNewCount Experiences';
-    }
+    final count = _selectedIndices.length;
+    return count == 1 ? 'Add Experience' : 'Add Experiences';
   }
 }
 

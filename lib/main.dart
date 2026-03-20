@@ -1910,9 +1910,15 @@ class _MyAppState extends State<MyApp> {
       builder: (context, snapshot) {
         print("AUTH FLOW: connectionState=${snapshot.connectionState}, hasData=${snapshot.hasData}, hasError=${snapshot.hasError}");
         
-        // Use currentUser if stream hasn't emitted yet (avoid waiting state)
-        final User? effectiveUser = snapshot.hasData ? snapshot.data : authService.currentUser;
-        
+        // Once the auth stream has left [waiting], trust [snapshot.data] — including
+        // `null` after sign-out. Do not fall back to [authService.currentUser] when
+        // [snapshot.data] is null: StreamBuilder can run before AuthService's listener
+        // updates `_currentUser`, which would keep the logged-in shell after Log Out.
+        final User? effectiveUser =
+            snapshot.connectionState == ConnectionState.waiting
+                ? authService.currentUser
+                : snapshot.data;
+
         print("AUTH FLOW: effectiveUser=${effectiveUser?.uid}");
         
         // If stream is waiting but we have a current user, use that user
