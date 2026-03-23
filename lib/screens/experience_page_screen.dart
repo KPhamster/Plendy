@@ -124,7 +124,8 @@ class ExperiencePageScreen extends StatefulWidget {
 // ADDED: SingleTickerProviderStateMixin for TabController
 class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     with TickerProviderStateMixin {
-  final http.Client _pinnedHttpClient = CertificatePinningService().createPinnedHttpClient();
+  final http.Client _pinnedHttpClient =
+      CertificatePinningService().createPinnedHttpClient();
   static const String _legacySharedContentDescription =
       'Created from shared content';
 
@@ -142,8 +143,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   String? _shareBannerDisplayName; // Resolved sharer display name
 
   DecorationImage? _buildHeaderDecorationImage(Experience experience) {
-    final String? url =
-        _headerPhotoUrl ?? experience.location.photoUrl;
+    final String? url = _headerPhotoUrl ?? experience.location.photoUrl;
     if (url == null || url.isEmpty) return null;
     return DecorationImage(
       image: NetworkImage(url),
@@ -183,6 +183,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return description.trim().toLowerCase() ==
         _legacySharedContentDescription.toLowerCase();
   }
+
+  bool get _isSharedIncomingPreview =>
+      widget.readOnlyPreview &&
+      widget.shareBannerFromUserId != null &&
+      widget.shareBannerFromUserId!.isNotEmpty;
+
+  bool get _isPublicReadOnlyPreview =>
+      widget.readOnlyPreview &&
+      widget.publicExperienceId != null &&
+      widget.publicExperienceId!.isNotEmpty;
+
+  String get _helpSenderName => _shareBannerDisplayName ?? 'Someone';
 
   final TicketmasterService _ticketmasterService = TicketmasterService();
   // ADDED: AuthService instance
@@ -514,6 +526,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       yelpUrl: _currentExperience.yelpUrl,
       website: _currentExperience.website,
       allMediaPaths: mediaPaths,
+      tags: _currentExperience.tags,
     );
   }
 
@@ -697,6 +710,86 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final target = _activeHelpTarget;
     if (target == null) return staticText;
 
+    if (widget.readOnlyPreview) {
+      switch (target) {
+        case ExperienceHelpTargetId.overflowMenu:
+          if (_isSharedIncomingPreview) {
+            return 'More options live here. In this shared view, this menu is mainly for reporting something that looks off.';
+          }
+          if (_isPublicReadOnlyPreview) {
+            return 'More options live here. In this public view, this menu is mainly for reporting the experience if needed.';
+          }
+          break;
+        case ExperienceHelpTargetId.heroRatingButtons:
+          return 'You can still rate this place from a shared view. Tap thumbs up or down to add your vote to the totals.';
+        case ExperienceHelpTargetId.saveExperienceButton:
+          if (_isSharedIncomingPreview) {
+            return 'Want to keep this? Save the shared experience to your own collection so you can come back to it anytime.';
+          }
+          if (_isPublicReadOnlyPreview) {
+            return 'Want your own copy? Save this public experience to your collection so it shows up with the rest of your places.';
+          }
+          break;
+        case ExperienceHelpTargetId.detailsCategoryRow:
+          if (_isSharedIncomingPreview) {
+            return 'This line explains the kind of share $_helpSenderName sent you. In shared view, it replaces the usual category label.';
+          }
+          if (_isPublicReadOnlyPreview) {
+            return 'This row tells you that you\'re viewing a public version of the experience rather than one already saved in your collection.';
+          }
+          break;
+        case ExperienceHelpTargetId.detailsColorCategoryRow:
+          return 'This is the color label attached to this experience. In read-only view it\'s here for context, so you can see how it was organized before you save it.';
+        case ExperienceHelpTargetId.detailsOtherCategoriesRow:
+          return 'These are the extra categories and tags attached to this experience. They give you a better feel for how it was organized.';
+        case ExperienceHelpTargetId.tabBar:
+          final mediaCount = _currentExperience.sharedMediaItemIds.length;
+          if (_isSharedIncomingPreview) {
+            return 'Switch between shared content and reviews here. This experience has $mediaCount saved item${mediaCount == 1 ? '' : 's'} attached.';
+          }
+          if (_isPublicReadOnlyPreview) {
+            return 'Switch between public content and reviews here. This place has $mediaCount saved item${mediaCount == 1 ? '' : 's'} attached to this experience.';
+          }
+          break;
+        case ExperienceHelpTargetId.tabContent:
+          if (_isSharedIncomingPreview) {
+            return 'This is the Content tab for the shared experience. Open the saved links, media previews, and anything else attached to it here.';
+          }
+          if (_isPublicReadOnlyPreview) {
+            return 'This is the Content tab for the public experience. It shows the saved media and links attached to this version of the place.';
+          }
+          break;
+        case ExperienceHelpTargetId.tabReviews:
+          return 'This is where people can rate the place and leave written reviews, even when you opened it from a shared or public view.';
+        case ExperienceHelpTargetId.mediaToolbarFilter:
+          return 'Use this to narrow down the shared content you\'re looking at. It\'s helpful when an experience has a lot attached to it.';
+        case ExperienceHelpTargetId.mediaToolbarSort:
+          return 'Use this to change the order of the shared content so the most useful items rise to the top for you.';
+        case ExperienceHelpTargetId.mediaToolbarContentSourceToggle:
+          return 'Switch between the content attached to this experience and the broader public saves for the same place.';
+        case ExperienceHelpTargetId.mediaDisplayModeToggle:
+          return 'Switch how the shared content preview is shown. Web view gives you a live embed, while default view keeps it simpler.';
+        case ExperienceHelpTargetId.mediaCardHeader:
+          return 'Tap here to open or close this shared content preview and see what was attached to the experience.';
+        case ExperienceHelpTargetId.mediaLinkedExperience:
+          return 'This same piece of content is linked to other experiences too. Tap one to jump over and compare.';
+        case ExperienceHelpTargetId.mediaActionShare:
+          return 'Share this specific content item with someone else without having to share the whole experience.';
+        case ExperienceHelpTargetId.mediaActionOpenExternal:
+          return 'Open this item in the app or website it came from if you want the original source.';
+        case ExperienceHelpTargetId.mediaActionPreviewSize:
+          return 'Make the preview taller when you want more room to browse, or smaller when you just need a quick look.';
+        case ExperienceHelpTargetId.reviewsRatingButtons:
+          return 'You can rate this place from here too. Your thumbs up or down updates the public totals for the experience.';
+        case ExperienceHelpTargetId.reviewsWriteButton:
+          return 'Write your own review here, even if you opened this place from a shared or public link.';
+        case ExperienceHelpTargetId.eventBanner:
+          return 'You already have this place on an event. Tap the banner to open that event and adjust the plan.';
+        default:
+          break;
+      }
+    }
+
     switch (target) {
       case ExperienceHelpTargetId.detailsStatusRow:
         final hours = _currentExperience.openingHours;
@@ -823,11 +916,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
             if (photoResourceName != null && photoResourceName.isNotEmpty) {
               newPhotoResourceName = photoResourceName; // store for persistence
-              newConstructedPhotoUrl =
-                  await _googleMapsService.resolvePhotoMediaUrl(
-                      photoResourceName,
-                      maxWidthPx: 800,
-                      maxHeightPx: 600);
+              newConstructedPhotoUrl = await _googleMapsService
+                  .resolvePhotoMediaUrl(photoResourceName,
+                      maxWidthPx: 800, maxHeightPx: 600);
               if (newConstructedPhotoUrl != null) {
                 print(
                     "ExperiencePageScreen: Resolved direct photo URL: $newConstructedPhotoUrl");
@@ -883,7 +974,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             _isLoadingDetails = false;
           });
 
-          if (updatedExperience != null && !widget.readOnlyPreview && _canEditExperience()) {
+          if (updatedExperience != null &&
+              !widget.readOnlyPreview &&
+              _canEditExperience()) {
             _experienceService.updateExperience(updatedExperience).then((_) {
               print(
                   "ExperiencePageScreen: Saved updated experience with refreshed photo metadata to Firestore.");
@@ -1078,13 +1171,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final location = _currentExperience.location;
 
     final existingTags = location.placeTypes ?? [];
-    final visibleTagCount = existingTags
-        .where((t) => !_hiddenPlaceTypes.contains(t))
-        .length;
+    final visibleTagCount =
+        existingTags.where((t) => !_hiddenPlaceTypes.contains(t)).length;
     print('ExperiencePageScreen: Tag enrichment check – '
         '${existingTags.length} existing tags ($visibleTagCount visible): ${existingTags.join(", ")}');
     if (visibleTagCount >= 5) {
-      print('ExperiencePageScreen: Skipping tag enrichment – already has >= 5 visible tags.');
+      print(
+          'ExperiencePageScreen: Skipping tag enrichment – already has >= 5 visible tags.');
       return;
     }
 
@@ -1102,7 +1195,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         .toList();
     final mergedTypes = <String>[...existingTags, ...newApiTags];
 
-    print('ExperiencePageScreen: Places API returned ${apiPlaceTypes?.length ?? 0} types, '
+    print(
+        'ExperiencePageScreen: Places API returned ${apiPlaceTypes?.length ?? 0} types, '
         '${newApiTags.length} are new after dedup → ${mergedTypes.length} merged total');
 
     final effectivePrimaryType = location.primaryType ?? primaryType;
@@ -1150,11 +1244,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             placeTypes: mergedTypes,
             primaryType: effectivePrimaryType,
             primaryTypeDisplayName: effectivePrimaryTypeDisplayName,
+            syncExperienceTags: true,
+            experienceTags: _currentExperience.tags,
           );
           if (mounted) {
             setState(() {
               _publicExperience = _publicExperience!.copyWith(
                 placeTypes: mergedTypes,
+                clearTags: _currentExperience.tags == null,
+                tags: _currentExperience.tags,
                 location: _publicExperience!.location.copyWith(
                   placeTypes: mergedTypes,
                   primaryType: effectivePrimaryType,
@@ -1172,9 +1270,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
 
-    final mergedVisibleCount = mergedTypes
-        .where((t) => !_hiddenPlaceTypes.contains(t))
-        .length;
+    final mergedVisibleCount =
+        mergedTypes.where((t) => !_hiddenPlaceTypes.contains(t)).length;
     if (mergedVisibleCount < 5) {
       _enrichBackfilledTagsWithGemini(mergedTypes, effectivePrimaryType,
           effectivePrimaryTypeDisplayName, _currentExperience.location);
@@ -1191,7 +1288,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   ) async {
     final gemini = GeminiService();
     if (!gemini.isConfigured) {
-      print('ExperiencePageScreen: Gemini not configured – skipping tag enrichment.');
+      print(
+          'ExperiencePageScreen: Gemini not configured – skipping tag enrichment.');
       return;
     }
 
@@ -1199,7 +1297,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final locationContext = location.city ?? location.address;
 
     try {
-      print('ExperiencePageScreen: Asking Gemini for additional tags for "$placeName" '
+      print(
+          'ExperiencePageScreen: Asking Gemini for additional tags for "$placeName" '
           '(${placeTypes?.length ?? 0} existing types)');
       final suggestedTags = await gemini.suggestAdditionalTags(
         placeName: placeName,
@@ -1213,17 +1312,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         return;
       }
 
-      print(
-          'ExperiencePageScreen: Gemini suggested ${suggestedTags.length} '
+      print('ExperiencePageScreen: Gemini suggested ${suggestedTags.length} '
           'additional tags for "$placeName": ${suggestedTags.join(", ")}');
 
       // Deduplicate against existing types
       final existingFormatted = (placeTypes ?? [])
           .map((t) => t
               .split('_')
-              .map((w) => w.isNotEmpty
-                  ? '${w[0].toUpperCase()}${w.substring(1)}'
-                  : '')
+              .map((w) =>
+                  w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
               .join(' ')
               .toLowerCase())
           .toSet();
@@ -1263,11 +1360,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           await _experienceService.updatePublicExperiencePlaceTags(
             _publicExperience!.id,
             placeTypes: mergedTypes,
+            syncExperienceTags: true,
+            experienceTags: _currentExperience.tags,
           );
           if (mounted) {
             setState(() {
               _publicExperience = _publicExperience!.copyWith(
                 placeTypes: mergedTypes,
+                clearTags: _currentExperience.tags == null,
+                tags: _currentExperience.tags,
                 location: _publicExperience!.location.copyWith(
                   placeTypes: mergedTypes,
                 ),
@@ -1363,8 +1464,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     try {
       final userId = _authService.currentUser?.uid;
       if (mounted) {
-        final bool isEditor = userId != null &&
-            _currentExperience.editorUserIds.contains(userId);
+        final bool isEditor =
+            userId != null && _currentExperience.editorUserIds.contains(userId);
         setState(() {
           _currentUserId = userId;
           _isLoadingAuth = false;
@@ -3240,19 +3341,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ),
           // Expand/Collapse Button (only show if there are descriptions)
           if (descriptions != null && descriptions.length > 1)
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: BoxConstraints(),
-              icon: Icon(
-                _isHoursExpanded ? Icons.expand_less : Icons.expand_more,
-                color: Colors.black54,
+            Builder(
+              builder: (hoursExpandCtx) => IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                icon: Icon(
+                  _isHoursExpanded ? Icons.expand_less : Icons.expand_more,
+                  color: Colors.black54,
+                ),
+                onPressed: () {
+                  if (_tryHelpTap(
+                      ExperienceHelpTargetId.detailsHoursRow, hoursExpandCtx)) {
+                    return;
+                  }
+                  setState(() {
+                    _isHoursExpanded = !_isHoursExpanded;
+                  });
+                },
               ),
-              onPressed: () {
-                setState(() {
-                  _isHoursExpanded = !_isHoursExpanded;
-                });
-              },
             ),
         ],
       ),
@@ -3456,8 +3563,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   String _sharedMediaCardHeaderText(SharedMediaItem item) {
     final mediaById = {for (final m in _mediaItems) m.id: m};
-    final ord =
-        SharedMediaDisplayLabels.savedImageOrdinalForItemInExperience(
+    final ord = SharedMediaDisplayLabels.savedImageOrdinalForItemInExperience(
       sharedMediaItemIdsInOrder: _currentExperience.sharedMediaItemIds,
       targetMediaItemId: item.id,
       mediaById: mediaById,
@@ -3896,8 +4002,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         mediaWidget = CachedNetworkImage(
                           imageUrl: url,
                           fit: BoxFit.cover,
-                          placeholder: (context, url) => const Center(
-                              child: CircularProgressIndicator()),
+                          placeholder: (context, url) =>
+                              const Center(child: CircularProgressIndicator()),
                           errorWidget: (context, url, error) {
                             return Container(
                               color: Colors.grey[200],
@@ -5838,39 +5944,46 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final dateFormatter = DateFormat('EEEE, MMMM d, yyyy');
     final formattedDate = dateFormatter.format(event.startDateTime);
 
-    return GestureDetector(
-      onTap: withHeavyTap(() => _openEventEditor(event)),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-        decoration: BoxDecoration(
-          color: eventColor,
-          borderRadius: BorderRadius.circular(8.0),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.event,
-              color: textColor,
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'You are scheduled to go here on $formattedDate',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+    return Builder(
+      builder: (eventBannerCtx) => GestureDetector(
+        onTap: withHeavyTap(() {
+          if (_tryHelpTap(ExperienceHelpTargetId.eventBanner, eventBannerCtx)) {
+            return;
+          }
+          _openEventEditor(event);
+        }),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          decoration: BoxDecoration(
+            color: eventColor,
+            borderRadius: BorderRadius.circular(8.0),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.event,
+                color: textColor,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'You are scheduled to go here on $formattedDate',
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              color: textColor.withOpacity(0.7),
-              size: 20,
-            ),
-          ],
+              Icon(
+                Icons.chevron_right,
+                color: textColor.withOpacity(0.7),
+                size: 20,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -6749,8 +6862,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final tags = <String>[];
     final location = experience.location;
 
-    final primaryDisplay =
-        location.primaryTypeDisplayName ?? _formatPlaceType(location.primaryType);
+    final primaryDisplay = location.primaryTypeDisplayName ??
+        _formatPlaceType(location.primaryType);
     if (primaryDisplay.isNotEmpty) {
       tags.add(primaryDisplay);
     }

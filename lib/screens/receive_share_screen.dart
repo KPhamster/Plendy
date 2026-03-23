@@ -9961,6 +9961,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     allMediaPaths: uniqueMediaPaths,
                     icon: selectedCategoryObject?.icon,
                     placeTypes: card.placeTypes,
+                    tags: currentExperienceData.tags,
                     description: descriptionToSave.isNotEmpty
                         ? descriptionToSave
                         : null);
@@ -9972,7 +9973,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     .updatePublicExperienceMediaAndMaybeYelp(
                         existingPublicExp.id, uniqueMediaPaths,
                         newYelpUrl:
-                            cardYelpUrl.isNotEmpty ? cardYelpUrl : null);
+                            cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
+                        syncExperienceTags: true,
+                        experienceTags: currentExperienceData.tags);
                 if (!mounted) return;
               }
             } else {}

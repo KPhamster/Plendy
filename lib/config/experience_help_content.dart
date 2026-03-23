@@ -66,8 +66,7 @@ const Map<ExperienceHelpTargetId, HelpSpec<ExperienceHelpTargetId>>
     id: ExperienceHelpTargetId.detailsActionShareExperience,
     steps: [
       HelpStep(
-        text:
-            'Share this experience with friends or send them a link!',
+        text: 'Share this experience with friends or send them a link!',
         instruction: 'Tap anywhere to dismiss',
       ),
     ],
@@ -191,6 +190,16 @@ const Map<ExperienceHelpTargetId, HelpSpec<ExperienceHelpTargetId>>
       ),
     ],
   ),
+  ExperienceHelpTargetId.eventBanner: HelpSpec(
+    id: ExperienceHelpTargetId.eventBanner,
+    steps: [
+      HelpStep(
+        text:
+            'You already have an event tied to this place. Tap here to open it and see the full plan.',
+        instruction: 'Tap anywhere to dismiss',
+      ),
+    ],
+  ),
   ExperienceHelpTargetId.quickActionCallVenue: HelpSpec(
     id: ExperienceHelpTargetId.quickActionCallVenue,
     steps: [
@@ -243,8 +252,7 @@ const Map<ExperienceHelpTargetId, HelpSpec<ExperienceHelpTargetId>>
     id: ExperienceHelpTargetId.tabBar,
     steps: [
       HelpStep(
-        text:
-            'Switch between Content and Reviews here!',
+        text: 'Switch between Content and Reviews here!',
         instruction: 'Tap to continue',
       ),
       HelpStep(
@@ -288,7 +296,8 @@ const Map<ExperienceHelpTargetId, HelpSpec<ExperienceHelpTargetId>>
     id: ExperienceHelpTargetId.mediaToolbarFilter,
     steps: [
       HelpStep(
-        text: 'Filter your content items to find exactly what you\'re looking for!',
+        text:
+            'Filter your content items to find exactly what you\'re looking for!',
         instruction: 'Tap anywhere to dismiss',
       ),
     ],
@@ -384,7 +393,8 @@ const Map<ExperienceHelpTargetId, HelpSpec<ExperienceHelpTargetId>>
     id: ExperienceHelpTargetId.mediaActionPreviewSize,
     steps: [
       HelpStep(
-        text: 'Make the preview window taller or shorter -- whatever works best!',
+        text:
+            'Make the preview window taller or shorter -- whatever works best!',
         instruction: 'Tap anywhere to dismiss',
       ),
     ],

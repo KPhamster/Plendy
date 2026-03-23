@@ -3,20 +3,21 @@ import 'package:dio/dio.dart';
 import '../config/api_secrets.dart';
 
 /// Service for fetching Instagram post data using Meta's oEmbed Read API
-/// 
+///
 /// This service uses Instagram's oEmbed API to get post captions, metadata,
 /// and embed HTML without requiring user OAuth - just an App Access Token.
-/// 
+///
 /// Requirements:
 /// - Facebook App with "oEmbed Read" permission approved
 /// - App ID and App Secret configured in ApiSecrets
-/// 
+///
 /// Supported URL formats:
 /// - instagram.com/p/{shortcode}/ (posts)
 /// - instagram.com/reel/{shortcode}/ (reels)
 /// - instagram.com/tv/{shortcode}/ (IGTV)
 class InstagramOEmbedService {
-  static final InstagramOEmbedService _instance = InstagramOEmbedService._internal();
+  static final InstagramOEmbedService _instance =
+      InstagramOEmbedService._internal();
 
   factory InstagramOEmbedService() => _instance;
 
@@ -26,28 +27,36 @@ class InstagramOEmbedService {
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 10),
   ));
+  final Map<String, _CachedInstagramOEmbedResponse> _metadataCache =
+      <String, _CachedInstagramOEmbedResponse>{};
+  final Map<String, Future<Map<String, dynamic>?>> _inFlightMetadataRequests =
+      <String, Future<Map<String, dynamic>?>>{};
+  static const Duration _metadataCacheTtl = Duration(minutes: 15);
+  static const Duration _metadataFailureCacheTtl = Duration(minutes: 2);
 
   /// Base URL for Instagram oEmbed API (Meta Graph API v25.0)
-  static const String _oembedBaseUrl = 'https://graph.facebook.com/v25.0/instagram_oembed';
+  static const String _oembedBaseUrl =
+      'https://graph.facebook.com/v25.0/instagram_oembed';
 
   /// Check if the service is properly configured
   bool get isConfigured {
     final appId = ApiSecrets.facebookAppId;
     final appSecret = ApiSecrets.facebookAppSecret;
     return appId.isNotEmpty &&
-           appSecret.isNotEmpty &&
-           !appId.contains('YOUR_') &&
-           !appSecret.contains('YOUR_');
+        appSecret.isNotEmpty &&
+        !appId.contains('YOUR_') &&
+        !appSecret.contains('YOUR_');
   }
 
   /// Extract caption from an Instagram post URL
-  /// 
+  ///
   /// [url] - The Instagram post/reel URL
-  /// 
+  ///
   /// Returns the caption text, or null if unavailable or on error.
   Future<String?> getCaptionFromUrl(String url) async {
     if (!isConfigured) {
-      print('⚠️ INSTAGRAM: API not configured. Add Facebook App ID and Secret.');
+      print(
+          '⚠️ INSTAGRAM: API not configured. Add Facebook App ID and Secret.');
       return null;
     }
 
@@ -58,7 +67,7 @@ class InstagramOEmbedService {
 
     try {
       print('📸 INSTAGRAM: Fetching caption from oEmbed API...');
-      
+
       final response = await _dio.get(
         _oembedBaseUrl,
         queryParameters: {
@@ -79,7 +88,7 @@ class InstagramOEmbedService {
           print('❌ INSTAGRAM: Failed to parse response');
           return null;
         }
-        
+
         // Debug: Log all fields returned by the API
         print('📸 INSTAGRAM OEMBED RESPONSE:');
         for (final key in data.keys) {
@@ -90,20 +99,21 @@ class InstagramOEmbedService {
             print('  $key: $value');
           }
         }
-        
+
         // Check if there's a title field (some posts may have it)
         final title = data['title'] as String?;
         if (title != null && title.isNotEmpty) {
-          print('✅ INSTAGRAM: Got caption from title field: ${title.length} chars');
+          print(
+              '✅ INSTAGRAM: Got caption from title field: ${title.length} chars');
           return title;
         }
-        
+
         // The caption is embedded in the HTML response
         final html = data['html'] as String?;
-        
+
         if (html != null && html.isNotEmpty) {
           final caption = _extractCaptionFromHtml(html);
-          
+
           if (caption != null && caption.isNotEmpty) {
             print('✅ INSTAGRAM: Got caption (${caption.length} chars)');
             return caption;
@@ -113,10 +123,11 @@ class InstagramOEmbedService {
         } else {
           print('⚠️ INSTAGRAM: No HTML in oEmbed response');
         }
-        
+
         return null;
       } else if (response.statusCode == 400) {
-        print('❌ INSTAGRAM: Bad request - possibly private post or invalid URL');
+        print(
+            '❌ INSTAGRAM: Bad request - possibly private post or invalid URL');
         print('   Error: ${response.data}');
         return null;
       } else {
@@ -138,20 +149,21 @@ class InstagramOEmbedService {
   }
 
   /// Extract caption text from Instagram embed HTML
-  /// 
+  ///
   /// The oEmbed API returns HTML that contains the caption text.
   /// We need to parse it carefully to extract just the caption.
-  /// 
+  ///
   /// Supports both regular posts and Reels which have different HTML structures.
   String? _extractCaptionFromHtml(String html) {
     try {
-      print('📸 INSTAGRAM PARSE: Attempting to extract caption from ${html.length} chars of HTML');
-      
+      print(
+          '📸 INSTAGRAM PARSE: Attempting to extract caption from ${html.length} chars of HTML');
+
       // Debug: Print a snippet of the HTML to understand structure
       if (html.length > 500) {
         print('📸 INSTAGRAM PARSE: HTML preview: ${html.substring(0, 500)}...');
       }
-      
+
       // Method 1: Look for <p> tags inside blockquote (common for posts with captions)
       // Instagram embeds typically have: <blockquote>...<p>CAPTION HERE</p>...</blockquote>
       final pTagMatch = RegExp(
@@ -159,7 +171,7 @@ class InstagramOEmbedService {
         dotAll: true,
         multiLine: true,
       ).allMatches(html);
-      
+
       if (pTagMatch.isNotEmpty) {
         final captionParts = <String>[];
         for (final match in pTagMatch) {
@@ -169,71 +181,73 @@ class InstagramOEmbedService {
           if (content.startsWith('A post shared by')) continue;
           if (content.startsWith('A reel shared by')) continue;
           if (content.startsWith('View this')) continue;
-          if (content.contains('(@') && content.length < 50) continue; // Skip short author mentions
-          
+          if (content.contains('(@') && content.length < 50)
+            continue; // Skip short author mentions
+
           captionParts.add(content);
         }
-        
+
         if (captionParts.isNotEmpty) {
           final caption = captionParts.join('\n').trim();
-          print('✅ INSTAGRAM PARSE: Found caption in <p> tags: ${caption.length} chars');
+          print(
+              '✅ INSTAGRAM PARSE: Found caption in <p> tags: ${caption.length} chars');
           return caption;
         }
       }
-      
+
       // Method 2: Look for blockquote content and extract text
       final blockquoteMatch = RegExp(
         r'<blockquote[^>]*>(.*?)</blockquote>',
         dotAll: true,
         multiLine: true,
       ).firstMatch(html);
-      
+
       if (blockquoteMatch != null) {
         String blockquoteContent = blockquoteMatch.group(1) ?? '';
-        
+
         // Remove script tags first
         blockquoteContent = blockquoteContent.replaceAll(
-          RegExp(r'<script[^>]*>.*?</script>', dotAll: true), 
-          ''
-        );
-        
+            RegExp(r'<script[^>]*>.*?</script>', dotAll: true), '');
+
         // Remove HTML tags but keep newlines
         blockquoteContent = blockquoteContent
             .replaceAll(RegExp(r'<br\s*/?>'), '\n')
             .replaceAll(RegExp(r'<[^>]+>'), ' ')
             .replaceAll(RegExp(r'\s+'), ' ')
             .trim();
-        
+
         // Split by common separator phrases
         final lines = blockquoteContent.split(RegExp(r'[\n\r]+|\s{2,}'));
         final captionLines = <String>[];
-        
+
         for (final line in lines) {
           final trimmedLine = line.trim();
-          
+
           // Skip empty lines
           if (trimmedLine.isEmpty) continue;
-          
+
           // Stop at common attribution markers
           if (trimmedLine.startsWith('A post shared by')) break;
           if (trimmedLine.startsWith('A reel shared by')) break;
           if (trimmedLine.startsWith('View this post on')) break;
           if (trimmedLine.startsWith('View this reel on')) break;
-          if (RegExp(r'^\(@[\w.]+\)$').hasMatch(trimmedLine)) break; // Just @username
-          
+          if (RegExp(r'^\(@[\w.]+\)$').hasMatch(trimmedLine))
+            break; // Just @username
+
           // Skip if it's just a short author mention
           if (trimmedLine.contains('(@') && trimmedLine.length < 50) continue;
-          
+
           captionLines.add(trimmedLine);
         }
-        
+
         if (captionLines.isNotEmpty) {
           final caption = captionLines.join(' ').trim();
-          print('✅ INSTAGRAM PARSE: Found caption in blockquote: ${caption.length} chars');
+          print(
+              '✅ INSTAGRAM PARSE: Found caption in blockquote: ${caption.length} chars');
           return caption;
         }
       }
-      
+
       // Method 3: Extract ALL text content and look for meaningful content
       String plainText = html
           .replaceAll(RegExp(r'<script[^>]*>.*?</script>', dotAll: true), '')
@@ -242,55 +256,65 @@ class InstagramOEmbedService {
           .replaceAll(RegExp(r'<[^>]+>'), ' ')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
-      
-      print('📸 INSTAGRAM PARSE: Plain text extracted: ${plainText.length} chars');
+
+      print(
+          '📸 INSTAGRAM PARSE: Plain text extracted: ${plainText.length} chars');
       if (plainText.length > 200) {
-        print('📸 INSTAGRAM PARSE: Plain text preview: ${plainText.substring(0, 200)}...');
+        print(
+            '📸 INSTAGRAM PARSE: Plain text preview: ${plainText.substring(0, 200)}...');
       } else {
         print('📸 INSTAGRAM PARSE: Plain text: $plainText');
       }
-      
+
       // Look for caption before attribution markers
       final attributionPatterns = [
         r'A post shared by',
-        r'A reel shared by', 
+        r'A reel shared by',
         r'View this post on Instagram',
         r'View this reel on Instagram',
         r'on \w+ \d+, \d{4}', // Date pattern like "on Jan 15, 2024"
       ];
-      
+
       for (final pattern in attributionPatterns) {
         final captionMatch = RegExp(
           '^(.*?)(?:$pattern)',
           dotAll: true,
           caseSensitive: false,
         ).firstMatch(plainText);
-        
+
         if (captionMatch != null) {
           final caption = captionMatch.group(1)?.trim();
           if (caption != null && caption.length > 5) {
-            print('✅ INSTAGRAM PARSE: Found caption before "$pattern": ${caption.length} chars');
+            print(
+                '✅ INSTAGRAM PARSE: Found caption before "$pattern": ${caption.length} chars');
             return caption;
           }
         }
       }
-      
+
       // Method 4: If plain text is substantial, return it (minus known boilerplate)
       if (plainText.length > 20) {
         // Remove common Instagram embed boilerplate
         plainText = plainText
-            .replaceAll(RegExp(r'View this post on Instagram', caseSensitive: false), '')
-            .replaceAll(RegExp(r'View this reel on Instagram', caseSensitive: false), '')
-            .replaceAll(RegExp(r'A post shared by.*$', caseSensitive: false), '')
-            .replaceAll(RegExp(r'A reel shared by.*$', caseSensitive: false), '')
+            .replaceAll(
+                RegExp(r'View this post on Instagram', caseSensitive: false),
+                '')
+            .replaceAll(
+                RegExp(r'View this reel on Instagram', caseSensitive: false),
+                '')
+            .replaceAll(
+                RegExp(r'A post shared by.*$', caseSensitive: false), '')
+            .replaceAll(
+                RegExp(r'A reel shared by.*$', caseSensitive: false), '')
             .trim();
-        
+
         if (plainText.length > 10) {
-          print('✅ INSTAGRAM PARSE: Using cleaned plain text: ${plainText.length} chars');
+          print(
+              '✅ INSTAGRAM PARSE: Using cleaned plain text: ${plainText.length} chars');
           return plainText;
         }
       }
-      
+
       print('⚠️ INSTAGRAM PARSE: No caption could be extracted');
       return null;
     } catch (e) {
@@ -303,22 +327,23 @@ class InstagramOEmbedService {
   bool _isInstagramUrl(String url) {
     final lower = url.toLowerCase();
     return lower.contains('instagram.com/p/') ||
-           lower.contains('instagram.com/reel/') ||
-           lower.contains('instagram.com/tv/');
+        lower.contains('instagram.com/reel/') ||
+        lower.contains('instagram.com/tv/');
   }
 
   /// Get post metadata and embed HTML
-  /// 
+  ///
   /// Returns a map with:
   /// - `html`: The embed HTML (blockquote with Instagram embed.js)
   /// - `provider_name`: "Instagram"
   /// - `width`: Embed width (null for responsive)
-  /// 
+  ///
   /// Note: author_name, author_url, thumbnail_* fields were deprecated Nov 2025
   /// as part of Meta's migration to "Meta oEmbed Read".
-  /// 
+  ///
   /// [maxWidth] - Optional max width for the embed (320-658 pixels)
-  Future<Map<String, dynamic>?> getPostMetadata(String url, {int? maxWidth}) async {
+  Future<Map<String, dynamic>?> getPostMetadata(String url,
+      {int? maxWidth}) async {
     if (!isConfigured) {
       print('⚠️ INSTAGRAM: API not configured for metadata fetch');
       return null;
@@ -328,17 +353,77 @@ class InstagramOEmbedService {
       return null;
     }
 
+    final String cacheKey = _buildMetadataCacheKey(url, maxWidth: maxWidth);
+    final DateTime now = DateTime.now();
+    final _CachedInstagramOEmbedResponse? cached = _metadataCache[cacheKey];
+    if (cached != null) {
+      final Duration ttl =
+          cached.data == null ? _metadataFailureCacheTtl : _metadataCacheTtl;
+      if (now.difference(cached.fetchedAt) < ttl) {
+        return cached.data;
+      }
+      _metadataCache.remove(cacheKey);
+    }
+
+    final Future<Map<String, dynamic>?>? inFlight =
+        _inFlightMetadataRequests[cacheKey];
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final Future<Map<String, dynamic>?> requestFuture =
+        _fetchPostMetadata(url, maxWidth: maxWidth);
+    _inFlightMetadataRequests[cacheKey] = requestFuture;
+
+    try {
+      final Map<String, dynamic>? data = await requestFuture;
+      _metadataCache[cacheKey] = _CachedInstagramOEmbedResponse(
+        fetchedAt: now,
+        data: data,
+      );
+      return data;
+    } finally {
+      _inFlightMetadataRequests.remove(cacheKey);
+    }
+  }
+
+  String _buildMetadataCacheKey(String url, {int? maxWidth}) {
+    final String normalized = _normalizeInstagramUrlForCache(url);
+    return '$normalized|maxWidth=${maxWidth ?? 0}';
+  }
+
+  String _normalizeInstagramUrlForCache(String url) {
+    try {
+      final Uri uri = Uri.parse(url);
+      String path = uri.path;
+      if (!path.endsWith('/')) {
+        path = '$path/';
+      }
+      return '${uri.scheme}://${uri.host}$path'.toLowerCase();
+    } catch (_) {
+      final String withoutQuery = url.split('?').first;
+      if (withoutQuery.endsWith('/')) {
+        return withoutQuery.toLowerCase();
+      }
+      return '${withoutQuery.toLowerCase()}/';
+    }
+  }
+
+  Future<Map<String, dynamic>?> _fetchPostMetadata(
+    String url, {
+    int? maxWidth,
+  }) async {
     try {
       final queryParams = <String, dynamic>{
         'url': url,
         'access_token': ApiSecrets.facebookAccessToken,
       };
-      
+
       // Add maxwidth if specified (useful for responsive embeds)
       if (maxWidth != null && maxWidth >= 320 && maxWidth <= 658) {
         queryParams['maxwidth'] = maxWidth;
       }
-      
+
       final response = await _dio.get(
         _oembedBaseUrl,
         queryParameters: queryParams,
@@ -355,10 +440,10 @@ class InstagramOEmbedService {
           print('❌ INSTAGRAM METADATA: Failed to parse response');
           return null;
         }
-        
+
         final hasHtml = data['html'] != null;
         print('✅ INSTAGRAM: Got metadata - html: $hasHtml');
-        
+
         return data;
       } else if (response.statusCode == 400) {
         final error = _parseResponseData(response.data);
@@ -367,10 +452,12 @@ class InstagramOEmbedService {
         final errorSubcode = error?['error']?['error_subcode'];
         final errorType = error?['error']?['type'];
         print('❌ INSTAGRAM METADATA: Bad request - $errorMsg');
-        print('   Error code: $errorCode, subcode: $errorSubcode, type: $errorType');
+        print(
+            '   Error code: $errorCode, subcode: $errorSubcode, type: $errorType');
         print('   Full error: ${response.data}');
         print('   Request URL: $url');
-        print('   Access token format: App ID|App Secret (${ApiSecrets.facebookAppId.length} chars | ${ApiSecrets.facebookAppSecret.length} chars)');
+        print(
+            '   Access token format: App ID|App Secret (${ApiSecrets.facebookAppId.length} chars | ${ApiSecrets.facebookAppSecret.length} chars)');
         return null;
       } else {
         print('❌ INSTAGRAM METADATA: API returned ${response.statusCode}');
@@ -389,15 +476,15 @@ class InstagramOEmbedService {
       return null;
     }
   }
-  
+
   /// Parse response data that could be either a Map or a JSON String
   Map<String, dynamic>? _parseResponseData(dynamic data) {
     if (data == null) return null;
-    
+
     if (data is Map<String, dynamic>) {
       return data;
     }
-    
+
     if (data is String) {
       try {
         final parsed = json.decode(data);
@@ -408,10 +495,20 @@ class InstagramOEmbedService {
         print('⚠️ INSTAGRAM: Failed to parse JSON string: $e');
       }
     }
-    
+
     return null;
   }
 
   /// Check if a URL is an Instagram post/reel URL
   bool isInstagramPostUrl(String url) => _isInstagramUrl(url);
+}
+
+class _CachedInstagramOEmbedResponse {
+  const _CachedInstagramOEmbedResponse({
+    required this.fetchedAt,
+    required this.data,
+  });
+
+  final DateTime fetchedAt;
+  final Map<String, dynamic>? data;
 }

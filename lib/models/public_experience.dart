@@ -23,6 +23,8 @@ class PublicExperience {
   final String? icon;
   // Google Places API types for auto-categorization
   final List<String>? placeTypes;
+  // User/editorial tags (mirrors [Experience.tags] for the associated place)
+  final List<String>? tags;
   // Editorial/review/generative summary from Google Places API (cached)
   final String? description;
 
@@ -40,6 +42,7 @@ class PublicExperience {
     this.thumbsDownUserIds = const [],
     this.icon,
     this.placeTypes,
+    this.tags,
     this.description,
   });
 
@@ -58,6 +61,8 @@ class PublicExperience {
     List<String>? thumbsDownUserIds,
     String? icon,
     List<String>? placeTypes,
+    List<String>? tags,
+    bool clearTags = false,
     String? description,
   }) {
     return PublicExperience(
@@ -74,8 +79,23 @@ class PublicExperience {
       thumbsDownUserIds: thumbsDownUserIds ?? this.thumbsDownUserIds,
       icon: icon ?? this.icon,
       placeTypes: placeTypes ?? this.placeTypes,
+      tags: clearTags ? null : (tags ?? this.tags),
       description: description ?? this.description,
     );
+  }
+
+  /// Substring match on [name] or any [tags] entry (case-insensitive).
+  /// [qLower] must be trimmed and lowercased.
+  bool matchesTitleOrTagQueryLower(String qLower) {
+    if (qLower.isEmpty) return false;
+    if (name.toLowerCase().contains(qLower)) return true;
+    final List<String>? tagList = tags;
+    if (tagList != null) {
+      for (final String t in tagList) {
+        if (t.toLowerCase().contains(qLower)) return true;
+      }
+    }
+    return false;
   }
 
   // Convert PublicExperience object to a Map for Firestore
@@ -93,6 +113,7 @@ class PublicExperience {
       'thumbsDownUserIds': thumbsDownUserIds,
       'icon': icon,
       'placeTypes': placeTypes,
+      'tags': tags,
       'description': description,
       // id is not stored in the document data itself
     };
@@ -117,6 +138,7 @@ class PublicExperience {
       thumbsDownUserIds: List<String>.from(data['thumbsDownUserIds'] ?? []),
       icon: data['icon'] as String?,
       placeTypes: (data['placeTypes'] as List<dynamic>?)?.cast<String>(),
+      tags: _parseStringListNullable(data['tags']),
       description: data['description'] as String?,
     );
   }
@@ -138,8 +160,16 @@ class PublicExperience {
       thumbsDownUserIds: List<String>.from(map['thumbsDownUserIds'] ?? []),
       icon: map['icon'] as String?,
       placeTypes: (map['placeTypes'] as List<dynamic>?)?.cast<String>(),
+      tags: _parseStringListNullable(map['tags']),
       description: map['description'] as String?,
     );
+  }
+
+  /// Parses Firestore/list values (same shape as [Experience.tags] on read).
+  static List<String>? _parseStringListNullable(dynamic value) {
+    if (value == null) return null;
+    if (value is! List) return null;
+    return value.map((item) => item.toString()).toList();
   }
   
   /// Gets the user's current rating from the public experience
@@ -183,7 +213,7 @@ class PublicExperience {
       website: website,
       phoneNumber: null,
       openingHours: null,
-      tags: null,
+      tags: tags,
       priceRange: null,
       sharedMediaItemIds: const <String>[],
       sharedMediaType: null,
@@ -382,6 +412,7 @@ class PublicExperience {
         ListEquality().equals(other.thumbsDownUserIds, thumbsDownUserIds) &&
         other.icon == icon &&
         ListEquality().equals(other.placeTypes, placeTypes) &&
+        ListEquality().equals(other.tags, tags) &&
         other.description == description;
   }
 
@@ -401,6 +432,7 @@ class PublicExperience {
         ListEquality().hash(thumbsDownUserIds) ^
         icon.hashCode ^
         ListEquality().hash(placeTypes) ^
+        ListEquality().hash(tags) ^
         description.hashCode;
   }
 }

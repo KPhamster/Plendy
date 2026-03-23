@@ -43,6 +43,26 @@ const Map<DiscoveryHelpTargetId, HelpSpec<DiscoveryHelpTargetId>>
       ),
     ],
   ),
+  DiscoveryHelpTargetId.searchBar: HelpSpec(
+    id: DiscoveryHelpTargetId.searchBar,
+    steps: [
+      HelpStep(
+        text:
+            'Looking for something specific? Use this search bar to filter Discovery by title or tags. \'Sushi\' for example!',
+        instruction: 'Tap anywhere to dismiss',
+      ),
+    ],
+  ),
+  DiscoveryHelpTargetId.sortByLocationButton: HelpSpec(
+    id: DiscoveryHelpTargetId.sortByLocationButton,
+    steps: [
+      HelpStep(
+        text:
+            'Want Discovery to feel more tailored? Tap here to sort by what\'s near you or focus the feed on specific places.',
+        instruction: 'Tap anywhere to dismiss',
+      ),
+    ],
+  ),
   DiscoveryHelpTargetId.andMoreButton: HelpSpec(
     id: DiscoveryHelpTargetId.andMoreButton,
     steps: [

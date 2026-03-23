@@ -18,6 +18,7 @@ enum ExperienceHelpTargetId {
   detailsReservationsRow,
   detailsParkingRow,
   detailsOtherCategoriesRow,
+  eventBanner,
   quickActionCallVenue,
   quickActionWebsite,
   quickActionYelp,

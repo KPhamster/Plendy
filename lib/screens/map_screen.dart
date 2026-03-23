@@ -27,6 +27,7 @@ import '../models/color_category.dart'; // Import ColorCategory model
 import '../models/user_profile.dart';
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
 import '../models/public_experience.dart';
+import '../models/discovery_location_filter.dart';
 import '../config/app_constants.dart';
 import '../config/colors.dart';
 import '../models/event.dart';
@@ -182,6 +183,9 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   bool _isSearching = false;
+
+  /// After map public search submit, blocks Places/saved dropdown until the user edits the field.
+  bool _suppressPlacesSearchDropdown = false;
   bool _isReturningFromNavigation =
       false; // Track navigation return to disable search
   Timer? _debounce;
@@ -205,6 +209,11 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // ADDED: State for public experiences (globe toggle)
   List<PublicExperience> _nearbyPublicExperiences = [];
   final Map<String, Marker> _publicExperienceMarkers = {};
+  // Public experiences from map search submit (title/tags); shown alongside saved pins
+  List<PublicExperience> _mapSearchPublicExperiences = [];
+  final Map<String, Marker> _mapSearchPublicMarkers = {};
+  bool _isMapPublicSearchLoading = false;
+  String _mapSearchAppliedQuery = '';
   bool _isGlobeLoading = false;
   LatLng? _lastGlobeMapCenter;
   final Map<String, Experience> _eventExperiencesCache = {};
@@ -1198,6 +1207,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     print("🗺️ MAP SCREEN: Starting data load...");
     setState(() {
       _isLoading = true;
+      // Invalidate map-search public layer (saved list changed)
+      _clearMapSearchPublicLayer();
       // ADDED: Invalidate public experience data when saved experiences refresh
       // This ensures public markers don't show stale experiences that user may have just saved
       if (_isGlobalToggleActive) {
@@ -1883,6 +1894,93 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return false;
   }
 
+  String _normalizeSearchDedupeText(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  String _publicExperienceDedupeKey(PublicExperience publicExp) {
+    final String placeId = publicExp.placeID.trim();
+    if (placeId.isNotEmpty) {
+      return 'place:$placeId';
+    }
+
+    final String? locationPlaceId = publicExp.location.placeId?.trim();
+    if (locationPlaceId != null && locationPlaceId.isNotEmpty) {
+      return 'location_place:$locationPlaceId';
+    }
+
+    final String normalizedName = _normalizeSearchDedupeText(publicExp.name);
+    if (normalizedName.isNotEmpty) {
+      return 'name_coord:$normalizedName|'
+          '${publicExp.location.latitude.toStringAsFixed(5)}|'
+          '${publicExp.location.longitude.toStringAsFixed(5)}';
+    }
+
+    final String? city = publicExp.location.city?.trim();
+    final String? country = publicExp.location.country?.trim();
+    if ((city != null && city.isNotEmpty) ||
+        (country != null && country.isNotEmpty)) {
+      return 'area:${_normalizeSearchDedupeText(city ?? '')}|'
+          '${_normalizeSearchDedupeText(country ?? '')}|'
+          '${publicExp.location.latitude.toStringAsFixed(5)}|'
+          '${publicExp.location.longitude.toStringAsFixed(5)}';
+    }
+
+    return publicExp.id.isNotEmpty
+        ? 'id:${publicExp.id}'
+        : 'coord:${publicExp.location.latitude.toStringAsFixed(5)},'
+            '${publicExp.location.longitude.toStringAsFixed(5)}';
+  }
+
+  Future<List<PublicExperience>> _searchPublicExperiencesByQuery(
+    String query, {
+    required int maxMatches,
+    required int maxPages,
+    required int pageSize,
+  }) async {
+    final String qLower = query.trim().toLowerCase();
+    if (qLower.isEmpty) {
+      return const <PublicExperience>[];
+    }
+
+    final List<PublicExperience> matches = <PublicExperience>[];
+    final Set<String> seenKeys = <String>{};
+    DocumentSnapshot<Object?>? lastDoc;
+    bool hasMore = true;
+    int pageCount = 0;
+
+    while (hasMore && pageCount < maxPages && matches.length < maxMatches) {
+      pageCount++;
+      final page = await _experienceService.fetchPublicExperiencesPage(
+        startAfter: lastDoc,
+        limit: pageSize,
+      );
+      lastDoc = page.lastDocument;
+      hasMore = page.hasMore;
+
+      for (final PublicExperience publicExp in page.experiences) {
+        if (!publicExp.matchesTitleOrTagQueryLower(qLower)) continue;
+        if (!discoveryHasPlausibleCoordinates(
+          publicExp.location.latitude,
+          publicExp.location.longitude,
+        )) {
+          continue;
+        }
+        if (_isPublicExperienceAlreadySaved(publicExp)) continue;
+
+        final String dedupeKey = _publicExperienceDedupeKey(publicExp);
+        if (!seenKeys.add(dedupeKey)) continue;
+
+        matches.add(publicExp);
+        if (matches.length >= maxMatches) {
+          break;
+        }
+      }
+    }
+
+    return matches;
+  }
+
   // ADDED: Fetch and filter nearby public experiences within 50 miles
   Future<void> _fetchNearbyPublicExperiences(LatLng center) async {
     const double fiftyMilesInMeters = 80467; // 50 miles ≈ 80467 meters
@@ -1893,6 +1991,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         "🗺️ MAP SCREEN: Fetching public experiences near ${center.latitude}, ${center.longitude} (within 50 miles)");
 
     final List<PublicExperience> nearby = [];
+    final Set<String> seenKeys = <String>{};
     DocumentSnapshot<Object?>? lastDoc;
     bool hasMore = true;
     int pageCount = 0;
@@ -1908,6 +2007,11 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         for (final publicExp in page.experiences) {
           // Skip if already saved
           if (_isPublicExperienceAlreadySaved(publicExp)) {
+            continue;
+          }
+
+          final String dedupeKey = _publicExperienceDedupeKey(publicExp);
+          if (!seenKeys.add(dedupeKey)) {
             continue;
           }
 
@@ -1972,16 +2076,26 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return null;
   }
 
-  // ADDED: Generate markers for public experiences
-  Future<void> _generatePublicExperienceMarkers() async {
-    print(
-        "🗺️ MAP SCREEN: Generating markers for ${_nearbyPublicExperiences.length} public experiences");
+  void _clearMapSearchPublicLayer() {
+    _mapSearchPublicExperiences = [];
+    _mapSearchPublicMarkers.clear();
+    _mapSearchAppliedQuery = '';
+  }
 
-    _publicExperienceMarkers.clear();
+  // ADDED: Generate markers for public experiences into [target] (globe or map search).
+  Future<void> _generatePublicExperienceMarkersInto(
+    List<PublicExperience> experiences,
+    Map<String, Marker> target, {
+    required String logLabel,
+  }) async {
+    print(
+        "🗺️ MAP SCREEN: Generating markers ($logLabel) for ${experiences.length} public experiences");
+
+    target.clear();
 
     if (!mounted) {
       print(
-          "🗺️ MAP SCREEN: Widget unmounted, skipping public marker generation");
+          "🗺️ MAP SCREEN: Widget unmounted, skipping public marker generation ($logLabel)");
       return;
     }
 
@@ -1998,7 +2112,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     // Cache for category-based icons to avoid regenerating
     final Map<String, BitmapDescriptor> publicCategoryIconCache = {};
 
-    for (final publicExp in _nearbyPublicExperiences) {
+    for (final publicExp in experiences) {
       final position = LatLng(
         publicExp.location.latitude,
         publicExp.location.longitude,
@@ -2112,14 +2226,170 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         }),
       );
 
-      _publicExperienceMarkers[publicExp.id] = marker;
+      target[publicExp.id] = marker;
     }
 
     print(
-        "🗺️ MAP SCREEN: Generated ${_publicExperienceMarkers.length} public experience markers");
+        "🗺️ MAP SCREEN: Generated (${logLabel}) ${target.length} public experience markers");
 
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _generatePublicExperienceMarkers() async {
+    await _generatePublicExperienceMarkersInto(
+      _nearbyPublicExperiences,
+      _publicExperienceMarkers,
+      logLabel: 'globe',
+    );
+  }
+
+  /// Max public experiences shown on the map after a search (nearest to view center).
+  static const int _mapPublicSearchMaxDisplay = 100;
+
+  /// Safety cap while scanning Firestore (substring match over doc-id order).
+  static const int _mapPublicSearchMaxCollect = 5000;
+  static const int _mapPublicSearchMaxPages = 100;
+  static const int _mapPublicSearchPageSize = 50;
+  static const int _livePublicSearchMaxResults = 20;
+  static const int _livePublicSearchMaxPages = 20;
+  static const int _livePublicSearchPageSize = 50;
+
+  Future<LatLng?> _mapViewCenterLatLng() async {
+    try {
+      _mapController ??= await _mapControllerCompleter.future;
+      if (!mounted) return null;
+      final Size size = MediaQuery.sizeOf(context);
+      return await _mapController!.getLatLng(ScreenCoordinate(
+        x: size.width ~/ 2,
+        y: size.height ~/ 2,
+      ));
+    } catch (e) {
+      print('🗺️ MAP SCREEN: Error getting map view center: $e');
+      return null;
+    }
+  }
+
+  Future<void> _submitMapPublicExperienceSearch() async {
+    if (!mounted) return;
+    _debounce?.cancel();
+    FocusManager.instance.primaryFocus?.unfocus();
+    _searchFocusNode.unfocus();
+
+    final String trimmed = _searchController.text.trim();
+    setState(() {
+      _suppressPlacesSearchDropdown = true;
+      _showSearchResults = false;
+      _searchResults = [];
+      if (trimmed.isEmpty) {
+        if (_mapSearchPublicMarkers.isNotEmpty ||
+            _mapSearchPublicExperiences.isNotEmpty ||
+            _mapSearchAppliedQuery.isNotEmpty) {
+          _clearMapSearchPublicLayer();
+        }
+      }
+    });
+
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    final List<Map<String, dynamic>> savedResults =
+        _searchUserExperiences(trimmed);
+
+    if (trimmed == _mapSearchAppliedQuery &&
+        _mapSearchPublicMarkers.isNotEmpty) {
+      final List<LatLng> fitTargets = <LatLng>[
+        ..._locationsFromSearchResults(savedResults),
+        ..._mapSearchPublicExperiences.map(
+          (e) => LatLng(e.location.latitude, e.location.longitude),
+        ),
+      ];
+      if (fitTargets.isNotEmpty) {
+        await _fitCameraToBounds(fitTargets);
+      }
+      return;
+    }
+    setState(() {
+      _isMapPublicSearchLoading = true;
+    });
+
+    final LatLng? viewCenter = await _mapViewCenterLatLng();
+    final LatLng? sortCenter = viewCenter ??
+        (_mapWidgetInitialLocation != null
+            ? LatLng(
+                _mapWidgetInitialLocation!.latitude,
+                _mapWidgetInitialLocation!.longitude,
+              )
+            : null);
+
+    try {
+      final List<PublicExperience> matches =
+          await _searchPublicExperiencesByQuery(
+        trimmed,
+        maxMatches: _mapPublicSearchMaxCollect,
+        maxPages: _mapPublicSearchMaxPages,
+        pageSize: _mapPublicSearchPageSize,
+      );
+
+      if (sortCenter != null) {
+        matches.sort((PublicExperience a, PublicExperience b) {
+          final double da = _calculateDistanceInMeters(
+            sortCenter.latitude,
+            sortCenter.longitude,
+            a.location.latitude,
+            a.location.longitude,
+          );
+          final double db = _calculateDistanceInMeters(
+            sortCenter.latitude,
+            sortCenter.longitude,
+            b.location.latitude,
+            b.location.longitude,
+          );
+          return da.compareTo(db);
+        });
+      }
+
+      final List<PublicExperience> displayMatches =
+          matches.length > _mapPublicSearchMaxDisplay
+              ? matches.sublist(0, _mapPublicSearchMaxDisplay)
+              : matches;
+
+      if (!mounted) return;
+      setState(() {
+        _mapSearchPublicExperiences = displayMatches;
+        _mapSearchAppliedQuery = trimmed;
+      });
+      await _generatePublicExperienceMarkersInto(
+        _mapSearchPublicExperiences,
+        _mapSearchPublicMarkers,
+        logLabel: 'map_search',
+      );
+
+      if (!mounted) return;
+      final List<LatLng> fitTargets = <LatLng>[
+        ..._locationsFromSearchResults(savedResults),
+        ...displayMatches.map(
+          (e) => LatLng(e.location.latitude, e.location.longitude),
+        ),
+      ];
+      if (fitTargets.isNotEmpty) {
+        await _fitCameraToBounds(fitTargets);
+      }
+    } catch (e) {
+      print('🗺️ MAP SCREEN: Map public search error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not search public experiences: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMapPublicSearchLoading = false;
+        });
+      }
     }
   }
 
@@ -7286,6 +7556,29 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
               ),
               actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed: () {
+                    triggerHeavyHaptic();
+                    Navigator.of(context)
+                        .pop(); // Close dialog without applying
+                  },
+                ),
+                if (activeFolloweeId == null)
+                  TextButton(
+                    child: const Text('Clear Map'),
+                    onPressed: () {
+                      triggerHeavyHaptic();
+                      setState(() {
+                        _markers.clear();
+                        _publicExperienceMarkers.clear();
+                        _mapSearchPublicMarkers.clear();
+                        _eventViewMarkers.clear();
+                        _selectModeEventOnlyMarkers.clear();
+                      });
+                      Navigator.of(context).pop();
+                    },
+                  ),
                 if (activeFolloweeId == null)
                   TextButton(
                     child: const Text('Show All'),
@@ -7320,14 +7613,6 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       _applyFiltersAndUpdateMarkers();
                     },
                   ),
-                TextButton(
-                  child: const Text('Cancel'),
-                  onPressed: () {
-                    triggerHeavyHaptic();
-                    Navigator.of(context)
-                        .pop(); // Close dialog without applying
-                  },
-                ),
                 TextButton(
                   child: const Text('Apply'),
                   onPressed: () {
@@ -8094,24 +8379,19 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final locationAddress = experience.location.address?.toLowerCase() ?? '';
 
       final bool tagMatch = experience.tags != null &&
-          experience.tags!
-              .any((tag) => tag.toLowerCase().contains(queryLower));
+          experience.tags!.any((tag) => tag.toLowerCase().contains(queryLower));
 
       final loc = experience.location;
       final bool placeTypeMatch = (loc.primaryTypeDisplayName != null &&
-              loc.primaryTypeDisplayName!
-                  .toLowerCase()
-                  .contains(queryLower)) ||
+              loc.primaryTypeDisplayName!.toLowerCase().contains(queryLower)) ||
           (loc.primaryType != null &&
               loc.primaryType!
                   .replaceAll('_', ' ')
                   .toLowerCase()
                   .contains(queryLower)) ||
           (loc.placeTypes != null &&
-              loc.placeTypes!.any((t) => t
-                  .replaceAll('_', ' ')
-                  .toLowerCase()
-                  .contains(queryLower)));
+              loc.placeTypes!.any((t) =>
+                  t.replaceAll('_', ' ').toLowerCase().contains(queryLower)));
 
       if (experienceName.contains(queryLower) ||
           locationName.contains(queryLower) ||
@@ -8131,7 +8411,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           'experience': experience,
           'category': category,
           'description': '${category.icon} ${experience.name}',
-          'address': experience.location.getPlaceName(),
+          'address': _formatExperienceSearchArea(experience.location),
           'latitude': experience.location.latitude,
           'longitude': experience.location.longitude,
           'placeId': experience.location.placeId,
@@ -8142,6 +8422,230 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
 
     return matchingExperiences;
+  }
+
+  String? _formatExperienceSearchArea(Location location) {
+    final String? address = location.address?.trim();
+    if (address != null && address.isNotEmpty) {
+      return address;
+    }
+
+    return location.getFormattedArea()?.trim();
+  }
+
+  List<Map<String, dynamic>> _buildPublicExperienceSearchResults(
+      List<PublicExperience> publicExperiences) {
+    return publicExperiences
+        .map((publicExp) => <String, dynamic>{
+              'type': 'public_experience',
+              'publicExperienceId': publicExp.id,
+              'publicExperience': publicExp,
+              'description': publicExp.name,
+              'address': _formatExperienceSearchArea(publicExp.location),
+              'latitude': publicExp.location.latitude,
+              'longitude': publicExp.location.longitude,
+              'placeId': publicExp.placeID,
+            })
+        .toList();
+  }
+
+  double? _searchResultLatitude(Map<String, dynamic> result) {
+    final value = result['latitude'];
+    return value is num ? value.toDouble() : null;
+  }
+
+  double? _searchResultLongitude(Map<String, dynamic> result) {
+    final value = result['longitude'];
+    return value is num ? value.toDouble() : null;
+  }
+
+  List<LatLng> _locationsFromSearchResults(List<Map<String, dynamic>> results) {
+    final List<LatLng> locations = <LatLng>[];
+    for (final result in results) {
+      final double? latitude = _searchResultLatitude(result);
+      final double? longitude = _searchResultLongitude(result);
+      if (latitude == null || longitude == null) continue;
+      locations.add(LatLng(latitude, longitude));
+    }
+    return locations;
+  }
+
+  bool _doesSearchResultMatchPlace(
+    Map<String, dynamic> result, {
+    String? placeId,
+    double? latitude,
+    double? longitude,
+  }) {
+    final String? resultPlaceId = (result['placeId'] as String?)?.trim();
+    if (placeId != null &&
+        placeId.isNotEmpty &&
+        resultPlaceId != null &&
+        resultPlaceId.isNotEmpty &&
+        resultPlaceId == placeId) {
+      return true;
+    }
+
+    final double? resultLatitude = _searchResultLatitude(result);
+    final double? resultLongitude = _searchResultLongitude(result);
+    if (latitude != null &&
+        longitude != null &&
+        resultLatitude != null &&
+        resultLongitude != null) {
+      return _areCoordinatesClose(
+        latitude,
+        longitude,
+        resultLatitude,
+        resultLongitude,
+        tolerance: 0.0001,
+      );
+    }
+
+    return false;
+  }
+
+  bool _isMapsResultAlreadyRepresented(
+    Map<String, dynamic> mapsResult,
+    List<Map<String, dynamic>> prioritizedResults,
+  ) {
+    final String? placeId = (mapsResult['placeId'] as String?)?.trim();
+    final double? latitude = _searchResultLatitude(mapsResult);
+    final double? longitude = _searchResultLongitude(mapsResult);
+
+    for (final result in prioritizedResults) {
+      if (_doesSearchResultMatchPlace(
+        result,
+        placeId: placeId,
+        latitude: latitude,
+        longitude: longitude,
+      )) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<List<Map<String, dynamic>>> _enrichMapsSearchResultsWithCoordinates(
+    List<Map<String, dynamic>> mapsResults,
+  ) async {
+    return Future.wait(mapsResults.map((result) async {
+      final double? latitude = _searchResultLatitude(result);
+      final double? longitude = _searchResultLongitude(result);
+      final String? placeId = (result['placeId'] as String?)?.trim();
+
+      if ((latitude != null && longitude != null) ||
+          placeId == null ||
+          placeId.isEmpty) {
+        return result;
+      }
+
+      try {
+        final Location location = await _mapsService.getPlaceDetails(
+          placeId,
+          includePhotoUrl: false,
+        );
+        if (location.latitude == 0.0 && location.longitude == 0.0) {
+          return result;
+        }
+
+        return <String, dynamic>{
+          ...result,
+          'latitude': location.latitude,
+          'longitude': location.longitude,
+          'address': result['address'] ?? location.address,
+        };
+      } catch (e) {
+        print(
+            '🗺️ MAP SCREEN: Failed to enrich maps search result $placeId with coordinates: $e');
+        return result;
+      }
+    }));
+  }
+
+  int _searchResultTypePriority(Map<String, dynamic> result) {
+    switch (result['type']) {
+      case 'experience':
+        return 0;
+      case 'public_experience':
+        return 1;
+      default:
+        return 2;
+    }
+  }
+
+  void _sortSearchResultsByQuery(
+    List<Map<String, dynamic>> results,
+    String query, {
+    LatLng? mapCenter,
+  }) {
+    final String queryLower = query.toLowerCase();
+
+    int getScore(String name, String currentQuery) {
+      int score = 0;
+      if (name == currentQuery) {
+        score += 5000;
+      } else if (name.startsWith(currentQuery)) {
+        score += 2000;
+      } else if (name.contains(currentQuery)) {
+        score += 1000;
+      } else if (currentQuery.contains(name) && name.length > 3) {
+        score += 500;
+      }
+      return score;
+    }
+
+    results.sort((a, b) {
+      final int typePriorityA = _searchResultTypePriority(a);
+      final int typePriorityB = _searchResultTypePriority(b);
+      if (typePriorityA != typePriorityB) {
+        return typePriorityA.compareTo(typePriorityB);
+      }
+
+      final String nameA = (a['description'] ?? '').toString().toLowerCase();
+      final String nameB = (b['description'] ?? '').toString().toLowerCase();
+
+      final int scoreA = getScore(nameA, queryLower);
+      final int scoreB = getScore(nameB, queryLower);
+
+      final double? latA = _searchResultLatitude(a);
+      final double? lngA = _searchResultLongitude(a);
+      final double? latB = _searchResultLatitude(b);
+      final double? lngB = _searchResultLongitude(b);
+      final bool hasDistanceA =
+          mapCenter != null && latA != null && lngA != null;
+      final bool hasDistanceB =
+          mapCenter != null && latB != null && lngB != null;
+
+      if (hasDistanceA && hasDistanceB) {
+        final double distanceA = _calculateDistance(
+          mapCenter.latitude,
+          mapCenter.longitude,
+          latA,
+          lngA,
+        );
+        final double distanceB = _calculateDistance(
+          mapCenter.latitude,
+          mapCenter.longitude,
+          latB,
+          lngB,
+        );
+        final int distanceCompare = distanceA.compareTo(distanceB);
+        if (distanceCompare != 0) {
+          return distanceCompare;
+        }
+      } else if (hasDistanceA != hasDistanceB) {
+        return hasDistanceA ? -1 : 1;
+      }
+
+      if (scoreA != scoreB) {
+        return scoreB.compareTo(scoreA);
+      }
+      if (nameA.length != nameB.length) {
+        return nameB.length.compareTo(nameA.length);
+      }
+
+      return nameA.compareTo(nameB);
+    });
   }
 
   Future<void> _searchPlaces(String query) async {
@@ -8180,6 +8684,17 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         return;
       }
 
+      if (_suppressPlacesSearchDropdown) {
+        if (mounted) {
+          setState(() {
+            _isSearching = false;
+            _searchResults = [];
+            _showSearchResults = false;
+          });
+        }
+        return;
+      }
+
       if (mounted) {
         setState(() {
           _isSearching = true;
@@ -8190,32 +8705,62 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _tappedExperienceCategory = null; // ADDED: Clear associated category
           _tappedLocationBusinessStatus = null; // ADDED: Clear business status
           _tappedLocationOpenNow = null; // ADDED: Clear open-now status
+          _publicReadOnlyExperience = null;
+          _publicReadOnlyExperienceId = null;
+          _publicPreviewMediaItems = null;
         });
       }
 
       try {
-        // MODIFIED: First search user's experiences
+        // Search saved experiences first.
         final experienceResults = _searchUserExperiences(query);
         print(
             "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Found ${experienceResults.length} matching user experiences for query: '$query'");
 
-        // Then search Google Maps
+        // Then search unsaved public experiences before falling back to Google Maps.
+        final List<PublicExperience> publicMatches =
+            await _searchPublicExperiencesByQuery(
+          query,
+          maxMatches: _livePublicSearchMaxResults,
+          maxPages: _livePublicSearchMaxPages,
+          pageSize: _livePublicSearchPageSize,
+        );
+        final List<Map<String, dynamic>> publicResults =
+            _buildPublicExperienceSearchResults(publicMatches);
+        print(
+            "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Found ${publicResults.length} matching public experiences for query: '$query'");
+
+        final List<Map<String, dynamic>> prioritizedResults =
+            <Map<String, dynamic>>[
+          ...experienceResults,
+          ...publicResults,
+        ];
+
+        // Finally search Google Maps and keep only results not already represented.
         print(
             "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Calling _mapsService.searchPlaces for query: '$query'");
         final mapsResults = await _mapsService.searchPlaces(query);
+        final List<Map<String, dynamic>> enrichedMapsResults =
+            await _enrichMapsSearchResultsWithCoordinates(mapsResults);
         print(
             "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Received ${mapsResults.length} results from _mapsService for query: '$query'");
 
         // Mark Google Maps results as type 'place'
-        final markedMapsResults = mapsResults.map((result) {
-          return {
-            'type': 'place',
-            ...result,
-          };
-        }).toList();
+        final List<Map<String, dynamic>> markedMapsResults = enrichedMapsResults
+            .map((result) => <String, dynamic>{
+                  'type': 'place',
+                  ...result,
+                })
+            .where((result) => !_isMapsResultAlreadyRepresented(
+                  result,
+                  prioritizedResults,
+                ))
+            .toList();
 
-        // Combine results with experiences first (prioritized)
-        final allResults = [...experienceResults, ...markedMapsResults];
+        final List<Map<String, dynamic>> allResults = <Map<String, dynamic>>[
+          ...prioritizedResults,
+          ...markedMapsResults,
+        ];
 
         LatLng? mapCenter;
         if (_mapController != null) {
@@ -8230,76 +8775,35 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           }
         }
 
-        allResults.sort((a, b) {
-          final String nameA =
-              (a['description'] ?? '').toString().toLowerCase();
-          final String nameB =
-              (b['description'] ?? '').toString().toLowerCase();
-          final String queryLower = query.toLowerCase();
+        mapCenter ??= _mapWidgetInitialLocation != null
+            ? LatLng(
+                _mapWidgetInitialLocation!.latitude,
+                _mapWidgetInitialLocation!.longitude,
+              )
+            : null;
 
-          // Prioritize user experiences over Google Maps results
-          if (a['type'] == 'experience' && b['type'] == 'place') {
-            return -1; // a comes first
-          } else if (a['type'] == 'place' && b['type'] == 'experience') {
-            return 1; // b comes first
-          }
-
-          // Simplified scoring from LocationPickerScreen (no businessNameHint)
-          int getScore(String name, String currentQuery) {
-            int score = 0;
-            if (name == currentQuery) {
-              // Exact match
-              score += 5000;
-            } else if (name.startsWith(currentQuery)) {
-              // Starts with
-              score += 2000;
-            } else if (name.contains(currentQuery)) {
-              // Contains
-              score += 1000;
-            } else if (currentQuery.contains(name) && name.length > 3) {
-              // Query contains name
-              score += 500;
-            }
-            return score;
-          }
-
-          int scoreA = getScore(nameA, queryLower);
-          int scoreB = getScore(nameB, queryLower);
-
-          if (scoreA != scoreB) {
-            return scoreB.compareTo(scoreA); // Higher score first
-          }
-          if (nameA.length != nameB.length) {
-            return nameB.length.compareTo(nameA.length); // Longer name first
-          }
-
-          final double? latA = a['latitude'];
-          final double? lngA = a['longitude'];
-          final double? latB = b['latitude'];
-          final double? lngB = b['longitude'];
-
-          if (mapCenter != null &&
-              latA != null &&
-              lngA != null &&
-              latB != null &&
-              lngB != null) {
-            final distanceA = _calculateDistance(
-                mapCenter.latitude, mapCenter.longitude, latA, lngA);
-            final distanceB = _calculateDistance(
-                mapCenter.latitude, mapCenter.longitude, latB, lngB);
-            return distanceA.compareTo(distanceB);
-          }
-          return nameA.compareTo(nameB);
-        });
+        _sortSearchResultsByQuery(
+          allResults,
+          query,
+          mapCenter: mapCenter,
+        );
 
         if (mounted) {
-          setState(() {
-            _searchResults = allResults;
-            _showSearchResults = allResults.isNotEmpty;
-            _isSearching = false;
-            print(
-                "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length} (${experienceResults.length} experiences + ${mapsResults.length} places)");
-          });
+          if (_suppressPlacesSearchDropdown) {
+            setState(() {
+              _isSearching = false;
+              _searchResults = [];
+              _showSearchResults = false;
+            });
+          } else {
+            setState(() {
+              _searchResults = allResults;
+              _showSearchResults = allResults.isNotEmpty;
+              _isSearching = false;
+              print(
+                  "🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length} (${experienceResults.length} saved + ${publicResults.length} public + ${markedMapsResults.length} places)");
+            });
+          }
         }
       } catch (e) {
         print('🗺️ MAP SCREEN: Error searching places: $e');
@@ -8393,6 +8897,9 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               category; // ADDED: Set associated category
           _tappedLocationBusinessStatus = null; // ADDED: Set business status
           _tappedLocationOpenNow = null; // ADDED: Set open-now status
+          _publicReadOnlyExperience = null;
+          _publicReadOnlyExperienceId = null;
+          _publicPreviewMediaItems = null;
           _isSearching = false;
           _showSearchResults = false;
         });
@@ -8428,6 +8935,108 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _showMarkerInfoWindow(tappedMarkerId);
       }
       unawaited(_prefetchExperienceMedia(experience));
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _searchController.addListener(_onSearchChanged);
+        }
+      });
+      return;
+    }
+
+    if (result['type'] == 'public_experience') {
+      print(
+          "🗺️ MAP SCREEN: (_selectSearchResult) Selected result is a public experience.");
+
+      final PublicExperience publicExperience = result['publicExperience'];
+      final String? selectedIconText =
+          await _findCategoryIconForPublicExperience(publicExperience);
+      final LatLng targetLatLng = LatLng(
+        publicExperience.location.latitude,
+        publicExperience.location.longitude,
+      );
+
+      if (_mapController != null) {
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
+        );
+      } else {
+        final GoogleMapController c = await _mapControllerCompleter.future;
+        c.animateCamera(
+          CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
+        );
+      }
+
+      final tappedMarkerId = MarkerId('selected_public_experience');
+      final int animationToken = ++_markerAnimationToken;
+      const int finalSize = 80;
+      final int startSize = _markerStartSize(finalSize);
+      Future<BitmapDescriptor> iconBuilder(int size) {
+        if (selectedIconText != null && selectedIconText.isNotEmpty) {
+          return _selectedExperienceMarkerIconFromText(
+            selectedIconText,
+            accentColor: Colors.black,
+            size: size,
+          );
+        }
+        return _selectedExperienceMarkerIconFromText(
+          String.fromCharCode(Icons.public.codePoint),
+          accentColor: Colors.black,
+          size: size,
+          textColor: Colors.white,
+          fontFamily: Icons.public.fontFamily,
+        );
+      }
+
+      _searchController.text = publicExperience.name;
+      _isProgrammaticTextUpdate = false;
+
+      if (mounted) {
+        setState(() {
+          _mapWidgetInitialLocation = publicExperience.location;
+          _tappedLocationDetails = publicExperience.location;
+          _tappedLocationMarker = null;
+          _tappedExperience = null;
+          _tappedExperienceCategory = null;
+          _tappedLocationBusinessStatus = null;
+          _tappedLocationOpenNow = null;
+          _publicReadOnlyExperience = publicExperience.toExperienceDraft();
+          _publicReadOnlyExperienceId = publicExperience.id;
+          _publicPreviewMediaItems =
+              publicExperience.buildMediaItemsForPreview();
+          _isSearching = false;
+          _showSearchResults = false;
+        });
+        unawaited(
+          _refreshBusinessStatus(publicExperience.placeID, animationToken),
+        );
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        final BitmapDescriptor firstIcon = await iconBuilder(startSize);
+        if (!mounted || animationToken != _markerAnimationToken) {
+          return;
+        }
+        setState(() {
+          _tappedLocationMarker = _buildSelectedMarker(
+            markerId: tappedMarkerId,
+            position: targetLatLng,
+            infoWindowTitle: publicExperience.name,
+            icon: firstIcon,
+          );
+        });
+        unawaited(_animateSelectedMarkerSmooth(
+          animationToken: animationToken,
+          markerId: tappedMarkerId,
+          position: targetLatLng,
+          infoWindowTitle: publicExperience.name,
+          iconBuilder: iconBuilder,
+          startSize: startSize,
+          endSize: finalSize,
+          loopPulseAfterExpand: true,
+        ));
+        _showMarkerInfoWindow(tappedMarkerId);
+      }
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -8515,6 +9124,9 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _tappedLocationBusinessStatus =
               businessStatus; // ADDED: Set business status
           _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
+          _publicReadOnlyExperience = null;
+          _publicReadOnlyExperienceId = null;
+          _publicPreviewMediaItems = null;
           _isSearching = false;
           _showSearchResults = false;
         });
@@ -8561,6 +9173,7 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void _onSearchChanged() {
     print(
         "🗺️ MAP SCREEN: (_onSearchChanged) Text: '${_searchController.text}', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
+    _suppressPlacesSearchDropdown = false;
     _searchPlaces(_searchController.text);
   }
 
@@ -9023,6 +9636,12 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           "🗺️ MAP SCREEN: Added ${_publicExperienceMarkers.length} public experience markers (globe active)");
     }
 
+    allMarkers.addAll(_mapSearchPublicMarkers);
+    if (_mapSearchPublicMarkers.isNotEmpty) {
+      print(
+          "🗺️ MAP SCREEN: Added ${_mapSearchPublicMarkers.length} public experience markers (map search)");
+    }
+
     // ADDED: Add event view markers when in event view mode
     if (_isEventViewModeActive) {
       allMarkers.addAll(_eventViewMarkers);
@@ -9046,8 +9665,8 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
 
     if (_publicReadOnlyExperienceId != null &&
-        _isGlobalToggleActive &&
-        _tappedLocationMarker != null) {
+        _tappedLocationMarker != null &&
+        allMarkers.containsKey(_publicReadOnlyExperienceId)) {
       allMarkers.remove(_publicReadOnlyExperienceId);
       print(
           "🗺️ MAP SCREEN: Hiding original public marker for '${_publicReadOnlyExperience?.name}' to show selected marker.");
@@ -9130,35 +9749,35 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   const Text('Plendy Map'),
                   const SizedBox(width: 8),
                   AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOut,
-                  switchOutCurve: Curves.easeIn,
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: child,
-                  ),
-                  child: ((_isLoading ||
-                              _isSharedLoading ||
-                              _isGlobeLoading ||
-                              _isCalendarDialogLoading) &&
-                          !_isSearching)
-                      ? SizedBox(
-                          key: const ValueKey('appbar_spinner'),
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Theme.of(context).primaryColor,
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: child,
+                    ),
+                    child: ((_isLoading ||
+                                _isSharedLoading ||
+                                _isGlobeLoading ||
+                                _isCalendarDialogLoading) &&
+                            !_isSearching)
+                        ? SizedBox(
+                            key: const ValueKey('appbar_spinner'),
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Theme.of(context).primaryColor,
+                            ),
+                          )
+                        : const SizedBox(
+                            key: ValueKey('appbar_empty'),
+                            width: 0,
+                            height: 0,
                           ),
-                        )
-                      : const SizedBox(
-                          key: ValueKey('appbar_empty'),
-                          width: 0,
-                          height: 0,
-                        ),
-                ),
-              ],
-            ),
+                  ),
+                ],
+              ),
             ),
             actions: [
               // Calendar toggle
@@ -9324,40 +9943,56 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(25.0),
                                   ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8.0),
-                                    child: TextField(
-                                      controller: _searchController,
-                                      focusNode: _searchFocusNode,
-                                      enabled: !_isReturningFromNavigation,
-                                      decoration: InputDecoration(
-                                        hintText:
-                                            'Search for a place or address',
-                                        border: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(25.0),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        enabledBorder: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(25.0),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        focusedBorder: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(25.0),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        filled: true,
-                                        fillColor:
-                                            AppColors.backgroundColorDark,
-                                        prefixIcon: Icon(Icons.search,
-                                            color:
-                                                Theme.of(context).primaryColor),
-                                        suffixIcon:
-                                            _isSearching // Show loading indicator in search bar
-                                                ? SizedBox(
+                                  child: ListenableBuilder(
+                                    listenable: _searchController,
+                                    builder: (context, _) {
+                                      final bool showClear =
+                                          _searchController.text.isNotEmpty;
+                                      final bool showSuffixBusy =
+                                          _isSearching ||
+                                              _isMapPublicSearchLoading;
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8.0),
+                                        child: TextField(
+                                          controller: _searchController,
+                                          focusNode: _searchFocusNode,
+                                          enabled: !_isReturningFromNavigation,
+                                          textInputAction:
+                                              TextInputAction.search,
+                                          onSubmitted: (_) =>
+                                              _submitMapPublicExperienceSearch(),
+                                          decoration: InputDecoration(
+                                            hintText:
+                                                'Search for an experience, place, or address',
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(25.0),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(25.0),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(25.0),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            filled: true,
+                                            fillColor:
+                                                AppColors.backgroundColorDark,
+                                            prefixIcon: Icon(Icons.search,
+                                                color: Theme.of(context)
+                                                    .primaryColor),
+                                            suffixIcon: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.end,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                if (showSuffixBusy)
+                                                  SizedBox(
                                                     width: 24,
                                                     height: 24,
                                                     child: Padding(
@@ -9368,45 +10003,75 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                                           CircularProgressIndicator(
                                                               strokeWidth: 2),
                                                     ),
-                                                  )
-                                                : _searchController
-                                                        .text.isNotEmpty
-                                                    ? IconButton(
-                                                        icon: Icon(Icons.clear),
-                                                        onPressed: () {
-                                                          triggerHeavyHaptic();
-                                                          setState(() {
-                                                            _searchController
-                                                                .clear();
-                                                            _searchResults = [];
-                                                            _showSearchResults =
-                                                                false;
-                                                            // Clear tapped location when search is cleared
-                                                            _tappedLocationDetails =
-                                                                null;
-                                                            _tappedLocationMarker =
-                                                                null;
-                                                            _tappedExperience =
-                                                                null;
-                                                            _tappedExperienceCategory =
-                                                                null;
-                                                            _tappedLocationBusinessStatus =
-                                                                null;
-                                                            _tappedLocationOpenNow =
-                                                                null;
-                                                          });
-                                                        },
-                                                      )
-                                                    : null,
-                                      ),
-                                      onTap: withHeavyTap(() {
-                                        triggerHeavyHaptic();
-                                        // When search bar is tapped, clear any existing map-tapped location
-                                        // to avoid confusion if the user then selects from search results.
-                                        // However, don't clear if a search result was *just* selected.
-                                        // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
-                                      }),
-                                    ),
+                                                  ),
+                                                if (showClear)
+                                                  IconButton(
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    icon:
+                                                        const Icon(Icons.clear),
+                                                    onPressed: () {
+                                                      triggerHeavyHaptic();
+                                                      setState(() {
+                                                        _searchController
+                                                            .clear();
+                                                        _searchResults = [];
+                                                        _showSearchResults =
+                                                            false;
+                                                        _clearMapSearchPublicLayer();
+                                                        _tappedLocationDetails =
+                                                            null;
+                                                        _tappedLocationMarker =
+                                                            null;
+                                                        _tappedExperience =
+                                                            null;
+                                                        _tappedExperienceCategory =
+                                                            null;
+                                                        _tappedLocationBusinessStatus =
+                                                            null;
+                                                        _tappedLocationOpenNow =
+                                                            null;
+                                                        _publicReadOnlyExperience =
+                                                            null;
+                                                        _publicReadOnlyExperienceId =
+                                                            null;
+                                                        _publicPreviewMediaItems =
+                                                            null;
+                                                      });
+                                                    },
+                                                  ),
+                                                IconButton(
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                  tooltip:
+                                                      'Search saved and public experiences',
+                                                  icon: Icon(
+                                                    Icons.arrow_forward,
+                                                    color: Theme.of(context)
+                                                        .primaryColor,
+                                                  ),
+                                                  onPressed:
+                                                      _isMapPublicSearchLoading
+                                                          ? null
+                                                          : () {
+                                                              triggerHeavyHaptic();
+                                                              _submitMapPublicExperienceSearch();
+                                                            },
+                                                ),
+                                              ],
+                                            ),
+                                            suffixIconConstraints:
+                                                const BoxConstraints(
+                                              minHeight: 40,
+                                              minWidth: 40,
+                                            ),
+                                          ),
+                                          onTap: withHeavyTap(() {
+                                            triggerHeavyHaptic();
+                                          }),
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
                               ),
@@ -9450,8 +10115,12 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       ),
                       itemBuilder: (context, index) {
                         final result = _searchResults[index];
+                        final String resultType =
+                            result['type'] as String? ?? 'place';
                         final bool isUserExperience =
-                            result['type'] == 'experience';
+                            resultType == 'experience';
+                        final bool isPublicExperience =
+                            resultType == 'public_experience';
                         final bool hasRating = result['rating'] != null;
                         final double rating =
                             hasRating ? (result['rating'] as double) : 0.0;
@@ -9477,24 +10146,32 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                 leading: CircleAvatar(
                                   backgroundColor: isUserExperience
                                       ? Colors.green.withOpacity(0.1)
-                                      : Theme.of(context)
-                                          .primaryColor
-                                          .withOpacity(0.1),
+                                      : isPublicExperience
+                                          ? Colors.black.withOpacity(0.08)
+                                          : Theme.of(context)
+                                              .primaryColor
+                                              .withOpacity(0.1),
                                   child: isUserExperience
                                       ? Icon(
                                           Icons.bookmark,
                                           color: Colors.green,
                                           size: 18,
                                         )
-                                      : Text(
-                                          '${index + 1}',
-                                          style: TextStyle(
-                                            color:
-                                                Theme.of(context).primaryColor,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
-                                        ),
+                                      : isPublicExperience
+                                          ? const Icon(
+                                              Icons.public,
+                                              color: Colors.black87,
+                                              size: 18,
+                                            )
+                                          : Text(
+                                              '${index + 1}',
+                                              style: TextStyle(
+                                                color: Theme.of(context)
+                                                    .primaryColor,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16,
+                                              ),
+                                            ),
                                 ),
                                 title: Row(
                                   children: [
@@ -9514,6 +10191,29 @@ class MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                           'Saved',
                                           style: TextStyle(
                                             color: Colors.green[700],
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(width: 8),
+                                    ] else if (isPublicExperience) ...[
+                                      Container(
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.08),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color:
+                                                Colors.black.withOpacity(0.15),
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          'Public',
+                                          style: TextStyle(
+                                            color: Colors.black87,
                                             fontSize: 10,
                                             fontWeight: FontWeight.w500,
                                           ),

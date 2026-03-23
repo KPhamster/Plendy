@@ -3,6 +3,8 @@ enum DiscoveryHelpTargetId {
   coverPage,
   startDiscoveringButton,
   feedView,
+  searchBar,
+  sortByLocationButton,
   andMoreButton,
   sourceActionButton,
   shareActionButton,

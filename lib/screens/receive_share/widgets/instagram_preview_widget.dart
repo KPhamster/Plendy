@@ -346,14 +346,35 @@ class InstagramWebViewState extends State<InstagramWebView> {
   $embedHtml
   <script async src="//www.instagram.com/embed.js"></script>
   <script>
+    function processInstagramEmbedsSafely() {
+      try {
+        if (!window.instgrm ||
+            !window.instgrm.Embeds ||
+            typeof window.instgrm.Embeds.process !== 'function') {
+          return;
+        }
+
+        var result = window.instgrm.Embeds.process();
+        if (result && typeof result.then === 'function') {
+          result.then(function() {
+            setTimeout(hideInstagramCaptions, 0);
+          }).catch(function() {
+            setTimeout(hideInstagramCaptions, 0);
+          });
+        } else {
+          setTimeout(hideInstagramCaptions, 0);
+        }
+      } catch (e) {
+        console.log('Error processing Instagram embeds:', e);
+      }
+    }
+
     // Force process embeds when script loads
     if (window.instgrm) {
-      window.instgrm.Embeds.process();
+      processInstagramEmbedsSafely();
     } else {
       document.querySelector('script[src*="embed.js"]').addEventListener('load', function() {
-        if (window.instgrm) {
-          window.instgrm.Embeds.process();
-        }
+        processInstagramEmbedsSafely();
       });
     }
 
@@ -429,13 +450,10 @@ class InstagramWebViewState extends State<InstagramWebView> {
     hideInstagramCaptions();
     
     if (window.instgrm) {
-      // If already loaded, try immediately and also after processing
-      window.instgrm.Embeds.process().then(hideInstagramCaptions);
+      processInstagramEmbedsSafely();
     } else {
       document.querySelector('script[src*="embed.js"]').addEventListener('load', function() {
-        if (window.instgrm) {
-          window.instgrm.Embeds.process().then(hideInstagramCaptions);
-        }
+        processInstagramEmbedsSafely();
         // Run hiding after embed.js loads
         setTimeout(hideInstagramCaptions, 500);
       });

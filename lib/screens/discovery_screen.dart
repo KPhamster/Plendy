@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
 
@@ -5,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
@@ -13,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../models/color_category.dart';
+import '../models/discovery_location_filter.dart';
 import '../models/experience.dart';
 import '../models/public_experience.dart';
 import '../models/report.dart';
@@ -44,6 +47,7 @@ import '../config/colors.dart';
 import '../config/discovery_help_content.dart';
 import '../models/discovery_help_target.dart';
 import '../widgets/screen_help_controller.dart';
+import '../widgets/discovery_location_dialog.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -85,6 +89,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   static const String _seenMediaPrefsKey = 'discovery_seen_media_keys_v1';
   static const String _savedPlacesPrefsKey = 'discovery_saved_places_v1';
   static const String _savedMediaPrefsKey = 'discovery_saved_media_v1';
+  static const String _discoveryLocationSettingsPrefsKey =
+      'discovery_location_settings_v1';
   static const Duration _cacheValidDuration = Duration(hours: 6);
 
   final List<PublicExperience> _publicExperiences = [];
@@ -93,6 +99,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final Set<String> _persistedSeenMediaKeys = <String>{};
   final Set<String> _userSavedPlaceIds = <String>{};
   final Set<String> _userSavedMediaUrls = <String>{};
+  List<PublicExperience>? _cachedDiscoveryPoolForFeedGeneration;
+  List<PublicExperience>? _cachedOrderedDiscoveryPoolForFeedGeneration;
+  int? _cachedSelectableDiscoveryCandidateCount;
+  int? _cachedSeenSelectableDiscoveryCandidateCount;
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
   Future<void>? _userCollectionsFuture;
@@ -108,16 +118,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   bool _isPreparingMore = false;
   bool _isShareInProgress = false;
   bool _isLoadingSharedPreview = false;
+  bool _isApplyingDiscoveryLocation = false;
   bool _hasStartedDiscovering = false;
+  bool _hasExplicitDiscoveryLocationSettings = false;
   String? _errorMessage;
   int _currentPage = 0;
+  int _discoveryRandomOrderSeed = 0;
   double _dragDistance = 0;
   static const double _dragThreshold = 40;
+  static const int _richPreviewPageWindow = 1;
   String? _lastDisplayedShareToken;
   late final ScreenHelpController<DiscoveryHelpTargetId> _help;
   final GlobalKey _coverFeedHelpAnchorKey = GlobalKey();
   final GlobalKey _startDiscoveringButtonKey = GlobalKey();
   final GlobalKey _feedCenterHelpAnchorKey = GlobalKey();
+  final GlobalKey _discoverySearchHelpKey = GlobalKey();
+  final GlobalKey _sortByLocationHelpKey = GlobalKey();
   final GlobalKey _sourceActionHelpKey = GlobalKey();
   final GlobalKey _shareActionHelpKey = GlobalKey();
   final GlobalKey _locationActionHelpKey = GlobalKey();
@@ -593,6 +609,23 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   bool _isCoverPageVisible = false;
   _CoverQuote? _currentCoverQuote;
 
+  final TextEditingController _discoverySearchController =
+      TextEditingController();
+
+  /// Last value applied when the user submits search; drives filtering.
+  String _discoverySearchApplied = '';
+  bool _isDiscoverySearchRefreshing = false;
+
+  /// First load (and refreshed loads); awaited when starting from cover via search submit.
+  Future<void>? _feedInitializationFuture;
+
+  DiscoverySortMode _discoverySortMode = DiscoverySortMode.random;
+  List<DiscoveryAreaFilter> _discoveryAreas = <DiscoveryAreaFilter>[];
+  DiscoveryAreaMatchMode _discoveryAreaMode =
+      DiscoveryAreaMatchMode.strictBounds;
+  double _discoveryRadiusMiles = 25;
+  Position? _lastUserPositionForDiscovery;
+
   @override
   bool get wantKeepAlive =>
       false; // Changed to false so cover page shows every time
@@ -616,7 +649,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     });
     _currentCoverQuote = _pickRandomCoverQuote();
     _prepareCoverBackgrounds();
-    _initializeFeed();
+    _discoveryRandomOrderSeed = _nextDiscoveryRandomOrderSeed();
+    _feedInitializationFuture = _initializeDiscoveryScreen();
     _scheduleCoverPageFadeIn();
     final String? initialToken = widget.initialShareToken;
     if (initialToken != null && initialToken.isNotEmpty) {
@@ -670,10 +704,643 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   @override
   void dispose() {
+    _discoverySearchController.dispose();
     HelpModeService.listenable.removeListener(_onGlobalHelpModeChanged);
     _help.dispose();
     _pageController.dispose();
     super.dispose();
+  }
+
+  Future<void> _submitDiscoverySearch() async {
+    if (!mounted) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    final bool fromCover = !_hasStartedDiscovering;
+    final String text = _discoverySearchController.text;
+    if (!fromCover && text == _discoverySearchApplied) {
+      return;
+    }
+    _discoverySearchApplied = text;
+    _invalidateDiscoveryCandidateCaches();
+    if (fromCover) {
+      _setHasStartedDiscovering(true);
+      await (_feedInitializationFuture ?? Future<void>.value());
+      if (!mounted) return;
+    }
+    setState(() {
+      _feedItems.clear();
+      _usedMediaKeys.clear();
+      _currentPage = 0;
+      _isDiscoverySearchRefreshing = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_pageController.hasClients &&
+          _pageController.position.hasPixels &&
+          _pageController.position.haveDimensions) {
+        _pageController.jumpToPage(0);
+      }
+    });
+    await _reloadDiscoveryFeedAfterSearchChange();
+  }
+
+  Future<void> _reloadDiscoveryFeedAfterSearchChange() async {
+    try {
+      await _fetchMoreExperiencesIfNeeded(force: true);
+      if (mounted) await _generateFeedItems(count: 5);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDiscoverySearchRefreshing = false;
+        });
+      }
+    }
+  }
+
+  List<PublicExperience> get _poolForFeedGeneration {
+    final List<PublicExperience>? cachedPool =
+        _cachedDiscoveryPoolForFeedGeneration;
+    if (cachedPool != null) {
+      return cachedPool;
+    }
+
+    Iterable<PublicExperience> iter = _publicExperiences;
+    final String q = _discoverySearchApplied.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      iter = iter.where((PublicExperience e) => _matchesDiscoveryQuery(e, q));
+    }
+    if (_discoveryAreas.isNotEmpty) {
+      iter = iter.where(_experienceMatchesDiscoveryGeo);
+    }
+    final List<PublicExperience> filteredPool =
+        List<PublicExperience>.unmodifiable(iter.toList());
+    _cachedDiscoveryPoolForFeedGeneration = filteredPool;
+    return filteredPool;
+  }
+
+  static const Map<String, List<String>> _discoveryCountryIndicators =
+      <String, List<String>>{
+    'japan': <String>[
+      'japan',
+      'tokyo',
+      'osaka',
+      'kyoto',
+      'shibuya',
+      'shinjuku',
+      'harajuku',
+      'akihabara',
+      'sapporo',
+      'okinawa',
+      'fukuoka',
+    ],
+    'south korea': <String>[
+      'south korea',
+      'korea',
+      'seoul',
+      'busan',
+      'incheon',
+      'jeju',
+    ],
+    'china': <String>['china', 'beijing', 'shanghai', 'hong kong'],
+    'thailand': <String>[
+      'thailand',
+      'bangkok',
+      'phuket',
+      'chiang mai',
+    ],
+    'taiwan': <String>['taiwan', 'taipei'],
+    'vietnam': <String>['vietnam', 'hanoi', 'ho chi minh', 'saigon'],
+    'singapore': <String>['singapore'],
+    'malaysia': <String>['malaysia', 'kuala lumpur'],
+    'indonesia': <String>['indonesia', 'jakarta', 'bali'],
+    'philippines': <String>['philippines', 'manila'],
+    'india': <String>['india', 'mumbai', 'delhi'],
+    'united kingdom': <String>[
+      'united kingdom',
+      'uk',
+      'england',
+      'london',
+      'manchester',
+    ],
+    'france': <String>['france', 'paris'],
+    'germany': <String>['germany', 'berlin', 'munich'],
+    'italy': <String>['italy', 'rome', 'milan', 'venice', 'florence'],
+    'spain': <String>['spain', 'madrid', 'barcelona'],
+    'portugal': <String>['portugal', 'lisbon'],
+    'greece': <String>['greece', 'athens'],
+    'turkey': <String>['turkey', 'istanbul'],
+    'australia': <String>['australia', 'sydney', 'melbourne'],
+    'new zealand': <String>['new zealand', 'auckland'],
+    'united arab emirates': <String>[
+      'united arab emirates',
+      'uae',
+      'dubai',
+      'abu dhabi',
+    ],
+    'mexico': <String>['mexico', 'mexico city', 'cancun'],
+    'canada': <String>['canada', 'toronto', 'vancouver', 'montreal'],
+    'brazil': <String>['brazil', 'rio de janeiro', 'sao paulo'],
+  };
+
+  bool get _hasDiscoveryPoolFilters =>
+      _discoveryAreas.isNotEmpty || _discoverySearchApplied.trim().isNotEmpty;
+
+  bool _shouldFetchMoreForDiscoveryPool({
+    required int rawTargetPoolSize,
+    required int filteredTargetPoolSize,
+  }) {
+    if (_hasDiscoveryPoolFilters) {
+      return _poolForFeedGeneration.length < filteredTargetPoolSize;
+    }
+    return _publicExperiences.length < rawTargetPoolSize;
+  }
+
+  bool _isCountryLikeDiscoveryArea(DiscoveryAreaFilter area) {
+    return area.types
+            .any((String t) => t == 'country' || t.contains('country')) ||
+        _canonicalDiscoveryCountryFromText(area.label) != null;
+  }
+
+  String _normalizeDiscoveryGeoText(String value) {
+    return _normalizeDiscoveryGeoTextStatic(value);
+  }
+
+  static String _normalizeDiscoveryGeoTextStatic(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  String? _canonicalDiscoveryCountryFromText(String value) {
+    final String normalized = _normalizeDiscoveryGeoText(value);
+    if (normalized.isEmpty) return null;
+
+    for (final MapEntry<String, List<String>> entry
+        in _discoveryCountryIndicators.entries) {
+      if (normalized == entry.key) {
+        return entry.key;
+      }
+      for (final String indicator in entry.value) {
+        if (normalized == _normalizeDiscoveryGeoText(indicator)) {
+          return entry.key;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  String? _canonicalDiscoveryCountryForArea(DiscoveryAreaFilter area) {
+    final String? canonicalFromLabel =
+        _canonicalDiscoveryCountryFromText(area.label);
+    if (canonicalFromLabel != null) return canonicalFromLabel;
+    if (!_isCountryLikeDiscoveryArea(area)) return null;
+
+    final String normalizedLabel = _normalizeDiscoveryGeoText(area.label);
+    return normalizedLabel.isEmpty ? null : normalizedLabel;
+  }
+
+  bool _normalizedDiscoveryPhraseMatch(String haystack, String needle) {
+    if (haystack.isEmpty || needle.isEmpty) return false;
+    if (haystack == needle) return true;
+    return haystack.startsWith('$needle ') ||
+        haystack.endsWith(' $needle') ||
+        haystack.contains(' $needle ');
+  }
+
+  bool? _experienceMatchesDiscoveryCountryText(
+    PublicExperience experience,
+    DiscoveryAreaFilter area,
+  ) {
+    final String? canonicalArea = _canonicalDiscoveryCountryForArea(area);
+    if (canonicalArea == null) return null;
+
+    final Location loc = experience.location;
+    final String areaLabel = _normalizeDiscoveryGeoText(area.label);
+    final Set<String> directCountryTerms = <String>{
+      canonicalArea,
+      if (areaLabel.isNotEmpty) areaLabel,
+    };
+
+    final List<String> structuredFields = <String>[
+      loc.country ?? '',
+      loc.city ?? '',
+      loc.state ?? '',
+      loc.administrativeAreaLevel2 ?? '',
+      loc.administrativeAreaLevel3 ?? '',
+      loc.administrativeAreaLevel4 ?? '',
+      loc.administrativeAreaLevel5 ?? '',
+      loc.administrativeAreaLevel6 ?? '',
+      loc.administrativeAreaLevel7 ?? '',
+    ]
+        .map(_normalizeDiscoveryGeoText)
+        .where((String value) => value.isNotEmpty)
+        .toList();
+    final String address = _normalizeDiscoveryGeoText(loc.address ?? '');
+    if (structuredFields.isEmpty && address.isEmpty) return null;
+
+    for (final String field in structuredFields) {
+      if (directCountryTerms.contains(field)) {
+        return true;
+      }
+      final String? canonicalField = _canonicalDiscoveryCountryFromText(field);
+      if (canonicalField != null && canonicalField == canonicalArea) {
+        return true;
+      }
+    }
+
+    final List<String> indicators =
+        _discoveryCountryIndicators[canonicalArea] ?? <String>[canonicalArea];
+    for (final String field in structuredFields) {
+      for (final String indicator in indicators) {
+        final String normalizedIndicator =
+            _normalizeDiscoveryGeoText(indicator);
+        if (normalizedIndicator.isEmpty || normalizedIndicator.length <= 2) {
+          continue;
+        }
+        if (_normalizedDiscoveryPhraseMatch(field, normalizedIndicator)) {
+          return true;
+        }
+      }
+    }
+
+    if (address.isNotEmpty) {
+      for (final String term in directCountryTerms) {
+        if (_normalizedDiscoveryPhraseMatch(address, term)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  bool _experienceMatchesDiscoveryGeo(PublicExperience e) {
+    if (_discoveryAreas.isEmpty) return true;
+    final Location loc = e.location;
+    final bool hasPlausibleCoords = discoveryHasPlausibleCoordinates(
+      loc.latitude,
+      loc.longitude,
+    );
+
+    for (final DiscoveryAreaFilter area in _discoveryAreas) {
+      final bool? countryTextMatch =
+          _experienceMatchesDiscoveryCountryText(e, area);
+      if (countryTextMatch == true) return true;
+      if (countryTextMatch == false) {
+        continue;
+      }
+
+      if (!hasPlausibleCoords) {
+        continue;
+      }
+
+      if (_discoveryAreaMode == DiscoveryAreaMatchMode.withinRadius) {
+        final double limitKm = milesToKm(_discoveryRadiusMiles);
+        final double d = _mapsService.distanceBetweenKm(
+          loc.latitude,
+          loc.longitude,
+          area.latitude,
+          area.longitude,
+        );
+        if (d <= limitKm) return true;
+        continue;
+      }
+
+      final DiscoveryMapBounds? vp = area.viewport;
+      if (vp != null) {
+        if (vp.contains(loc.latitude, loc.longitude)) return true;
+        continue;
+      }
+
+      final double rKm = discoveryFallbackRadiusKmForTypes(area.types);
+      final double d = _mapsService.distanceBetweenKm(
+        loc.latitude,
+        loc.longitude,
+        area.latitude,
+        area.longitude,
+      );
+      if (d <= rKm) return true;
+    }
+    return false;
+  }
+
+  /// Order pool for feed generation: random/nearest when those modes can be honored.
+  List<PublicExperience> get _orderedPoolForFeedGeneration {
+    final List<PublicExperience>? cachedOrderedPool =
+        _cachedOrderedDiscoveryPoolForFeedGeneration;
+    if (cachedOrderedPool != null) {
+      return cachedOrderedPool;
+    }
+
+    final List<PublicExperience> pool = _poolForFeedGeneration;
+    if (pool.isEmpty) return pool;
+    if (_discoverySortMode == DiscoverySortMode.random) {
+      final List<PublicExperience> shuffled = List<PublicExperience>.from(pool)
+        ..sort((PublicExperience a, PublicExperience b) {
+          final int rankA = _discoveryRandomRank(a);
+          final int rankB = _discoveryRandomRank(b);
+          if (rankA != rankB) {
+            return rankA.compareTo(rankB);
+          }
+          return _discoveryRandomIdentity(a).compareTo(
+            _discoveryRandomIdentity(b),
+          );
+        });
+      final List<PublicExperience> orderedPool =
+          List<PublicExperience>.unmodifiable(shuffled);
+      _cachedOrderedDiscoveryPoolForFeedGeneration = orderedPool;
+      return orderedPool;
+    }
+    if (_lastUserPositionForDiscovery == null) {
+      final List<PublicExperience> orderedPool =
+          List<PublicExperience>.unmodifiable(
+        List<PublicExperience>.from(pool),
+      );
+      _cachedOrderedDiscoveryPoolForFeedGeneration = orderedPool;
+      return orderedPool;
+    }
+    final Position pos = _lastUserPositionForDiscovery!;
+    final List<PublicExperience> sorted = List<PublicExperience>.from(pool)
+      ..sort((PublicExperience a, PublicExperience b) {
+        final bool va = discoveryHasPlausibleCoordinates(
+            a.location.latitude, a.location.longitude);
+        final bool vb = discoveryHasPlausibleCoordinates(
+            b.location.latitude, b.location.longitude);
+        if (!va && !vb) return 0;
+        if (!va) return 1;
+        if (!vb) return -1;
+        final double da = _mapsService.distanceBetweenKm(
+          pos.latitude,
+          pos.longitude,
+          a.location.latitude,
+          a.location.longitude,
+        );
+        final double db = _mapsService.distanceBetweenKm(
+          pos.latitude,
+          pos.longitude,
+          b.location.latitude,
+          b.location.longitude,
+        );
+        return da.compareTo(db);
+      });
+    final List<PublicExperience> orderedPool =
+        List<PublicExperience>.unmodifiable(sorted);
+    _cachedOrderedDiscoveryPoolForFeedGeneration = orderedPool;
+    return orderedPool;
+  }
+
+  bool get _hasActiveDiscoveryLocation =>
+      _discoverySortMode == DiscoverySortMode.nearest ||
+      _discoveryAreas.isNotEmpty;
+
+  bool get _hasExplicitDiscoveryRandomOrder =>
+      _hasExplicitDiscoveryLocationSettings &&
+      _discoverySortMode == DiscoverySortMode.random;
+
+  bool get _shouldShowSingleDiscoveryPreviewPerExperience =>
+      _hasActiveDiscoveryLocation || _hasExplicitDiscoveryRandomOrder;
+
+  Future<Position?> _getDiscoveryUserPosition({
+    required bool requestPermission,
+  }) async {
+    try {
+      final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        if (!requestPermission) return null;
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return null;
+      }
+      if (permission == LocationPermission.deniedForever) return null;
+
+      Position? position = await Geolocator.getLastKnownPosition();
+      position ??= await Geolocator.getCurrentPosition();
+      return position;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _discoveryRandomIdentity(PublicExperience experience) {
+    if (experience.id.isNotEmpty) return experience.id;
+    if (experience.allMediaPaths.isNotEmpty) {
+      return experience.allMediaPaths.first;
+    }
+    return '${experience.location.latitude},${experience.location.longitude}';
+  }
+
+  int _discoveryRandomRank(PublicExperience experience) {
+    int hash = _discoveryRandomOrderSeed;
+    for (final int codeUnit in _discoveryRandomIdentity(experience).codeUnits) {
+      hash = ((hash << 5) - hash + codeUnit) & 0x7fffffff;
+    }
+    return hash;
+  }
+
+  int _nextDiscoveryRandomOrderSeed() {
+    return _random.nextInt(0x7fffffff);
+  }
+
+  void _invalidateDiscoveryCandidateCaches() {
+    _cachedDiscoveryPoolForFeedGeneration = null;
+    _cachedOrderedDiscoveryPoolForFeedGeneration = null;
+    _cachedSelectableDiscoveryCandidateCount = null;
+    _cachedSeenSelectableDiscoveryCandidateCount = null;
+  }
+
+  void _invalidateDiscoverySeenCandidateCache() {
+    _cachedSeenSelectableDiscoveryCandidateCount = null;
+  }
+
+  Future<void> _openDiscoveryLocationDialog() async {
+    if (!mounted) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    Position? biasPos = _lastUserPositionForDiscovery;
+    biasPos ??= await _getDiscoveryUserPosition(requestPermission: false);
+    if (!mounted) return;
+
+    final DiscoveryLocationDialogResult? result =
+        await showDialog<DiscoveryLocationDialogResult>(
+      context: context,
+      builder: (BuildContext context) => DiscoveryLocationDialog(
+        mapsService: _mapsService,
+        initialSortMode: _discoverySortMode,
+        initialAreas: _discoveryAreas,
+        initialAreaMode: _discoveryAreaMode,
+        initialRadiusMiles: _discoveryRadiusMiles,
+        searchBiasLat: biasPos?.latitude,
+        searchBiasLng: biasPos?.longitude,
+      ),
+    );
+    if (!mounted || result == null) return;
+
+    final bool fromCover = !_hasStartedDiscovering;
+    if (fromCover) {
+      _setHasStartedDiscovering(true);
+    }
+    if (mounted) {
+      setState(() {
+        _isApplyingDiscoveryLocation = true;
+        _isError = false;
+        _errorMessage = null;
+      });
+    }
+
+    DiscoverySortMode appliedSort = result.sortMode;
+    if (result.sortMode == DiscoverySortMode.nearest) {
+      final Position? p =
+          await _getDiscoveryUserPosition(requestPermission: true);
+      if (p == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not access your location. Sort was not changed to nearest.',
+              ),
+            ),
+          );
+        }
+        appliedSort = _discoverySortMode;
+      } else {
+        _lastUserPositionForDiscovery = p;
+        appliedSort = DiscoverySortMode.nearest;
+      }
+    } else {
+      appliedSort = DiscoverySortMode.random;
+    }
+
+    if (fromCover) {
+      await (_feedInitializationFuture ?? Future<void>.value());
+      if (!mounted) return;
+    }
+
+    setState(() {
+      _hasExplicitDiscoveryLocationSettings = true;
+      _discoverySortMode = appliedSort;
+      if (appliedSort == DiscoverySortMode.random) {
+        _discoveryRandomOrderSeed = _nextDiscoveryRandomOrderSeed();
+      }
+      _discoveryAreas = List<DiscoveryAreaFilter>.from(result.areas);
+      _discoveryAreaMode = result.areaMode;
+      _discoveryRadiusMiles = result.radiusMiles.clamp(5.0, 100.0).toDouble();
+      _feedItems.clear();
+      _usedMediaKeys.clear();
+      _currentPage = 0;
+      _isDiscoverySearchRefreshing = true;
+    });
+    _invalidateDiscoveryCandidateCaches();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_pageController.hasClients &&
+          _pageController.position.hasPixels &&
+          _pageController.position.haveDimensions) {
+        _pageController.jumpToPage(0);
+      }
+    });
+
+    try {
+      await _persistDiscoveryLocationSettings();
+      await _fetchMoreExperiencesIfNeeded(force: true);
+      if (mounted) await _generateFeedItems(count: 5);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDiscoverySearchRefreshing = false;
+          _isApplyingDiscoveryLocation = false;
+        });
+      }
+    }
+  }
+
+  static bool _matchesDiscoveryQuery(PublicExperience e, String qLower) {
+    if (qLower.isEmpty) return true;
+    if (e.matchesTitleOrTagQueryLower(qLower)) return true;
+    final List<String>? placeTypes = e.placeTypes;
+    if (placeTypes != null) {
+      for (final String t in placeTypes) {
+        if (t.toLowerCase().contains(qLower)) return true;
+      }
+    }
+    return false;
+  }
+
+  bool get _hasActiveDiscoverySearch =>
+      _discoverySearchApplied.trim().isNotEmpty;
+
+  Widget _buildDiscoverySearchField() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: Material(
+        color: const Color(0xFF2D2D2D),
+        child: ListenableBuilder(
+          listenable: _discoverySearchController,
+          builder: (BuildContext context, Widget? child) {
+            final bool showClear = _discoverySearchController.text.isNotEmpty;
+            return TextField(
+              controller: _discoverySearchController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              cursorColor: Colors.white,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _submitDiscoverySearch(),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search title or tags',
+                hintStyle: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.45),
+                  fontSize: 15,
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: Colors.white.withValues(alpha: 0.5),
+                  size: 22,
+                ),
+                prefixIconConstraints: const BoxConstraints(
+                  minWidth: 42,
+                  minHeight: 40,
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 10,
+                  horizontal: 0,
+                ),
+                suffixIcon: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (showClear)
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          Icons.clear,
+                          color: Colors.white.withValues(alpha: 0.55),
+                          size: 20,
+                        ),
+                        onPressed: () => _discoverySearchController.clear(),
+                      ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Search',
+                      icon: Icon(
+                        Icons.arrow_forward,
+                        color: Colors.white.withValues(alpha: 0.85),
+                        size: 22,
+                      ),
+                      onPressed: _submitDiscoverySearch,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   void _onGlobalHelpModeChanged() {
@@ -727,8 +1394,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _currentCoverQuote = _pickRandomCoverQuote();
       _isCoverImageLoaded = false; // Reset cover image loaded state
     });
+    _invalidateDiscoveryCandidateCaches();
     _selectNewPreloadedCoverImage(); // Try to get a new preloaded cover image
-    await _initializeFeed();
+    _feedInitializationFuture = _initializeFeed();
+    await _feedInitializationFuture;
   }
 
   Future<void> showSharedPreview(String token) async {
@@ -838,7 +1507,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     // Target pool size: smaller for quick start, larger for background loading
     final int targetPoolSize = quickStart ? 30 : 100;
-    if (!force && _publicExperiences.length >= targetPoolSize) {
+    final int targetFilteredPoolSize = quickStart ? 8 : 16;
+    if (!force &&
+        !_shouldFetchMoreForDiscoveryPool(
+          rawTargetPoolSize: targetPoolSize,
+          filteredTargetPoolSize: targetFilteredPoolSize,
+        )) {
       return;
     }
 
@@ -849,7 +1523,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     try {
       // Keep paging until we have enough eligible experiences or run out
-      while (_publicExperiences.length < targetPoolSize && _hasMore) {
+      while (_hasMore &&
+          ((force && totalFetched == 0) ||
+              _shouldFetchMoreForDiscoveryPool(
+                rawTargetPoolSize: targetPoolSize,
+                filteredTargetPoolSize: targetFilteredPoolSize,
+              ))) {
         final page = await _experienceService.fetchPublicExperiencesPage(
           startAfter: _lastDocument,
           limit: 50,
@@ -896,6 +1575,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
           if (eligibleExperiences.isNotEmpty) {
             _publicExperiences.addAll(eligibleExperiences);
+            _invalidateDiscoveryCandidateCaches();
             totalEligible += eligibleExperiences.length;
           }
         }
@@ -929,6 +1609,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       debugPrint('DiscoveryScreen: Failed to load seen media keys: $e');
       _persistedSeenMediaKeys.clear();
     }
+    _invalidateDiscoverySeenCandidateCache();
+  }
+
+  Future<void> _initializeDiscoveryScreen() async {
+    await _loadPersistedDiscoveryLocationSettings();
+    if (!mounted) return;
+    await _initializeFeed();
   }
 
   Future<SharedPreferences> _getSharedPreferences() async {
@@ -938,6 +1625,113 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     final prefs = await SharedPreferences.getInstance();
     _sharedPreferences = prefs;
     return prefs;
+  }
+
+  DiscoverySortMode _parseDiscoverySortMode(String? value) {
+    switch (value) {
+      case 'nearest':
+        return DiscoverySortMode.nearest;
+      case 'random':
+      default:
+        return DiscoverySortMode.random;
+    }
+  }
+
+  DiscoveryAreaMatchMode _parseDiscoveryAreaMode(String? value) {
+    switch (value) {
+      case 'withinRadius':
+        return DiscoveryAreaMatchMode.withinRadius;
+      case 'strictBounds':
+      default:
+        return DiscoveryAreaMatchMode.strictBounds;
+    }
+  }
+
+  Future<void> _loadPersistedDiscoveryLocationSettings() async {
+    try {
+      final prefs = await _getSharedPreferences();
+      final String? rawSettings =
+          prefs.getString(_discoveryLocationSettingsPrefsKey);
+      if (rawSettings == null || rawSettings.isEmpty) {
+        _hasExplicitDiscoveryLocationSettings = false;
+        return;
+      }
+      _hasExplicitDiscoveryLocationSettings = true;
+
+      final Object? decoded = jsonDecode(rawSettings);
+      if (decoded is! Map<String, dynamic>) {
+        debugPrint(
+          'DiscoveryScreen: Ignoring invalid persisted discovery location settings payload',
+        );
+        _hasExplicitDiscoveryLocationSettings = false;
+        return;
+      }
+
+      final List<DiscoveryAreaFilter> persistedAreas =
+          (decoded['areas'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map<String, dynamic>>()
+              .map(DiscoveryAreaFilter.fromJson)
+              .toList();
+
+      _discoverySortMode =
+          _parseDiscoverySortMode(decoded['sortMode'] as String?);
+      _discoveryRandomOrderSeed =
+          (decoded['randomOrderSeed'] as num?)?.toInt() ??
+              _nextDiscoveryRandomOrderSeed();
+      _discoveryAreas = persistedAreas;
+      _discoveryAreaMode =
+          _parseDiscoveryAreaMode(decoded['areaMode'] as String?);
+      _discoveryRadiusMiles =
+          ((decoded['radiusMiles'] as num?)?.toDouble() ?? 25)
+              .clamp(5.0, 100.0)
+              .toDouble();
+
+      bool shouldPersistFallback = false;
+      if (_discoverySortMode == DiscoverySortMode.nearest) {
+        _lastUserPositionForDiscovery = await _getDiscoveryUserPosition(
+          requestPermission: false,
+        );
+        if (_lastUserPositionForDiscovery == null) {
+          _discoverySortMode = DiscoverySortMode.random;
+          _discoveryRandomOrderSeed = _nextDiscoveryRandomOrderSeed();
+          shouldPersistFallback = true;
+          debugPrint(
+            'DiscoveryScreen: Falling back to random order because a nearest sort could not be restored without a current location.',
+          );
+        }
+      } else {
+        _lastUserPositionForDiscovery = null;
+      }
+
+      _invalidateDiscoveryCandidateCaches();
+      if (shouldPersistFallback) {
+        await _persistDiscoveryLocationSettings();
+      }
+    } catch (e) {
+      debugPrint(
+        'DiscoveryScreen: Failed to load persisted discovery location settings: $e',
+      );
+    }
+  }
+
+  Future<void> _persistDiscoveryLocationSettings() async {
+    try {
+      final prefs = await _getSharedPreferences();
+      final String encoded = jsonEncode(<String, dynamic>{
+        'sortMode': _discoverySortMode.name,
+        'randomOrderSeed': _discoveryRandomOrderSeed,
+        'areaMode': _discoveryAreaMode.name,
+        'radiusMiles': _discoveryRadiusMiles,
+        'areas': _discoveryAreas
+            .map((DiscoveryAreaFilter area) => area.toJson())
+            .toList(),
+      });
+      await prefs.setString(_discoveryLocationSettingsPrefsKey, encoded);
+    } catch (e) {
+      debugPrint(
+        'DiscoveryScreen: Failed to persist discovery location settings: $e',
+      );
+    }
   }
 
   Future<void> _persistSeenMediaKeys() async {
@@ -954,6 +1748,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> _resetPersistedSeenMediaKeys() async {
     _persistedSeenMediaKeys.clear();
+    _invalidateDiscoverySeenCandidateCache();
     try {
       final prefs = await _getSharedPreferences();
       await prefs.remove(_seenMediaPrefsKey);
@@ -1158,46 +1953,47 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     int skippedSeen = 0;
 
     debugPrint(
-        'DiscoveryScreen: Generating $count feed items. Pool: ${_publicExperiences.length} experiences, Seen: ${_persistedSeenMediaKeys.length} media');
+        'DiscoveryScreen: Generating $count feed items. Pool: ${_publicExperiences.length} experiences (search pool: ${_poolForFeedGeneration.length}), Seen: ${_persistedSeenMediaKeys.length} media');
 
     while (newItems.length < count && attempts < maxAttempts) {
       attempts++;
 
-      if (_publicExperiences.isEmpty) {
-        if (_hasMore) {
-          await _fetchMoreExperiencesIfNeeded(force: true);
-          continue;
-        } else {
+      final List<PublicExperience> pool = _poolForFeedGeneration;
+      if (pool.isEmpty) {
+        if (_publicExperiences.isEmpty) {
+          if (_hasMore) {
+            final int beforePoolSize = _publicExperiences.length;
+            final String? beforeLastDocId = _lastDocument?.id;
+            await _fetchMoreExperiencesIfNeeded(force: true);
+            final bool didAdvancePool =
+                _publicExperiences.length > beforePoolSize;
+            final bool didAdvanceCursor = _lastDocument?.id != beforeLastDocId;
+            if (!didAdvancePool && !didAdvanceCursor) {
+              break;
+            }
+            continue;
+          }
           break;
         }
+        if (_hasMore) {
+          final int beforePoolSize = _publicExperiences.length;
+          final String? beforeLastDocId = _lastDocument?.id;
+          await _fetchMoreExperiencesIfNeeded(force: true);
+          final bool didAdvancePool =
+              _publicExperiences.length > beforePoolSize;
+          final bool didAdvanceCursor = _lastDocument?.id != beforeLastDocId;
+          if (!didAdvancePool && !didAdvanceCursor) {
+            break;
+          }
+          continue;
+        }
+        break;
       }
 
-      final experience =
-          _publicExperiences[_random.nextInt(_publicExperiences.length)];
-
-      if (experience.allMediaPaths.isEmpty) {
-        continue;
-      }
-
-      final mediaUrl = experience
-          .allMediaPaths[_random.nextInt(experience.allMediaPaths.length)];
-
-      if (mediaUrl.isEmpty) {
-        continue;
-      }
-
-      // Skip Yelp, Google Maps, and generic URL previews
-      final mediaType = _classifyUrl(mediaUrl);
-      if (mediaType == _MediaType.yelp ||
-          mediaType == _MediaType.maps ||
-          mediaType == _MediaType.generic) {
-        skippedFiltered++;
-        continue;
-      }
-
-      final totalCombos = _calculateTotalAvailableMediaPaths();
+      final int totalCombos = _calculateTotalAvailableMediaPaths();
       if (totalCombos > 0) {
-        if (_persistedSeenMediaKeys.length >= totalCombos) {
+        final int seenCombos = _calculateSeenSelectableCandidateCount();
+        if (seenCombos >= totalCombos) {
           debugPrint('DiscoveryScreen: All media seen! Resetting seen keys.');
           await _resetPersistedSeenMediaKeys();
         }
@@ -1206,28 +2002,84 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         }
       }
 
-      final key = _mediaKey(experience, mediaUrl);
-      if (_persistedSeenMediaKeys.contains(key)) {
-        skippedSeen++;
-        if (_hasMore && attempts % 20 == 0) {
-          await _fetchMoreExperiencesIfNeeded(force: true);
+      final List<PublicExperience> ordered = _orderedPoolForFeedGeneration;
+      final Set<String> usedExperienceIds =
+          _shouldShowSingleDiscoveryPreviewPerExperience
+              ? <String>{
+                  ..._feedItems
+                      .map((item) => item.experience.id)
+                      .where((String id) => id.isNotEmpty),
+                  ...newItems
+                      .map((item) => item.experience.id)
+                      .where((String id) => id.isNotEmpty),
+                }
+              : const <String>{};
+      PublicExperience? chosenExperience;
+      String? chosenMediaUrl;
+
+      for (final PublicExperience experience in ordered) {
+        if (experience.allMediaPaths.isEmpty) continue;
+        if (_shouldShowSingleDiscoveryPreviewPerExperience &&
+            usedExperienceIds.contains(experience.id)) {
+          continue;
         }
-        continue;
-      }
-      if (_usedMediaKeys.contains(key)) {
-        if (_hasMore && attempts % 20 == 0) {
-          await _fetchMoreExperiencesIfNeeded(force: true);
+        if (_shouldShowSingleDiscoveryPreviewPerExperience &&
+            _hasSeenDisplayableCandidateForExperience(experience)) {
+          skippedSeen++;
+          continue;
         }
-        continue;
+
+        final List<String> paths = List<String>.from(experience.allMediaPaths);
+        if (_discoverySortMode == DiscoverySortMode.random ||
+            _shouldShowSingleDiscoveryPreviewPerExperience) {
+          paths.shuffle(_random);
+        }
+
+        for (final String mediaUrl in paths) {
+          if (mediaUrl.isEmpty) continue;
+
+          if (!_isDisplayableDiscoveryMediaUrl(mediaUrl)) {
+            skippedFiltered++;
+            continue;
+          }
+
+          final String key = _mediaKey(experience, mediaUrl);
+          if (_persistedSeenMediaKeys.contains(key)) {
+            skippedSeen++;
+            continue;
+          }
+          if (_usedMediaKeys.contains(key)) {
+            continue;
+          }
+
+          chosenExperience = experience;
+          chosenMediaUrl = mediaUrl;
+          break;
+        }
+        if (chosenExperience != null) break;
       }
 
-      // No need to check "already saved" here - we already filtered out
-      // experiences at places the user has saved during the paging step
-      _usedMediaKeys.add(key);
+      if (chosenExperience == null || chosenMediaUrl == null) {
+        if (_hasMore) {
+          final int beforePoolSize = _publicExperiences.length;
+          final String? beforeLastDocId = _lastDocument?.id;
+          await _fetchMoreExperiencesIfNeeded(force: true);
+          final bool didAdvancePool =
+              _publicExperiences.length > beforePoolSize;
+          final bool didAdvanceCursor = _lastDocument?.id != beforeLastDocId;
+          if (didAdvancePool || didAdvanceCursor) {
+            continue;
+          }
+        }
+        break;
+      }
+
+      final String addKey = _mediaKey(chosenExperience, chosenMediaUrl);
+      _usedMediaKeys.add(addKey);
       newItems.add(
         _DiscoveryFeedItem(
-          experience: experience,
-          mediaUrl: mediaUrl,
+          experience: chosenExperience,
+          mediaUrl: chosenMediaUrl,
         ),
       );
     }
@@ -1254,11 +2106,82 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   int _calculateTotalAvailableMediaPaths() {
-    return _publicExperiences.fold<int>(
-      0,
-      (runningTotal, experience) =>
-          runningTotal + experience.allMediaPaths.length,
-    );
+    final int? cachedCount = _cachedSelectableDiscoveryCandidateCount;
+    if (cachedCount != null) {
+      return cachedCount;
+    }
+
+    int runningTotal = 0;
+    final bool singlePreviewPerExperience =
+        _shouldShowSingleDiscoveryPreviewPerExperience;
+    for (final PublicExperience experience in _poolForFeedGeneration) {
+      int displayableCount = 0;
+      for (final String mediaUrl in experience.allMediaPaths) {
+        if (_isDisplayableDiscoveryMediaUrl(mediaUrl)) {
+          displayableCount++;
+        }
+      }
+      if (displayableCount == 0) continue;
+      runningTotal += singlePreviewPerExperience ? 1 : displayableCount;
+    }
+
+    _cachedSelectableDiscoveryCandidateCount = runningTotal;
+    return runningTotal;
+  }
+
+  int _calculateSeenSelectableCandidateCount() {
+    final int? cachedCount = _cachedSeenSelectableDiscoveryCandidateCount;
+    if (cachedCount != null) {
+      return cachedCount;
+    }
+
+    int runningTotal = 0;
+    final bool singlePreviewPerExperience =
+        _shouldShowSingleDiscoveryPreviewPerExperience;
+    for (final PublicExperience experience in _poolForFeedGeneration) {
+      if (singlePreviewPerExperience) {
+        if (_hasSeenDisplayableCandidateForExperience(experience)) {
+          runningTotal++;
+        }
+        continue;
+      }
+      for (final String mediaUrl in experience.allMediaPaths) {
+        if (!_isDisplayableDiscoveryMediaUrl(mediaUrl)) {
+          continue;
+        }
+        final String key = _mediaKey(experience, mediaUrl);
+        if (!_persistedSeenMediaKeys.contains(key)) {
+          continue;
+        }
+        runningTotal++;
+        if (singlePreviewPerExperience) {
+          break;
+        }
+      }
+    }
+
+    _cachedSeenSelectableDiscoveryCandidateCount = runningTotal;
+    return runningTotal;
+  }
+
+  bool _hasSeenDisplayableCandidateForExperience(PublicExperience experience) {
+    for (final String mediaUrl in experience.allMediaPaths) {
+      if (!_isDisplayableDiscoveryMediaUrl(mediaUrl)) {
+        continue;
+      }
+      if (_persistedSeenMediaKeys.contains(_mediaKey(experience, mediaUrl))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isDisplayableDiscoveryMediaUrl(String mediaUrl) {
+    if (mediaUrl.isEmpty) return false;
+    final _MediaType mediaType = _classifyUrl(mediaUrl);
+    return mediaType != _MediaType.yelp &&
+        mediaType != _MediaType.maps &&
+        mediaType != _MediaType.generic;
   }
 
   Future<void> _recordFeedItemsAsSeen(List<_DiscoveryFeedItem> items) async {
@@ -1272,6 +2195,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       }
     }
     if (didUpdate) {
+      _invalidateDiscoverySeenCandidateCache();
       await _persistSeenMediaKeys();
       debugPrint(
           'DiscoveryScreen: Marked ${items.length} item(s) as seen. Total seen: ${_persistedSeenMediaKeys.length}');
@@ -1323,8 +2247,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _currentPage = 0;
       _dragDistance = 0;
     });
+    _invalidateDiscoveryCandidateCaches();
 
-    await _initializeFeed();
+    _feedInitializationFuture = _initializeFeed();
+    await _feedInitializationFuture;
   }
 
   Future<void> _launchUrl(String url) async {
@@ -1353,6 +2279,41 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             ),
           ),
         ),
+        if (_help.isActive)
+          Positioned(
+            left: 16,
+            right: 16,
+            top: MediaQuery.of(context).padding.top + 60,
+            child: GestureDetector(
+              onTap: _help.toggleHelpMode,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: AnimatedBuilder(
+                  animation: _help.spotlightController,
+                  builder: (context, child) {
+                    final opacity = 0.6 + 0.4 * _help.spotlightController.value;
+                    return Opacity(opacity: opacity, child: child);
+                  },
+                  child: const Text(
+                    'Help mode is ON  •  Tap here to exit',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.teal,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (_help.isActive && _help.hasActiveTarget) _help.buildOverlay(),
         Positioned.fill(
           child: IgnorePointer(
@@ -1366,51 +2327,88 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           top: MediaQuery.of(context).padding.top + 8,
           right: 8,
           left: 8,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_help.isActive)
-                Flexible(
-                  child: GestureDetector(
-                    onTap: _help.toggleHelpMode,
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.backgroundColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: AnimatedBuilder(
-                        animation: _help.spotlightController,
-                        builder: (context, child) {
-                          final opacity =
-                              0.6 + 0.4 * _help.spotlightController.value;
-                          return Opacity(opacity: opacity, child: child);
-                        },
-                        child: const Text(
-                          'Help mode is ON  •  Tap here to exit',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: AppColors.teal,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Builder(
+                      builder: (searchCtx) => GestureDetector(
+                        key: _discoverySearchHelpKey,
+                        behavior: HitTestBehavior.translucent,
+                        onTap: _help.isActive
+                            ? () => _help.showTarget(
+                                  DiscoveryHelpTargetId.searchBar,
+                                  searchCtx,
+                                  withHaptic: true,
+                                )
+                            : null,
+                        child: IgnorePointer(
+                          ignoring: _help.isActive,
+                          child: _buildDiscoverySearchField(),
                         ),
                       ),
                     ),
                   ),
-                ),
-              Container(
-                decoration: const BoxDecoration(
-                  color: Colors.black,
-                  shape: BoxShape.circle,
-                ),
-                child: _help.buildIconButton(
-                  activeColor: Colors.white,
-                  inactiveColor: Colors.white,
-                ),
+                  Builder(
+                    builder: (buttonCtx) => Tooltip(
+                      message: 'Sort by Location',
+                      child: Container(
+                        key: _sortByLocationHelpKey,
+                        margin: const EdgeInsets.only(left: 4),
+                        decoration: const BoxDecoration(
+                          color: Colors.black,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: <Widget>[
+                            IconButton(
+                              onPressed: _help.isActive
+                                  ? () => _help.showTarget(
+                                        DiscoveryHelpTargetId
+                                            .sortByLocationButton,
+                                        buttonCtx,
+                                        withHaptic: true,
+                                      )
+                                  : () {
+                                      triggerHeavyHaptic();
+                                      _openDiscoveryLocationDialog();
+                                    },
+                              icon: const Icon(Icons.location_on_outlined),
+                              color: Colors.white,
+                            ),
+                            if (_hasActiveDiscoveryLocation)
+                              Positioned(
+                                right: 8,
+                                top: 8,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.teal,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    margin: const EdgeInsets.only(left: 4),
+                    decoration: const BoxDecoration(
+                      color: Colors.black,
+                      shape: BoxShape.circle,
+                    ),
+                    child: _help.buildIconButton(
+                      activeColor: Colors.white,
+                      inactiveColor: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1455,7 +2453,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
 
     // Only show loading/error states if user has started discovering
-    if (_isLoading) {
+    if (_isLoading || _isApplyingDiscoveryLocation) {
       return const Center(
         child: CircularProgressIndicator(),
       );
@@ -1489,6 +2487,27 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
 
     if (_feedItems.isEmpty) {
+      if (_hasActiveDiscoverySearch) {
+        final List<PublicExperience> pool = _poolForFeedGeneration;
+        if (_isDiscoverySearchRefreshing ||
+            (pool.isEmpty && (_hasMore || _isFetchingExperiences))) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+        if (pool.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'No experiences match your search.',
+                style: TextStyle(color: Colors.white70, fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          );
+        }
+      }
       return const Center(
         child: Text(
           'No public experiences to show yet.\nCheck back soon for new recommendations.',
@@ -1531,11 +2550,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
         scrollDirection: Axis.vertical,
+        allowImplicitScrolling: true,
         itemCount: _feedItems.length,
         onPageChanged: _handlePageChanged,
         itemBuilder: (context, index) {
           final item = _feedItems[index];
-          return _buildFeedPage(item);
+          return _buildFeedPage(item, index);
         },
       ),
     );
@@ -1867,8 +2887,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Widget _buildFeedPage(_DiscoveryFeedItem item) {
-    final preview = _buildPreviewForItem(item);
+  Widget _buildFeedPage(_DiscoveryFeedItem item, int index) {
+    final preview = _buildPreviewForItem(item, index);
     _maybeCheckIfMediaSaved(item);
 
     final bool isTikTok = _classifyUrl(item.mediaUrl) == _MediaType.tiktok;
@@ -2039,7 +3059,11 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   Widget _buildActionButtons(_DiscoveryFeedItem item) {
-    final sourceButton = _buildSourceActionButton(item);
+    final bool attachHelpKeys = _isCurrentFeedItem(item);
+    final sourceButton = _buildSourceActionButton(
+      item,
+      attachHelpKey: attachHelpKeys,
+    );
 
     // Check if it's a TikTok preview
     final bool isTikTok = _classifyUrl(item.mediaUrl) == _MediaType.tiktok;
@@ -2062,7 +3086,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           backgroundColor: buttonBackgroundColor,
           onPressed: _isShareInProgress ? null : () => _handleShareTapped(item),
           helpTarget: DiscoveryHelpTargetId.shareActionButton,
-          helpKey: _shareActionHelpKey,
+          helpKey: attachHelpKeys ? _shareActionHelpKey : null,
         ),
         const SizedBox(height: 16),
         _buildActionButton(
@@ -2085,7 +3109,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             );
           },
           helpTarget: DiscoveryHelpTargetId.locationActionButton,
-          helpKey: _locationActionHelpKey,
+          helpKey: attachHelpKeys ? _locationActionHelpKey : null,
         ),
         const SizedBox(height: 16),
         ValueListenableBuilder<bool?>(
@@ -2099,7 +3123,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               onPressed:
                   resolvedSaved ? null : () => _handleBookmarkTapped(item),
               helpTarget: DiscoveryHelpTargetId.saveActionButton,
-              helpKey: _saveActionHelpKey,
+              helpKey: attachHelpKeys ? _saveActionHelpKey : null,
             );
           },
         ),
@@ -2110,7 +3134,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           backgroundColor: buttonBackgroundColor,
           onPressed: () => _showMoreOptions(item),
           helpTarget: DiscoveryHelpTargetId.moreActionButton,
-          helpKey: _moreActionHelpKey,
+          helpKey: attachHelpKeys ? _moreActionHelpKey : null,
         ),
       ],
     );
@@ -2180,6 +3204,16 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         ),
       ],
     );
+  }
+
+  bool _isCurrentFeedItem(_DiscoveryFeedItem item) {
+    if (_currentPage < 0 || _currentPage >= _feedItems.length) {
+      return false;
+    }
+    final _DiscoveryFeedItem currentItem = _feedItems[_currentPage];
+    return identical(currentItem, item) ||
+        (currentItem.experience.id == item.experience.id &&
+            currentItem.mediaUrl == item.mediaUrl);
   }
 
   void _showMoreOptions(_DiscoveryFeedItem item) {
@@ -2634,7 +3668,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Widget? _buildSourceActionButton(_DiscoveryFeedItem item) {
+  Widget? _buildSourceActionButton(
+    _DiscoveryFeedItem item, {
+    required bool attachHelpKey,
+  }) {
     final config = _resolveSourceButtonConfig(item.mediaUrl);
     if (config == null) return null;
     return _buildActionButton(
@@ -2644,7 +3681,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       backgroundColor: config.backgroundColor,
       onPressed: () => _launchUrl(item.mediaUrl),
       helpTarget: DiscoveryHelpTargetId.sourceActionButton,
-      helpKey: _sourceActionHelpKey,
+      helpKey: attachHelpKey ? _sourceActionHelpKey : null,
     );
   }
 
@@ -2920,7 +3957,111 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     return savedName == publicName;
   }
 
-  Widget _buildPreviewForItem(_DiscoveryFeedItem item) {
+  bool _shouldBuildRichPreviewForIndex(int index, _MediaType type) {
+    switch (type) {
+      case _MediaType.instagram:
+      case _MediaType.tiktok:
+      case _MediaType.facebook:
+      case _MediaType.youtube:
+        return (index - _currentPage).abs() <= _richPreviewPageWindow;
+      case _MediaType.maps:
+      case _MediaType.image:
+      case _MediaType.generic:
+      case _MediaType.yelp:
+        return true;
+    }
+  }
+
+  Widget _buildDeferredSocialPreview(
+    _DiscoveryFeedItem item,
+    _MediaType type,
+  ) {
+    IconData iconData;
+    String platformLabel;
+    Color accentColor;
+
+    switch (type) {
+      case _MediaType.instagram:
+        iconData = FontAwesomeIcons.instagram;
+        platformLabel = 'Instagram';
+        accentColor = const Color(0xFFE4405F);
+        break;
+      case _MediaType.tiktok:
+        iconData = FontAwesomeIcons.tiktok;
+        platformLabel = 'TikTok';
+        accentColor = const Color(0xFF25F4EE);
+        break;
+      case _MediaType.facebook:
+        iconData = FontAwesomeIcons.facebookF;
+        platformLabel = 'Facebook';
+        accentColor = const Color(0xFF1877F2);
+        break;
+      case _MediaType.youtube:
+        iconData = FontAwesomeIcons.youtube;
+        platformLabel = 'YouTube';
+        accentColor = const Color(0xFFFF0000);
+        break;
+      case _MediaType.maps:
+      case _MediaType.image:
+      case _MediaType.generic:
+      case _MediaType.yelp:
+        return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[
+            accentColor.withValues(alpha: 0.26),
+            Colors.black,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              FaIcon(
+                iconData,
+                color: Colors.white.withValues(alpha: 0.92),
+                size: 72,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                item.experience.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '$platformLabel preview will load as you arrive here.',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreviewForItem(_DiscoveryFeedItem item, int index) {
     final url = item.mediaUrl;
 
     if (url.isEmpty) {
@@ -2932,6 +4073,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
 
     final type = _classifyUrl(url);
+    if (!_shouldBuildRichPreviewForIndex(index, type)) {
+      return _buildDeferredSocialPreview(item, type);
+    }
     final mediaSize = MediaQuery.of(context).size;
 
     switch (type) {

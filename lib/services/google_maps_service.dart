@@ -6,10 +6,11 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/services.dart';
 import '../config/api_keys.dart';
 import '../config/api_secrets.dart';
+import '../models/discovery_location_filter.dart';
 import '../models/experience.dart';
 import 'certificate_pinning_service.dart';
 
@@ -600,6 +601,78 @@ class GoogleMapsService {
         c((lat2 - lat1) * p) / 2 +
         c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p)) / 2;
     return 12742 * asin(sqrt(a)); // 2 * R; R = 6371 km
+  }
+
+  /// Haversine distance between two WGS84 points in kilometers.
+  double distanceBetweenKm(
+      double lat1, double lon1, double lat2, double lon2) {
+    return _calculateDistance(lat1, lon1, lat2, lon2);
+  }
+
+  /// Fetches place center, viewport, and types for Discovery area filtering.
+  Future<DiscoveryAreaFilter?> fetchDiscoveryAreaFromPlace(
+    String placeId,
+    String label,
+  ) async {
+    if (placeId.isEmpty) return null;
+    try {
+      final key = _getApiKey();
+      if (key.isEmpty) return null;
+
+      const String fieldMask = 'id,displayName,location,viewport,types';
+      final url = 'https://places.googleapis.com/v1/places/$placeId';
+      final headers = await _placesApiHeaders(key, fieldMask);
+      final response =
+          await _dio.get(url, options: Options(headers: headers));
+      if (response.statusCode != 200) return null;
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) return null;
+      final Map<String, dynamic>? loc = data['location'] as Map<String, dynamic>?;
+      if (loc == null) return null;
+      final double lat = (loc['latitude'] as num?)?.toDouble() ?? 0.0;
+      final double lng = (loc['longitude'] as num?)?.toDouble() ?? 0.0;
+      if (!discoveryHasPlausibleCoordinates(lat, lng)) return null;
+
+      DiscoveryMapBounds? bounds;
+      final Map<String, dynamic>? vp = data['viewport'] as Map<String, dynamic>?;
+      if (vp != null) {
+        final Map<String, dynamic>? low = vp['low'] as Map<String, dynamic>?;
+        final Map<String, dynamic>? high = vp['high'] as Map<String, dynamic>?;
+        if (low != null && high != null) {
+          final double? sl = (low['latitude'] as num?)?.toDouble();
+          final double? wl = (low['longitude'] as num?)?.toDouble();
+          final double? nl = (high['latitude'] as num?)?.toDouble();
+          final double? el = (high['longitude'] as num?)?.toDouble();
+          if (sl != null && wl != null && nl != null && el != null) {
+            bounds = DiscoveryMapBounds(
+              southLat: sl,
+              westLng: wl,
+              northLat: nl,
+              eastLng: el,
+            );
+          }
+        }
+      }
+
+      final List<String> types =
+          (data['types'] as List<dynamic>?)?.cast<String>() ??
+              const <String>[];
+      final Map<String, dynamic>? dn =
+          data['displayName'] as Map<String, dynamic>?;
+      final String resolvedLabel = dn?['text'] as String? ?? label;
+
+      return DiscoveryAreaFilter(
+        placeId: placeId,
+        label: resolvedLabel,
+        latitude: lat,
+        longitude: lng,
+        viewport: bounds,
+        types: types,
+      );
+    } catch (e, st) {
+      debugPrint('fetchDiscoveryAreaFromPlace: $e\n$st');
+      return null;
+    }
   }
 
   /// Get place details by placeId

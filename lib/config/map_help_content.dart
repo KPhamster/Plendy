@@ -58,7 +58,7 @@ const Map<MapHelpTargetId, HelpSpec<MapHelpTargetId>> mapHelpContent = {
     steps: [
       HelpStep(
         text:
-            'Need to find a spot? Search by name, address, or even your saved places!',
+            'Need to find a spot? Search by name, address, or keywords.',
         instruction: 'Tap anywhere to dismiss',
       ),
     ],

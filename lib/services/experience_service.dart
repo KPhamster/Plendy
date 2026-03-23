@@ -930,8 +930,9 @@ class ExperienceService {
   /// Uses arrayUnion for media paths to avoid duplicates.
   Future<bool> updatePublicExperienceMediaAndMaybeYelp(
       String publicExperienceId, List<String> newMediaPaths,
-      {String? newYelpUrl} // Optional Yelp URL from the card
-      ) async {
+      {String? newYelpUrl, // Optional Yelp URL from the card
+      bool syncExperienceTags = false,
+      List<String>? experienceTags}) async {
     if (publicExperienceId.isEmpty) {
       print(
           "updatePublicExperienceMediaAndMaybeYelp: Invalid arguments (ID empty)");
@@ -940,6 +941,14 @@ class ExperienceService {
 
     // Prepare the data map for the update operation
     Map<String, dynamic> updateData = {};
+
+    if (syncExperienceTags) {
+      if (experienceTags == null) {
+        updateData['tags'] = FieldValue.delete();
+      } else {
+        updateData['tags'] = experienceTags;
+      }
+    }
 
     // Always add new media paths if provided
     if (newMediaPaths.isNotEmpty) {
@@ -955,8 +964,7 @@ class ExperienceService {
     // updateData['updatedAt'] = FieldValue.serverTimestamp();
 
     // If there are updates to perform, run the transaction
-    if (updateData.isNotEmpty ||
-        (newYelpUrl != null && newYelpUrl.isNotEmpty)) {
+    if (updateData.isNotEmpty || (newYelpUrl != null && newYelpUrl.isNotEmpty)) {
       try {
         // Use a transaction to safely check the current yelpUrl before updating
         await _firestore.runTransaction((transaction) async {
@@ -1035,11 +1043,15 @@ class ExperienceService {
   }
 
   /// Updates place tags on a PublicExperience document (placeTypes + location sub-fields).
+  /// When [syncExperienceTags] is true, aligns `tags` with [Experience.tags] on the
+  /// associated experience ([experienceTags] null removes the field).
   Future<bool> updatePublicExperiencePlaceTags(
     String publicExperienceId, {
     List<String>? placeTypes,
     String? primaryType,
     String? primaryTypeDisplayName,
+    bool syncExperienceTags = false,
+    List<String>? experienceTags,
   }) async {
     if (publicExperienceId.isEmpty) return false;
 
@@ -1054,6 +1066,13 @@ class ExperienceService {
       }
       if (primaryTypeDisplayName != null) {
         updateData['location.primaryTypeDisplayName'] = primaryTypeDisplayName;
+      }
+      if (syncExperienceTags) {
+        if (experienceTags == null) {
+          updateData['tags'] = FieldValue.delete();
+        } else {
+          updateData['tags'] = experienceTags;
+        }
       }
       if (updateData.isEmpty) return true;
 
@@ -1251,6 +1270,7 @@ class ExperienceService {
           yelpUrl: experienceTemplate.yelpUrl,
           website: experienceTemplate.website,
           allMediaPaths: [mediaPath],
+          tags: experienceTemplate.tags,
           description: experienceTemplate.description.isNotEmpty ? experienceTemplate.description : null,
         );
         await createPublicExperience(newPublicExperience);
@@ -3664,6 +3684,7 @@ class ExperienceService {
           thumbsDownCount: initialThumbsDown,
           thumbsUpUserIds: initialThumbsUpUserIds,
           thumbsDownUserIds: initialThumbsDownUserIds,
+          tags: experienceTemplate.tags,
           description: experienceTemplate.description.isNotEmpty ? experienceTemplate.description : null,
         );
 
